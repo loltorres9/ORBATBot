@@ -61,9 +61,11 @@ class ORBATBot(commands.Bot):
 
     async def on_ready(self):
         print(f"on_ready fired. Guilds: {[g.name for g in self.guilds]}")
-        # Guild-specific syncs are instant — no waiting for global propagation.
+        # Copy global commands into each guild and sync — this is instant,
+        # unlike global sync which can take up to an hour to propagate.
         for guild in self.guilds:
             try:
+                self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
                 print(f"✅ Guild sync '{guild.name}': {len(synced)} command(s).")
             except Exception as e:
