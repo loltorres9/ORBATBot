@@ -97,5 +97,19 @@ class AdminCog(commands.Cog):
         )
 
 
+    @app_commands.command(
+        name='sync',
+        description='Force-sync slash commands with Discord (Admin only)',
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def sync(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        synced = await self.bot.tree.sync(guild=interaction.guild)
+        await interaction.followup.send(
+            f"✅ Synced **{len(synced)}** command(s) to this server.",
+            ephemeral=True,
+        )
+
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))
