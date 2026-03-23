@@ -35,7 +35,15 @@ class ORBATBot(commands.Bot):
         print(f"Synced slash commands. {len(pending)} pending request view(s) restored.")
 
     async def on_ready(self):
-        print(f"✅ {self.user} is online!")
+        # Guild-specific syncs are instant — no waiting for global propagation.
+        synced_guilds = 0
+        for guild in self.guilds:
+            try:
+                await self.tree.sync(guild=guild)
+                synced_guilds += 1
+            except Exception as e:
+                print(f"⚠️ Could not sync to guild {guild.id}: {e}")
+        print(f"✅ {self.user} is online! Guild-synced commands to {synced_guilds} server(s).")
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
