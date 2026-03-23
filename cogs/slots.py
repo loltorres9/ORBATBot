@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -14,7 +15,7 @@ APPROVAL_CHANNEL_NAME = 'slot-approvals'
 UNIT_ROLES = {'2nd USC', 'CNTO', 'PXG', 'TFP'}
 
 
-def _get_unit_role(member: discord.Member) -> str | None:
+def _get_unit_role(member: discord.Member) -> Optional[str]:
     """Return the first UNIT_ROLES role the member has, or None."""
     for role in member.roles:
         if role.name in UNIT_ROLES:
@@ -157,7 +158,7 @@ async def _update_orbat(bot: commands.Bot, guild: discord.Guild, op):
         pass
 
 
-def _can_action_request(approver: discord.Member, unit_role: str | None) -> bool:
+def _can_action_request(approver: discord.Member, unit_role: Optional[str]) -> bool:
     """
     Returns True if *approver* is allowed to approve/deny a request that
     belongs to *unit_role*.
