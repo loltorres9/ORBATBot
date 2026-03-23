@@ -52,6 +52,14 @@ async def init_db():
             await db.commit()
         except Exception:
             pass  # Column already exists
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS orbat_messages (
+                guild_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         await db.commit()
 
 
@@ -173,3 +181,27 @@ async def deny_request(request_id: int, denied_by: str, reason: str = None):
             (denied_by, reason, request_id)
         )
         await db.commit()
+
+
+async def save_orbat_message(guild_id: str, channel_id: str, message_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            '''INSERT INTO orbat_messages (guild_id, channel_id, message_id)
+               VALUES (?, ?, ?)
+               ON CONFLICT(guild_id) DO UPDATE SET
+                   channel_id = excluded.channel_id,
+                   message_id = excluded.message_id,
+                   updated_at = CURRENT_TIMESTAMP''',
+            (guild_id, channel_id, message_id)
+        )
+        await db.commit()
+
+
+async def get_orbat_message(guild_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            'SELECT channel_id, message_id FROM orbat_messages WHERE guild_id = ?',
+            (guild_id,)
+        ) as cursor:
+            return await cursor.fetchone()

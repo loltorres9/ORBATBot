@@ -130,6 +130,70 @@ def load_slots(sheet_url: str) -> dict:
     }
 
 
+def load_all_slots(sheet_url: str) -> dict:
+    """
+    Load ALL slots from a Google Sheet — including already-assigned ones.
+    Each slot includes an 'assigned_to' field (str or None).
+    Used to build the live ORBAT display.
+    """
+    client = get_client()
+    sheet_id = extract_sheet_id(sheet_url)
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet = spreadsheet.sheet1
+    operation_name = spreadsheet.title
+    all_values = worksheet.get_all_values()
+
+    squad_keywords = {'squad', 'unit', 'element', 'group', 'platoon', 'team', 'section', 'callsign'}
+    role_keywords = {'role', 'position', 'slot', 'job', 'rank', 'billet'}
+    assigned_keywords = {'assigned', 'member', 'player', 'name', 'pilot', 'operator'}
+
+    squad_col = role_col = assigned_col = None
+    header_row_idx = None
+
+    for i, row in enumerate(all_values):
+        normalized = [
+            cell.lower().replace(' ', '').replace('_', '').replace('/', '').replace('-', '')
+            for cell in row
+        ]
+        sq_cols = [j for j, cell in enumerate(normalized) if any(kw in cell for kw in squad_keywords)]
+        rl_cols = [j for j, cell in enumerate(normalized) if any(kw in cell for kw in role_keywords)]
+        if sq_cols and rl_cols:
+            header_row_idx = i
+            squad_col = sq_cols[0]
+            role_col = rl_cols[0]
+            as_cols = [j for j, cell in enumerate(normalized) if any(kw in cell for kw in assigned_keywords)]
+            if as_cols:
+                assigned_col = as_cols[0]
+            break
+
+    if header_row_idx is None:
+        raise ValueError("Could not find slot columns in this sheet.")
+
+    slots = []
+    for i, row in enumerate(all_values[header_row_idx + 1:], start=header_row_idx + 2):
+        if len(row) <= max(squad_col, role_col):
+            continue
+        squad = row[squad_col].strip()
+        role = row[role_col].strip()
+        if not squad or not role:
+            continue
+        assigned_to = None
+        if assigned_col is not None and len(row) > assigned_col:
+            assigned_to = row[assigned_col].strip() or None
+        slots.append({
+            'squad': squad,
+            'role': role,
+            'row': i,
+            'assigned_to': assigned_to,
+        })
+
+    return {
+        'operation_name': operation_name,
+        'sheet_id': sheet_id,
+        'slots': slots,
+    }
+
+
 def assign_slot(sheet_id: str, row: int, member_name: str,
                 assigned_col: Optional[int], status_col: Optional[int]):
     """Write the member's name (and update status) into the sheet for an approved slot."""
