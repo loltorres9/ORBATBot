@@ -47,6 +47,20 @@ async def init_db():
             await db.commit()
         except Exception:
             pass  # Column already exists
+        # Migration: add unit_role to existing deployments
+        try:
+            await db.execute('ALTER TABLE requests ADD COLUMN unit_role TEXT')
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS orbat_messages (
+                guild_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         await db.commit()
 
 
@@ -111,13 +125,13 @@ async def get_member_active_request(guild_id: str, operation_id: int, member_id:
 
 async def create_request(guild_id: str, operation_id: int, member_id: str,
                          member_name: str, slot_label: str, sheet_row: int,
-                         sheet_col: int = None) -> int:
+                         sheet_col: int = None, unit_role: str = None) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             '''INSERT INTO requests
-               (guild_id, operation_id, member_id, member_name, slot_label, sheet_row, sheet_col)
-               VALUES (?, ?, ?, ?, ?, ?, ?)''',
-            (guild_id, operation_id, member_id, member_name, slot_label, sheet_row, sheet_col)
+               (guild_id, operation_id, member_id, member_name, slot_label, sheet_row, sheet_col, unit_role)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+            (guild_id, operation_id, member_id, member_name, slot_label, sheet_row, sheet_col, unit_role)
         )
         await db.commit()
         return cursor.lastrowid
@@ -148,6 +162,30 @@ async def get_all_pending_requests() -> list:
             return await cursor.fetchall()
 
 
+async def cancel_member_request(guild_id: str, operation_id: int, member_id: str) -> bool:
+    """Cancel a member's pending request. Returns True if a request was cancelled."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE requests SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+               WHERE guild_id = ? AND operation_id = ? AND member_id = ? AND status = 'pending'""",
+            (guild_id, operation_id, member_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def clear_pending_requests(operation_id: int) -> int:
+    """Cancel all pending requests for an operation. Returns count of cancelled requests."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE requests SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+               WHERE operation_id = ? AND status = 'pending'""",
+            (operation_id,)
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
 async def approve_request(request_id: int, approved_by: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -168,3 +206,27 @@ async def deny_request(request_id: int, denied_by: str, reason: str = None):
             (denied_by, reason, request_id)
         )
         await db.commit()
+
+
+async def save_orbat_message(guild_id: str, channel_id: str, message_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            '''INSERT INTO orbat_messages (guild_id, channel_id, message_id)
+               VALUES (?, ?, ?)
+               ON CONFLICT(guild_id) DO UPDATE SET
+                   channel_id = excluded.channel_id,
+                   message_id = excluded.message_id,
+                   updated_at = CURRENT_TIMESTAMP''',
+            (guild_id, channel_id, message_id)
+        )
+        await db.commit()
+
+
+async def get_orbat_message(guild_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            'SELECT channel_id, message_id FROM orbat_messages WHERE guild_id = ?',
+            (guild_id,)
+        ) as cursor:
+            return await cursor.fetchone()
