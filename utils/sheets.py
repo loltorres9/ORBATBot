@@ -177,6 +177,83 @@ def load_slots(sheet_url: str) -> dict:
     }
 
 
+def load_all_slots(sheet_url: str) -> dict:
+    """
+    Load ALL slots from an ORBAT sheet — including already-assigned ones.
+    Each slot has an 'assigned_to' field (str or None).
+    Used to build the live ORBAT display.
+
+    A slot is considered filled when its assignment cell contains '[]' followed
+    by a non-empty name that is not '<Insert Name>'.
+    """
+    client = get_client()
+    sheet_id = extract_sheet_id(sheet_url)
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet = spreadsheet.sheet1
+    operation_name = spreadsheet.title
+    all_values = worksheet.get_all_values()
+    if not all_values:
+        raise ValueError("The sheet appears to be empty.")
+
+    num_cols = max(len(row) for row in all_values)
+    squad_per_col: dict[int, str] = {}
+    seen_values: set = set()
+    slots = []
+
+    for row_idx, row in enumerate(all_values):
+        for col_idx in range(num_cols):
+            cell = row[col_idx].strip() if col_idx < len(row) else ''
+            if not cell:
+                continue
+
+            if _is_slot_entry(cell):
+                role = _extract_role(cell)
+                squad = squad_per_col.get(col_idx, 'Unknown')
+                sheet_row = row_idx + 1
+                assigned_to = None
+                assign_col = None
+
+                for search_col in range(col_idx, min(col_idx + 5, num_cols)):
+                    search_cell = row[search_col].strip() if search_col < len(row) else ''
+                    if search_col > col_idx and _is_slot_entry(search_cell):
+                        break  # crossed into another slot's column
+                    if _is_available(search_cell):
+                        assign_col = search_col
+                        break
+                    # Detect filled assignment: "[] SomeName" where SomeName != <Insert Name>
+                    filled = re.search(r'\[\]\s*(.+)', search_cell)
+                    if filled:
+                        name = filled.group(1).strip()
+                        if name and '<insert name>' not in name.lower():
+                            assigned_to = name
+                            assign_col = search_col
+                            break
+
+                assign_sheet_col = (assign_col + 1) if assign_col is not None else None
+                value = (
+                    f"r{sheet_row}c{assign_sheet_col}"
+                    if assign_sheet_col else f"r{sheet_row}"
+                )
+                if value in seen_values:
+                    continue
+                seen_values.add(value)
+
+                slots.append({
+                    'squad': squad,
+                    'role': role,
+                    'row': sheet_row,
+                    'assigned_to': assigned_to,
+                })
+            elif _is_squad_header(cell):
+                squad_per_col[col_idx] = cell
+
+    return {
+        'operation_name': operation_name,
+        'sheet_id': sheet_id,
+        'slots': slots,
+    }
+
+
 def assign_slot(sheet_id: str, row: int, col: int, member_name: str):
     """
     Replace '<Insert Name>' in the specific cell with the member's name,
