@@ -25,10 +25,12 @@ def _get_unit_role(member: discord.Member) -> Optional[str]:
 
 def _build_orbat_embed(operation_name: str, all_slots: list, pending_rows: set) -> discord.Embed:
     """Build a live ORBAT embed grouped by squad, mirroring the sheet's column layout."""
-    filled = sum(1 for s in all_slots if s['assigned_to'])
-    pending = sum(1 for s in all_slots if not s['assigned_to'] and s['row'] in pending_rows)
-    open_ = sum(1 for s in all_slots if not s['assigned_to'] and s['row'] not in pending_rows)
-    total = len(all_slots)
+    # Reservists slots are displayed but excluded from all counts
+    counted = [s for s in all_slots if s['squad'].lower() != 'reservists']
+    filled = sum(1 for s in counted if s['assigned_to'])
+    pending = sum(1 for s in counted if not s['assigned_to'] and s['row'] in pending_rows)
+    open_ = sum(1 for s in counted if not s['assigned_to'] and s['row'] not in pending_rows)
+    total = len(counted)
 
     embed = discord.Embed(
         title=f"🗺️ ORBAT — {operation_name}",
