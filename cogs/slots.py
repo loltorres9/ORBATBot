@@ -802,6 +802,86 @@ class SlotsCog(commands.Cog):
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(
+        name='leave-operation',
+        description='Remove yourself from the current operation entirely',
+    )
+    async def leave_operation(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        op = await database.get_active_operation(str(interaction.guild_id))
+        if not op:
+            await interaction.followup.send("❌ No active operation.", ephemeral=True)
+            return
+
+        existing = await database.get_member_active_request(
+            str(interaction.guild_id), op['id'], str(interaction.user.id)
+        )
+        if not existing:
+            await interaction.followup.send(
+                "ℹ️ You don't have an active slot in this operation.", ephemeral=True
+            )
+            return
+
+        status_label = existing['status'].capitalize()
+        embed = discord.Embed(
+            title='⚠️ Leave Operation — Confirmation',
+            description=(
+                f"You currently hold **{existing['slot_label']}** ({status_label}).\n\n"
+                "This will **remove you from the operation** and free up your slot.\n"
+                "Are you sure?"
+            ),
+            color=discord.Color.orange(),
+        )
+
+        bot_ref = self.bot
+
+        class ConfirmLeaveView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=60)
+
+            @discord.ui.button(label='Yes, leave operation', style=discord.ButtonStyle.danger, emoji='🚪')
+            async def confirm(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
+                self.stop()
+
+                if existing['status'] == 'approved':
+                    try:
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(
+                            None,
+                            sheets.clear_slot,
+                            op['sheet_id'],
+                            existing['sheet_row'],
+                            existing['sheet_col'],
+                            existing['member_name'],
+                        )
+                    except Exception as e:
+                        await btn_interaction.response.send_message(
+                            f"⚠️ Could not clear the slot from the sheet: `{e}`\n"
+                            "Please ask an admin to clear it manually.",
+                            ephemeral=True,
+                        )
+                        return
+                    await database.cancel_request_by_id(existing['id'])
+                else:
+                    await database.cancel_member_request(
+                        str(btn_interaction.guild_id), op['id'], str(btn_interaction.user.id)
+                    )
+
+                await btn_interaction.response.send_message(
+                    f"✅ You've been removed from **{existing['slot_label']}**.\n"
+                    "You can sign up again with `/request-slot` if you change your mind.",
+                    ephemeral=True,
+                )
+                asyncio.create_task(_update_orbat(bot_ref, btn_interaction.guild, op))
+
+            @discord.ui.button(label='Cancel', style=discord.ButtonStyle.secondary, emoji='✖️')
+            async def cancel(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
+                self.stop()
+                await btn_interaction.response.send_message("No changes made.", ephemeral=True)
+
+        await interaction.followup.send(embed=embed, view=ConfirmLeaveView(), ephemeral=True)
+
+    @app_commands.command(
         name='post-orbat',
         description='Post a live ORBAT board to a channel — updates automatically on approval (Admin only)',
     )
