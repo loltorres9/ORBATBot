@@ -290,6 +290,10 @@ class SlotRequestView(discord.ui.View):
         except discord.Forbidden:
             pass
 
+        # Refresh the live ORBAT board (fire-and-forget)
+        if op:
+            asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
+
 
 # ---------------------------------------------------------------------------
 # Denial modal
@@ -339,6 +343,11 @@ class DenialModal(discord.ui.Modal, title='Deny Slot Request'):
             pass
 
         await interaction.response.send_message("❌ Request denied.", ephemeral=True)
+
+        # Refresh the live ORBAT board (fire-and-forget)
+        op = await database.get_active_operation(str(interaction.guild_id))
+        if op:
+            asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
 
         # DM the member
         try:
@@ -614,6 +623,8 @@ class SlotsCog(commands.Cog):
                 "You can request a different slot with `/request-slot`.",
                 ephemeral=True,
             )
+            # Refresh the live ORBAT board (fire-and-forget)
+            asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
         else:
             await interaction.response.send_message(
                 "❌ Could not cancel your request.", ephemeral=True
