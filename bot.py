@@ -65,14 +65,6 @@ class ORBATBot(commands.Bot):
             except Exception as e:
                 print(f"❌ Guild sync failed for '{guild.name}': {e}")
 
-        # Wipe the global command list from Discord so old globally-registered
-        # commands don't appear alongside the new guild-specific ones.
-        try:
-            self.tree.clear_commands(guild=None)
-            await self.tree.sync()
-            print("✅ Global commands cleared.")
-        except Exception as e:
-            print(f"❌ Failed to clear global commands: {e}")
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
