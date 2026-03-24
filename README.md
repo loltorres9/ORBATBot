@@ -6,14 +6,23 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 
 ## Features
 
-- `/request-slot` — shows all available slots as a dropdown (works with up to 125 slots across 5 select menus)
-- `/setup-slots <url>` — admin command to load any Google Sheet for the current operation
+- `/request-slot` — shows all available slots as a dropdown (up to 125 slots across 5 select menus)
+- `/cancel-request` — cancel your pending slot request
+- `/change-slot` — forfeit your current slot and pick a new one
+- `/setup-slots <url>` — admin command to load a Google Sheet for the current operation; auto-posts a live ORBAT to `#orbat`
+- `/post-orbat [channel]` — manually post (or re-post) the live ORBAT board to any channel
 - `/current-operation` — shows which operation is active
+- `/clear-slot` — admin command to remove a member from an approved slot
+- `/clear-requests` — admin command to cancel all pending requests for the current operation
+- `/sync` — force-sync slash commands with Discord (useful after updates)
 - Approval channel (`#slot-approvals`) with **Approve / Deny** buttons
 - Denial modal with optional reason text
 - DM notifications to members on submission, approval, and denial
-- Slots marked 🟢 (available) or 🟡 (pending) in real time
+- Slots marked 🟢 (available), 🟡 (pending), or 🔴 (filled) in real time
+- Live ORBAT embed auto-updates whenever a slot is approved, denied, or cancelled
+- Unit role gating — admins can only approve requests from their own unit (2nd USC, CNTO, PXG, TFP)
 - Approval buttons survive bot restarts (persistent views)
+- Bot syncs slash commands automatically on startup — no manual `/sync` needed
 
 ---
 
@@ -85,7 +94,25 @@ GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
 /setup-slots https://docs.google.com/spreadsheets/d/.../edit
 ```
 
-Run this once per operation. The previous operation is archived automatically.
+Run this once per operation. The previous operation is archived automatically. A live ORBAT embed is posted to `#orbat` (created if it doesn't exist).
+
+```
+/post-orbat [#channel]
+```
+
+Manually post or re-post the live ORBAT board. Defaults to the current channel.
+
+```
+/clear-slot
+```
+
+Presents a dropdown of approved slots. Select one to remove the member and free the slot.
+
+```
+/clear-requests
+```
+
+Cancels all pending requests for the current operation (e.g. to reset before an op).
 
 ```
 /current-operation
@@ -93,19 +120,37 @@ Run this once per operation. The previous operation is archived automatically.
 
 Shows which sheet is currently loaded.
 
+```
+/sync
+```
+
+Force-syncs slash commands with Discord. Only needed if commands appear missing after a deployment.
+
 ### Members
 
 ```
 /request-slot
 ```
 
-Opens a dropdown showing all available slots for the current operation. Select one to submit a request.
+Opens a dropdown showing all available slots for the current operation. Select one to submit a request. You can only hold one slot per operation.
+
+```
+/cancel-request
+```
+
+Cancels your pending slot request and frees it for others.
+
+```
+/change-slot
+```
+
+Forfeits your current slot (pending or approved) and lets you pick a new one. If your slot was approved it is also cleared from the sheet.
 
 ### Approval flow
 
 1. Requested slots appear in `#slot-approvals` (created automatically if it doesn't exist)
-2. Any admin clicks **✅ Approve** or **❌ Deny**
-3. On approval: the Google Sheet is updated and the member gets a DM
+2. An admin from the same unit clicks **✅ Approve** or **❌ Deny**
+3. On approval: the Google Sheet is updated, the ORBAT board refreshes, and the member gets a DM
 4. On denial: admin optionally provides a reason; member gets a DM and can request again
 
 ---
@@ -119,3 +164,5 @@ pip install -r requirements.txt
 cp .env.example .env        # fill in your values
 python bot.py
 ```
+
+No manual command sync is needed — the bot syncs slash commands to all guilds automatically on startup.
