@@ -256,6 +256,7 @@ def load_all_slots(sheet_url: str) -> dict:
                     'role': role,
                     'row': sheet_row,
                     'assigned_to': assigned_to,
+                    'col_idx': col_idx,
                 })
             elif _is_squad_header(cell):
                 squad_per_col[col_idx] = cell
