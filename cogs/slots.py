@@ -431,6 +431,7 @@ class ApprovalView(discord.ui.View):
                     req['sheet_row'],
                     req['sheet_col'],
                     req['member_name'],
+                    req['unit_role'],
                 )
             except Exception as e:
                 await interaction.response.send_message(

@@ -296,13 +296,13 @@ def clear_slot(sheet_id: str, row: int, col: int, member_name: str):
     worksheet.update_cell(row, col, new_value)
 
 
-def assign_slot(sheet_id: str, row: int, col: int, member_name: str):
+def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: str = None):
     """
-    Replace '<Insert Name>' in the specific cell with the member's name,
-    preserving the rest of the cell text.
+    Replace '<Insert Name>' with the member's name and, if a unit_role is
+    provided, fill the [] tag with the group name.
 
-    e.g. "[] <Insert Name>"  -> "[] MemberName"
-    or   "3. Role - [] <Insert Name>" -> "3. Role - [] MemberName"
+    e.g. "[] <Insert Name>"  -> "[2nd USC] MemberName"
+    or   "3. Role - [] <Insert Name>" -> "3. Role - [2nd USC] MemberName"
     """
     client = get_client()
     spreadsheet = client.open_by_key(sheet_id)
@@ -310,4 +310,6 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str):
 
     current = worksheet.cell(row, col).value or ''
     new_value = re.sub(r'<Insert Name>', member_name, current, flags=re.IGNORECASE)
+    if unit_role:
+        new_value = re.sub(r'\[\]', f'[{unit_role}]', new_value, count=1)
     worksheet.update_cell(row, col, new_value)
