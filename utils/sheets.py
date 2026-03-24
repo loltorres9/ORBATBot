@@ -267,6 +267,35 @@ def load_all_slots(sheet_url: str) -> dict:
     }
 
 
+def clear_slot(sheet_id: str, row: int, col: int, member_name: str):
+    """
+    Reverse an assignment: restore the cell to '[] <Insert Name>'.
+
+    Tries to surgically replace just the member name after '[]'; falls back
+    to a plain text replacement; and as a last resort rewrites the cell as
+    '[] <Insert Name>'.
+    """
+    client = get_client()
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet = spreadsheet.sheet1
+
+    current = worksheet.cell(row, col).value or ''
+    # Replace "[] MemberName" → "[] <Insert Name>"
+    new_value = re.sub(
+        r'(\[\]\s*)' + re.escape(member_name),
+        r'\g<1><Insert Name>',
+        current,
+        flags=re.IGNORECASE,
+    )
+    if new_value == current:
+        # Fallback: replace the name anywhere in the cell
+        new_value = re.sub(re.escape(member_name), '<Insert Name>', current, flags=re.IGNORECASE)
+    if new_value == current:
+        # Last resort: reset the cell entirely
+        new_value = '[] <Insert Name>'
+    worksheet.update_cell(row, col, new_value)
+
+
 def assign_slot(sheet_id: str, row: int, col: int, member_name: str):
     """
     Replace '<Insert Name>' in the specific cell with the member's name,

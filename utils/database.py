@@ -194,6 +194,29 @@ async def clear_pending_requests(operation_id: int) -> int:
         return cursor.rowcount
 
 
+async def get_approved_requests(operation_id: int) -> list:
+    """Return all approved requests for an operation with full details."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM requests WHERE operation_id = ? AND status = 'approved'",
+            (operation_id,)
+        ) as cursor:
+            return await cursor.fetchall()
+
+
+async def cancel_request_by_id(request_id: int) -> bool:
+    """Cancel a single request by ID regardless of who made it."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE requests SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND status = 'approved'""",
+            (request_id,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def approve_request(request_id: int, approved_by: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
