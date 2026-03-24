@@ -5,6 +5,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import database, sheets
+from cogs.slots import _build_orbat_embed
+
+ORBAT_CHANNEL_NAME = 'orbat'
 
 
 class AdminCog(commands.Cog):
@@ -45,7 +48,7 @@ class AdminCog(commands.Cog):
         )
 
         slot_count = len(data['slots'])
-        embed = discord.Embed(
+        confirm_embed = discord.Embed(
             title='✅ Operation Loaded',
             description=(
                 f"**{data['operation_name']}**\n"
@@ -54,7 +57,36 @@ class AdminCog(commands.Cog):
             ),
             color=discord.Color.green(),
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        # Auto-post ORBAT to #orbat (create channel if needed)
+        orbat_channel = discord.utils.get(
+            interaction.guild.text_channels, name=ORBAT_CHANNEL_NAME
+        )
+        if not orbat_channel:
+            try:
+                orbat_channel = await interaction.guild.create_text_channel(
+                    ORBAT_CHANNEL_NAME,
+                    topic='Live ORBAT for the current operation',
+                )
+            except discord.Forbidden:
+                orbat_channel = None
+
+        if orbat_channel:
+            try:
+                op = await database.get_active_operation(str(interaction.guild_id))
+                loop = asyncio.get_event_loop()
+                all_data = await loop.run_in_executor(None, sheets.load_all_slots, sheet_url)
+                pending_rows = set(await database.get_pending_slots(op['id']))
+                orbat_embed = _build_orbat_embed(all_data['operation_name'], all_data['slots'], pending_rows)
+                msg = await orbat_channel.send(embed=orbat_embed)
+                await database.save_orbat_message(
+                    str(interaction.guild_id), str(orbat_channel.id), str(msg.id)
+                )
+                confirm_embed.description += f"\n\n📋 ORBAT posted to {orbat_channel.mention}."
+            except Exception:
+                pass  # ORBAT post failure is non-fatal
+
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
 
     @app_commands.command(
         name='current-operation',
