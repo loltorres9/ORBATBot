@@ -80,9 +80,12 @@ GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
 1. Push this repo to GitHub
 2. Go to [Railway](https://railway.app) → **New Project → Deploy from GitHub** → select this repo
 3. In the Railway project → **Variables** — add `DISCORD_TOKEN` and `GOOGLE_CREDENTIALS`
-4. Railway will auto-deploy. The `Procfile` tells it to run `python bot.py`
-
-> **Note:** The SQLite database (`orbat.db`) is stored on the Railway volume. It persists between deployments but will reset if the service is deleted.
+4. **Add a Volume** so the database survives redeployments:
+   - In your Railway service → **Volumes** → **Add Volume**
+   - Set the mount path to `/data`
+   - Add the variable `DB_PATH=/data/orbat.db`
+   - Without this step the database resets on every deploy, requiring you to run `/setup-slots` again
+5. Railway will auto-deploy. The `Procfile` tells it to run `python bot.py`
 
 ---
 
