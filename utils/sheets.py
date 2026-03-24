@@ -228,6 +228,14 @@ def load_all_slots(sheet_url: str) -> dict:
                             assigned_to = name
                             assign_col = search_col
                             break
+                    # Single-cell filled: "1. Role - [TAG] Name" where name is not <Insert Name>
+                    tagged = re.search(r'-\s*\[.*?\]\s*(.+)', search_cell)
+                    if tagged:
+                        name = tagged.group(1).strip()
+                        if name and '<insert name>' not in name.lower():
+                            assigned_to = name
+                            assign_col = search_col
+                            break
                     # Manually filled: plain name in a cell to the right (no [] prefix)
                     if search_col > col_idx and search_cell and not _RADIO_FREQ.search(search_cell):
                         assigned_to = search_cell
