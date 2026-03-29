@@ -287,6 +287,9 @@ async def get_open_slots_message(guild_id: str):
 
 
 async def set_event_time(operation_id: int, event_time, reminder_minutes: int):
+    # Store as naive UTC — the column is TIMESTAMP WITHOUT TIME ZONE
+    if hasattr(event_time, 'tzinfo') and event_time.tzinfo is not None:
+        event_time = event_time.replace(tzinfo=None)
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
