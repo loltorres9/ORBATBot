@@ -71,20 +71,36 @@ class ORBATBot(commands.Bot):
                 event_dt = event_dt.replace(tzinfo=timezone.utc)
             event_ts = int(event_dt.timestamp())
 
+            guild = discord.utils.get(self.guilds, id=int(op['guild_id']))
+            if not guild:
+                continue
+
+            # DM each approved member
             for member_id, slot_label in members:
-                for guild in self.guilds:
-                    if str(guild.id) == str(op['guild_id']):
-                        try:
-                            member = await guild.fetch_member(int(member_id))
-                            await member.send(
-                                f"⏰ **Operation Reminder — {op['name']}**\n"
-                                f"Your operation starts <t:{event_ts}:R> (<t:{event_ts}:F>).\n"
-                                f"Your slot: **{slot_label}**\n"
-                                f"Get ready!"
-                            )
-                        except (discord.Forbidden, discord.NotFound):
-                            pass
-                        break
+                try:
+                    member = await guild.fetch_member(int(member_id))
+                    await member.send(
+                        f"⏰ **Operation Reminder — {op['name']}**\n"
+                        f"Your operation starts <t:{event_ts}:R> (<t:{event_ts}:F>).\n"
+                        f"Your slot: **{slot_label}**\n"
+                        f"Get ready!"
+                    )
+                except (discord.Forbidden, discord.NotFound):
+                    pass
+
+            # Ping all approved members in #orbat
+            orbat_channel = discord.utils.get(guild.text_channels, name='orbat')
+            if orbat_channel:
+                mentions = ' '.join(
+                    f'<@{member_id}>' for member_id, _ in members
+                )
+                try:
+                    await orbat_channel.send(
+                        f"⏰ **Operation reminder — {op['name']}** starts <t:{event_ts}:R>!\n"
+                        f"{mentions}"
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
 
     @reminder_task.before_loop
     async def before_reminder_task(self):
