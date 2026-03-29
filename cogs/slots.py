@@ -316,6 +316,36 @@ async def _process_slot_selection(
         asyncio.create_task(_update_orbat(bot, interaction.guild, op))
 
 
+async def _void_approval_message(bot: commands.Bot, guild: discord.Guild, req):
+    """Edit the approval message to show the request was cancelled, and disable the buttons."""
+    if not req.get('approval_message_id') or not req.get('approval_channel_id'):
+        return
+    channel = guild.get_channel(int(req['approval_channel_id']))
+    if not channel:
+        return
+    try:
+        msg = await channel.fetch_message(int(req['approval_message_id']))
+    except (discord.NotFound, discord.Forbidden):
+        return
+
+    # Rebuild the embed in grey with a cancelled notice
+    original = msg.embeds[0] if msg.embeds else None
+    cancelled_embed = discord.Embed(
+        title='📋 Slot Request — Cancelled',
+        color=discord.Color.dark_gray(),
+    )
+    if original:
+        for field in original.fields:
+            cancelled_embed.add_field(name=field.name, value=field.value, inline=field.inline)
+    cancelled_embed.set_footer(text='Member cancelled their request')
+    cancelled_embed.timestamp = discord.utils.utcnow()
+
+    try:
+        await msg.edit(embed=cancelled_embed, view=discord.ui.View())
+    except (discord.NotFound, discord.Forbidden):
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Slot request view (ephemeral, shown only to the requesting member)
 # ---------------------------------------------------------------------------
@@ -776,7 +806,7 @@ class SlotsCog(commands.Cog):
                 "You can request a different slot with `/request-slot`.",
                 ephemeral=True,
             )
-            # Refresh the live ORBAT board (fire-and-forget)
+            asyncio.create_task(_void_approval_message(self.bot, interaction.guild, existing))
             asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
         else:
             await interaction.response.send_message(
@@ -855,6 +885,7 @@ class SlotsCog(commands.Cog):
                     await database.cancel_member_request(
                         str(btn_interaction.guild_id), op['id'], str(btn_interaction.user.id)
                     )
+                    asyncio.create_task(_void_approval_message(bot_ref, btn_interaction.guild, existing))
 
                 # Now load available slots and show the picker
                 try:
@@ -984,6 +1015,7 @@ class SlotsCog(commands.Cog):
                     await database.cancel_member_request(
                         str(btn_interaction.guild_id), op['id'], str(btn_interaction.user.id)
                     )
+                    asyncio.create_task(_void_approval_message(bot_ref, btn_interaction.guild, existing))
 
                 await btn_interaction.response.send_message(
                     f"✅ You've been removed from **{existing['slot_label']}**.\n"
