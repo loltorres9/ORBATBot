@@ -121,23 +121,9 @@ async def _update_orbat(bot: commands.Bot, guild: discord.Guild, op):
     except Exception:
         return
     pending_rows = set(await database.get_pending_slots(op['id']))
-    approved_rows = set(await database.get_approved_slots(op['id']))
     embed = _build_orbat_embed(data['operation_name'], data['slots'], pending_rows, op['event_time'])
-
-    # Load available slots for the select menus (load_all_slots gives all slots including filled)
     try:
-        loop = asyncio.get_event_loop()
-        slot_data = await asyncio.wait_for(
-            loop.run_in_executor(None, sheets.load_slots, op['sheet_url']),
-            timeout=30,
-        )
-        available = [s for s in slot_data['slots'] if s['row'] not in approved_rows]
-        view = OrbatLiveView(bot, available, op['id'], pending_rows, approved_rows)
-    except Exception:
-        view = OrbatRequestButton(bot)
-
-    try:
-        await msg.edit(embed=embed, view=view)
+        await msg.edit(embed=embed, view=OrbatRequestButton(bot))
     except (discord.NotFound, discord.Forbidden):
         pass
 
@@ -570,49 +556,6 @@ class ApprovalView(discord.ui.View):
 # ---------------------------------------------------------------------------
 # Live ORBAT view — slot select menus + fallback button, rebuilt on each update
 # ---------------------------------------------------------------------------
-
-class OrbatLiveView(discord.ui.View):
-    """
-    Attached to the ORBAT message on every edit. Contains the slot select
-    menus so members can request a slot directly from the ORBAT post.
-    The button (same custom_id as OrbatRequestButton) acts as a fallback
-    after bot restarts before the next ORBAT update rebuilds the selects.
-    """
-
-    def __init__(self, bot: commands.Bot, slots: list, operation_id: int,
-                 pending_rows: set, approved_rows: set):
-        super().__init__(timeout=None)
-        self.bot = bot
-        self.slots_by_value = {s['value']: s for s in slots}
-        self.operation_id = operation_id
-
-        for menu in _build_select_menus(slots, pending_rows, approved_rows):
-            menu.callback = self._select_callback
-            self.add_item(menu)
-
-        btn = discord.ui.Button(
-            label='📋 Request a Slot',
-            style=discord.ButtonStyle.secondary,
-            custom_id='orbat_request_slot',
-            row=4,
-        )
-        btn.callback = self._button_callback
-        self.add_item(btn)
-
-    async def _select_callback(self, interaction: discord.Interaction):
-        selected_value = interaction.data['values'][0]
-        slot = self.slots_by_value.get(selected_value)
-        if not slot:
-            await interaction.response.send_message(
-                "❌ Slot not found. Try the button below instead.", ephemeral=True
-            )
-            return
-        await _process_slot_selection(interaction, slot, self.operation_id, self.bot)
-
-    async def _button_callback(self, interaction: discord.Interaction):
-        # Delegate to the same handler as OrbatRequestButton
-        await OrbatRequestButton(self.bot).request_slot_button(interaction, None)
-
 
 # ---------------------------------------------------------------------------
 # Persistent "Request a Slot" button attached to the ORBAT embed
@@ -1086,21 +1029,9 @@ class SlotsCog(commands.Cog):
             return
 
         pending_rows = set(await database.get_pending_slots(op['id']))
-        approved_rows = set(await database.get_approved_slots(op['id']))
         embed = _build_orbat_embed(data['operation_name'], data['slots'], pending_rows, op['event_time'])
 
-        try:
-            loop = asyncio.get_event_loop()
-            slot_data = await asyncio.wait_for(
-                loop.run_in_executor(None, sheets.load_slots, op['sheet_url']),
-                timeout=30,
-            )
-            available = [s for s in slot_data['slots'] if s['row'] not in approved_rows]
-            orbat_view = OrbatLiveView(self.bot, available, op['id'], pending_rows, approved_rows)
-        except Exception:
-            orbat_view = OrbatRequestButton(self.bot)
-
-        msg = await target.send(embed=embed, view=orbat_view)
+        msg = await target.send(embed=embed, view=OrbatRequestButton(self.bot))
         await database.save_orbat_message(
             str(interaction.guild_id), str(target.id), str(msg.id)
         )
