@@ -42,7 +42,7 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 |---|---|---|---|
 | `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
 | `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
-| `/assign-slot` | ❌ | ✅ (own unit only) | ✅ |
+| `/assign-slot` | ❌ | ❌ | ✅ |
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone` | ❌ | ❌ | ✅ |
 | `/setup-slots`, `/current-operation`, `/sync` | ❌ | ❌ | ✅ |
 | Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
@@ -170,14 +170,6 @@ Removes you from the operation entirely. Works for both pending and approved slo
 Available to members with the **Unit Leader** Discord role. Scoped to their own unit only.
 
 ```
-/assign-slot @member
-```
-
-Directly assigns a member to a slot — no approval message, no waiting. Shows the same slot picker dropdown. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
-
-Unit Leaders can only assign members who share their unit role (2nd USC, CNTO, PXG, TFP).
-
-```
 /clear-slot
 ```
 
@@ -192,6 +184,12 @@ Unit Leaders can also **Approve / Deny** requests in `#slot-approvals` for membe
 ### Admins
 
 Available to members with the **Manage Server** permission. Full access with no unit restrictions.
+
+```
+/assign-slot @member
+```
+
+Directly assigns a member to a slot — no approval message, no waiting. Shows the same slot picker dropdown. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
 
 ```
 /setup-slots https://docs.google.com/spreadsheets/d/.../edit
