@@ -1,32 +1,55 @@
 # ORBATBot
 
-A Discord bot for managing Arma 3 operation slot requests. Members request slots via a Discord dropdown menu; admins approve or deny requests with a button click, and the Google Sheet is updated automatically.
+A Discord bot for managing Arma 3 operation slot requests. Members request slots via a dropdown or the **📋 Request a Slot** button on the ORBAT embed; admins and Unit Leaders approve or deny requests with a button click, and the Google Sheet is updated automatically.
 
 ---
 
 ## Features
 
 - `/request-slot` — shows all available slots as a dropdown (up to 125 slots across 5 select menus, grouped by squad)
+- **📋 Request a Slot** button — persistent button on the live ORBAT embed; triggers the same slot picker without any command
 - `/cancel-request` — cancel your pending slot request
 - `/change-slot` — forfeit your current slot and pick a new one
 - `/leave-operation` — remove yourself from the operation entirely (pending or approved)
-- `/assign-slot <member>` — admin command to directly assign a member to a slot, bypassing the approval flow
-- `/setup-slots <url>` — admin command to load a Google Sheet for the current operation; auto-posts a live ORBAT to `#orbat`
+- `/setup-slots <url>` — admin command to load a Google Sheet for the current operation; supports optional event time and reminder window; auto-posts a live ORBAT to `#orbat`
+- `/set-event-time <time>` — update the event start time for the current operation
+- `/set-timezone <tz>` — set the server's local timezone for event time input (default: UTC)
 - `/post-orbat [channel]` — manually post (or re-post) the live ORBAT board to any channel
-- `/current-operation` — shows which operation is active and links to the sheet
-- `/clear-slot` — admin command to remove a member from an approved slot
+- `/current-operation` — admin-only: shows which operation is active and links to the sheet
+- `/assign-slot <member>` — assign a member to a slot directly, bypassing the approval flow
+- `/clear-slot` — remove a member from an approved slot
 - `/clear-requests` — admin command to cancel all pending requests for the current operation
-- `/sync` — force-sync slash commands with Discord (useful after updates)
+- `/sync` — force-sync slash commands with Discord; also refreshes the live ORBAT embed
 - Approval channel (`#slot-approvals`) with **Approve / Deny** buttons
 - Denial modal with optional reason text
 - DM notifications to members on submission, approval, and denial
-- Slots marked 🟢 (available), 🟡 (pending), or 🔴 (filled) in real time
-- Live ORBAT embed auto-updates whenever a slot changes, showing open/pending/filled counts per squad
-- Unit role gating — admins can only approve requests from their own unit (2nd USC, CNTO, PXG, TFP)
+- Slots marked 🟢 (available), 🟡 (pending / also requested — compete for slot), or 🔴 (filled) in real time
+- Multiple members can request the same pending slot — the approver picks who gets it; all other competitors are auto-denied and notified
+- Cancelled requests automatically void their approval message (greyed out, buttons removed)
+- Event reminders — bot DMs all approved members and pings `#orbat` before the operation starts
+- Live ORBAT embed shows event time as a Discord timestamp and auto-updates on every slot change
+- Role-based access control — Unit Leaders get extra commands scoped to their own unit (see table below)
 - Approval buttons survive bot restarts (persistent views)
 - Bot syncs slash commands automatically on startup — no manual `/sync` needed
 - Slot availability is re-validated at selection time, preventing race conditions
 - PostgreSQL database — data persists across all restarts and redeployments
+
+---
+
+## Role-Based Access
+
+| Command | Members | Unit Leaders | Admins |
+|---|---|---|---|
+| `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
+| `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
+| `/assign-slot` | ❌ | ✅ (own unit only) | ✅ |
+| `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone` | ❌ | ❌ | ✅ |
+| `/setup-slots`, `/current-operation`, `/sync` | ❌ | ❌ | ✅ |
+| Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
+
+**Unit roles:** `2nd USC`, `CNTO`, `PXG`, `TFP`
+
+A **Unit Leader** is any member with the `Unit Leader` Discord role. They can approve/deny requests and manage slots for members who share their unit role. Admins (Manage Server permission) have unrestricted access.
 
 ---
 
@@ -95,6 +118,15 @@ DATABASE_URL=postgresql://user:pass@host:port/dbname
 
 > The database lives in PostgreSQL and persists across all restarts and redeployments. No volume configuration needed.
 
+### 5. Deploy with Docker (self-hosted VPS)
+
+```bash
+cp .env.example .env   # fill in DISCORD_TOKEN, GOOGLE_CREDENTIALS, DB_PASSWORD
+docker compose up -d
+```
+
+This starts two containers: the bot and a PostgreSQL 16 database. Data is stored in a named Docker volume and persists across restarts.
+
 ---
 
 ## Usage
@@ -105,7 +137,22 @@ DATABASE_URL=postgresql://user:pass@host:port/dbname
 /setup-slots https://docs.google.com/spreadsheets/d/.../edit
 ```
 
-Run this once per operation. The previous operation is archived automatically. A live ORBAT embed is posted to `#orbat` (created if it doesn't exist).
+Run this once per operation. The previous operation is archived automatically. A live ORBAT embed is posted to `#orbat` (created if it doesn't exist). Optional parameters:
+
+- `event_time` — operation start time in `YYYY-MM-DD HH:MM` or `DD.MM.YYYY HH:MM` format (uses the server's configured timezone)
+- `reminder_minutes` — how many minutes before the event to send reminders (default: 30)
+
+```
+/set-timezone Europe/Berlin
+```
+
+Sets the server's local timezone so event times you type are interpreted correctly. Only needs to be set once. Default is UTC.
+
+```
+/set-event-time 2026-04-05 20:00
+```
+
+Updates the event time for the current operation without re-running `/setup-slots`. The ORBAT embed and reminder are updated immediately.
 
 ```
 /post-orbat [#channel]
@@ -119,11 +166,15 @@ Manually post or re-post the live ORBAT board. Defaults to the current channel.
 
 Directly assigns a member to a slot — no approval message, no waiting. Shows the same slot picker dropdown. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
 
+Unit Leaders can use this command but only for members of their own unit.
+
 ```
 /clear-slot
 ```
 
 Presents a dropdown of approved slots. Select one to remove the member and free the slot. The member receives a DM.
+
+Unit Leaders can use this command but only see slots belonging to their own unit.
 
 ```
 /clear-requests
@@ -135,13 +186,13 @@ Cancels all pending requests for the current operation (e.g. to reset before an 
 /current-operation
 ```
 
-Shows which sheet is currently loaded and links to it.
+Shows which sheet is currently loaded and links to it. Admin-only.
 
 ```
 /sync
 ```
 
-Force-syncs slash commands with Discord. Only needed if commands appear missing after a deployment.
+Force-syncs slash commands with Discord and refreshes the live ORBAT embed. Only needed if commands appear missing after a deployment.
 
 ### Members
 
@@ -150,6 +201,8 @@ Force-syncs slash commands with Discord. Only needed if commands appear missing 
 ```
 
 Opens a dropdown showing all available slots for the current operation, grouped by squad. Select one to submit a request. You can only hold one slot per operation.
+
+Alternatively, click the **📋 Request a Slot** button directly on the ORBAT embed — it triggers the same flow.
 
 ```
 /cancel-request
@@ -172,11 +225,21 @@ Removes you from the operation entirely. Works for both pending and approved slo
 ### Approval flow
 
 1. Requested slots appear in `#slot-approvals` (created automatically if it doesn't exist)
-2. An admin from the same unit clicks **✅ Approve** or **❌ Deny**
+2. An admin or Unit Leader from the same unit clicks **✅ Approve** or **❌ Deny**
 3. On approval: the Google Sheet is updated, the ORBAT board refreshes, and the member gets a DM
+   - If other members had requested the same slot, they are automatically denied and notified
 4. On denial: admin optionally provides a reason; member gets a DM and can request again
+5. If a member cancels their request, the approval message is automatically updated to show it was cancelled (greyed out, buttons removed)
 
-**Unit role gating:** Admins with a unit role (2nd USC, CNTO, PXG, TFP) can only approve/deny requests from members of their own unit. Admins without a unit role can approve any request.
+**Unit role gating:** Unit Leaders (and admins with a unit role) can only approve/deny requests from members of their own unit. Admins without a unit role can approve any request.
+
+### Event reminders
+
+When an event time is set, the bot automatically:
+- DMs every approved member with their slot name and a countdown timestamp
+- Posts a ping in `#orbat` tagging all approved members
+
+Reminders fire at the configured window before the event (default 30 minutes). The reminder fires once and will not repeat.
 
 ---
 
