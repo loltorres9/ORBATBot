@@ -133,7 +133,65 @@ This starts two containers: the bot and a PostgreSQL 16 database. Data is stored
 
 ## Usage
 
-### Admin
+### Members
+
+Available to all server members.
+
+```
+/request-slot
+```
+
+Opens a dropdown showing all available slots for the current operation, grouped by squad. Select one to submit a request. You can only hold one slot per operation.
+
+Alternatively, click the **📋 Request a Slot** button directly on the ORBAT embed — it triggers the same flow.
+
+```
+/cancel-request
+```
+
+Cancels your pending slot request and frees it for others.
+
+```
+/change-slot
+```
+
+Forfeits your current slot (pending or approved) and lets you pick a new one. If your slot was approved, it is also cleared from the sheet.
+
+```
+/leave-operation
+```
+
+Removes you from the operation entirely. Works for both pending and approved slots. If you were approved, your slot is also cleared from the sheet. Shows a confirmation prompt before acting.
+
+---
+
+### Unit Leaders
+
+Available to members with the **Unit Leader** Discord role. Scoped to their own unit only.
+
+```
+/assign-slot @member
+```
+
+Directly assigns a member to a slot — no approval message, no waiting. Shows the same slot picker dropdown. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
+
+Unit Leaders can only assign members who share their unit role (2nd USC, CNTO, PXG, TFP).
+
+```
+/clear-slot
+```
+
+Presents a dropdown of approved slots. Select one to remove the member and free the slot. The member receives a DM.
+
+Unit Leaders only see slots belonging to members of their own unit.
+
+Unit Leaders can also **Approve / Deny** requests in `#slot-approvals` for members of their own unit.
+
+---
+
+### Admins
+
+Available to members with the **Manage Server** permission. Full access with no unit restrictions.
 
 ```
 /setup-slots https://docs.google.com/spreadsheets/d/.../edit
@@ -163,22 +221,6 @@ Updates the event time for the current operation without re-running `/setup-slot
 Manually post or re-post the live ORBAT board. Defaults to the current channel.
 
 ```
-/assign-slot @member
-```
-
-Directly assigns a member to a slot — no approval message, no waiting. Shows the same slot picker dropdown. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
-
-Unit Leaders can use this command but only for members of their own unit.
-
-```
-/clear-slot
-```
-
-Presents a dropdown of approved slots. Select one to remove the member and free the slot. The member receives a DM.
-
-Unit Leaders can use this command but only see slots belonging to their own unit.
-
-```
 /clear-requests
 ```
 
@@ -188,41 +230,13 @@ Cancels all pending requests for the current operation (e.g. to reset before an 
 /current-operation
 ```
 
-Shows which sheet is currently loaded and links to it. Admin-only.
+Shows which sheet is currently loaded and links to it.
 
 ```
 /sync
 ```
 
 Force-syncs slash commands with Discord and refreshes the live ORBAT embed. Only needed if commands appear missing after a deployment.
-
-### Members
-
-```
-/request-slot
-```
-
-Opens a dropdown showing all available slots for the current operation, grouped by squad. Select one to submit a request. You can only hold one slot per operation.
-
-Alternatively, click the **📋 Request a Slot** button directly on the ORBAT embed — it triggers the same flow.
-
-```
-/cancel-request
-```
-
-Cancels your pending slot request and frees it for others.
-
-```
-/change-slot
-```
-
-Forfeits your current slot (pending or approved) and lets you pick a new one. If your slot was approved, it is also cleared from the sheet.
-
-```
-/leave-operation
-```
-
-Removes you from the operation entirely. Works for both pending and approved slots. If you were approved, your slot is also cleared from the sheet. Shows a confirmation prompt before acting.
 
 ### Approval flow
 
