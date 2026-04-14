@@ -1,24 +1,25 @@
 # ORBATBot
 
-A Discord bot for managing Arma 3 operation slot requests. Members request slots via a dropdown or the **📋 Request a Slot** button on the ORBAT embed; admins and Unit Leaders approve or deny requests with a button click, and the Google Sheet is updated automatically.
+A Discord bot for managing Arma 3 operation slot requests. Members request slots via a two-step squad → slot picker or the **📋 Request a Slot** button on the ORBAT embed; admins and Unit Leaders approve or deny requests with a button click, and the Google Sheet is updated automatically.
 
 ---
 
 ## Features
 
-- `/request-slot` — shows all available slots as a dropdown (up to 125 slots across 5 select menus, grouped by squad)
-- **📋 Request a Slot** button — persistent button on the live ORBAT embed; triggers the same slot picker without any command
+- **Two-step slot picker** — choose your squad first, then your slot. Works via `/request-slot`, the ORBAT button, and `/change-slot`
+- **📋 Request a Slot** button — persistent button on the live ORBAT embed; no command needed
+- `/request-slot` — open the squad → slot picker for the current operation
 - `/cancel-request` — cancel your pending slot request
 - `/change-slot` — forfeit your current slot and pick a new one
 - `/leave-operation` — remove yourself from the operation entirely (pending or approved)
-- `/setup-slots <url>` — admin command to load a Google Sheet for the current operation; supports optional event time and reminder window; auto-posts a live ORBAT to `#orbat`
+- `/setup-slots <url>` — load a Google Sheet for the current operation; supports optional event time and reminder; auto-posts a live ORBAT to `#orbat`
 - `/set-event-time <time>` — update the event start time for the current operation
 - `/set-timezone <tz>` — set the server's local timezone for event time input (default: UTC)
-- `/post-orbat [channel]` — manually post (or re-post) the live ORBAT board to any channel
+- `/post-orbat [channel]` — manually post or re-post the live ORBAT board
 - `/current-operation` — admin-only: shows which operation is active and links to the sheet
-- `/assign-slot <member>` — assign a member to a slot directly, bypassing the approval flow
-- `/clear-slot` — remove a member from an approved slot
-- `/clear-requests` — admin command to cancel all pending requests for the current operation
+- `/assign-slot <member>` — assign a member to a slot directly, bypassing approval; uses the same two-step picker
+- `/clear-slot` — remove a member from an approved slot; restores the sheet cell including stripping the unit tag
+- `/clear-requests` — cancel all pending requests for the current operation
 - `/sync` — force-sync slash commands with Discord; also refreshes the live ORBAT embed
 - Approval channel (`#slot-approvals`) with **Approve / Deny** buttons
 - Denial modal with optional reason text
@@ -69,7 +70,7 @@ Your Google Sheet needs at minimum **two columns** with recognisable headers:
 - **Status** *(optional)* — rows where this is not `Available`, `Open`, `Free`, or blank are hidden from the menu
 - **Assigned To** *(optional)* — rows with a value here are treated as already taken
 
-The bot also supports **ORBAT-style sheets** where slots appear as cell values (e.g. `1. Squad Lead`) rather than rows. Available slots contain `<Insert Name>`; filled slots use formats like `[TAG] Name` or `[] Name`.
+The bot also supports **ORBAT-style sheets** where slots appear as cell values (e.g. `1. Squad Lead`). Available slots contain `<Insert Name>`; filled slots use formats like `[TAG] Name` or `[] Name`. When a slot is cleared the unit tag is removed and the cell is restored to `[] <Insert Name>`.
 
 > You don't have to rename your columns exactly — the bot looks for keywords anywhere in the header cell.
 > Share the sheet with your service account email before running `/setup-slots`.
@@ -99,35 +100,92 @@ The bot also supports **ORBAT-style sheets** where slots appear as cell values (
 
 ### 3. Environment Variables
 
-Copy `.env.example` to `.env` and fill in:
+Copy `.env.example` to `.env` and fill in the three required values:
 
 ```
 DISCORD_TOKEN=your_bot_token
 GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
-DATABASE_URL=postgresql://user:pass@host:port/dbname
+DB_PASSWORD=choose_a_secure_password
 ```
 
-`DATABASE_URL` is only needed for local development — Railway injects it automatically.
+> `DATABASE_URL` is constructed automatically by docker-compose from `DB_PASSWORD`. On Railway it is injected automatically — you do not set it manually in either case.
 
-### 4. Deploy to Railway
+---
+
+### 4a. Deploy to Railway
 
 1. Push this repo to GitHub
 2. Go to [Railway](https://railway.app) → **New Project → Deploy from GitHub** → select this repo
 3. Add a **Postgres** service to your project (Railway dashboard → **+ New** → **Database → PostgreSQL**)
 4. In your bot service → **Variables** — add `DISCORD_TOKEN` and `GOOGLE_CREDENTIALS`
    - `DATABASE_URL` is injected automatically from the Postgres service — no manual entry needed
-5. Railway will auto-deploy. The `Procfile` tells it to run `python bot.py`
+5. Railway will auto-deploy on every push. The `Procfile` tells it to run `python bot.py`
 
 > The database lives in PostgreSQL and persists across all restarts and redeployments. No volume configuration needed.
 
-### 5. Deploy with Docker (self-hosted VPS)
+---
+
+### 4b. Deploy to a VPS with Docker
+
+This is the recommended self-hosted option. You need a Linux VPS with SSH access (Ubuntu 22.04 or similar).
+
+#### Install Docker
 
 ```bash
-cp .env.example .env   # fill in DISCORD_TOKEN, GOOGLE_CREDENTIALS, DB_PASSWORD
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+Verify:
+
+```bash
+docker --version
+docker compose version
+```
+
+#### Clone the repo
+
+```bash
+git clone https://github.com/loltorres9/orbatbot.git
+cd orbatbot
+```
+
+#### Configure environment
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Fill in `DISCORD_TOKEN`, `GOOGLE_CREDENTIALS`, and `DB_PASSWORD`. Save and exit (`Ctrl+X → Y → Enter`).
+
+#### Start the bot
+
+```bash
 docker compose up -d
 ```
 
-This starts two containers: the bot and a PostgreSQL 16 database. Data is stored in a named Docker volume and persists across restarts.
+This builds the bot image, starts a PostgreSQL 16 container, and launches the bot. Both containers restart automatically if the VPS reboots.
+
+#### Useful commands
+
+```bash
+# View live logs
+docker compose logs -f bot
+
+# Stop the bot
+docker compose down
+
+# Update to the latest version
+git pull
+docker compose up -d --build
+
+# Restart the bot only
+docker compose restart bot
+```
+
+> Bot data is stored in a named Docker volume (`postgres_data`) and survives container restarts, rebuilds, and updates.
 
 ---
 
@@ -141,9 +199,7 @@ Available to all server members.
 /request-slot
 ```
 
-Opens a dropdown showing all available slots for the current operation, grouped by squad. Select one to submit a request. You can only hold one slot per operation.
-
-Alternatively, click the **📋 Request a Slot** button directly on the ORBAT embed — it triggers the same flow.
+Opens a squad picker — select your squad first, then choose your slot. You can also click the **📋 Request a Slot** button directly on the ORBAT embed for the same flow. You can only hold one slot per operation.
 
 ```
 /cancel-request
@@ -155,7 +211,7 @@ Cancels your pending slot request and frees it for others.
 /change-slot
 ```
 
-Forfeits your current slot (pending or approved) and lets you pick a new one. If your slot was approved, it is also cleared from the sheet.
+Forfeits your current slot (pending or approved) and lets you pick a new one via the squad → slot picker. If your slot was approved, it is also cleared from the sheet.
 
 ```
 /leave-operation
@@ -173,7 +229,7 @@ Available to members with the **Unit Leader** Discord role. Scoped to their own 
 /clear-slot
 ```
 
-Presents a dropdown of approved slots. Select one to remove the member and free the slot. The member receives a DM.
+Presents a dropdown of approved slots. Select one to remove the member and free the slot. The sheet cell is restored to `[] <Insert Name>` (unit tag removed). The member receives a DM.
 
 Unit Leaders only see slots belonging to members of their own unit.
 
@@ -189,7 +245,7 @@ Available to members with the **Manage Server** permission. Full access with no 
 /assign-slot @member
 ```
 
-Directly assigns a member to a slot — no approval message, no waiting. Shows the same slot picker dropdown. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
+Directly assigns a member to a slot — no approval message, no waiting. Uses the same squad → slot picker. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
 
 ```
 /setup-slots https://docs.google.com/spreadsheets/d/.../edit
@@ -197,7 +253,7 @@ Directly assigns a member to a slot — no approval message, no waiting. Shows t
 
 Run this once per operation. The previous operation is archived automatically. A live ORBAT embed is posted to `#orbat` (created if it doesn't exist). Optional parameters:
 
-- `event_time` — operation start time in `YYYY-MM-DD HH:MM` or `DD.MM.YYYY HH:MM` format (uses the server's configured timezone)
+- `event_time` — operation start time in `YYYY-MM-DD HH:MM` or `DD/MM/YYYY HH:MM` format (uses the server's configured timezone)
 - `reminder_minutes` — how many minutes before the event to send reminders (default: 30)
 
 ```
@@ -236,6 +292,8 @@ Shows which sheet is currently loaded and links to it.
 
 Force-syncs slash commands with Discord and refreshes the live ORBAT embed. Only needed if commands appear missing after a deployment.
 
+---
+
 ### Approval flow
 
 1. Requested slots appear in `#slot-approvals` (created automatically if it doesn't exist)
@@ -267,4 +325,4 @@ cp .env.example .env        # fill in your values
 python bot.py
 ```
 
-No manual command sync is needed — the bot syncs slash commands to all guilds automatically on startup.
+You will need a PostgreSQL instance running locally and `DATABASE_URL` set in your `.env`. No manual command sync is needed — the bot syncs slash commands to all guilds automatically on startup.
