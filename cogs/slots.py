@@ -12,7 +12,7 @@ APPROVAL_CHANNEL_NAME = 'slot-approvals'
 # Roles that gate who can approve/deny a request. A request submitted by a
 # member with one of these roles can only be actioned by someone who shares
 # that same role (or has manage_guild / administrator permissions).
-UNIT_ROLES = {'2nd USC', 'CNTO', 'PXG', 'TFP'}
+UNIT_ROLES = {'2nd USC', 'CNTO', 'PXG', 'TFP', 'SKUA'}
 
 
 def _get_unit_role(member: discord.Member) -> Optional[str]:
