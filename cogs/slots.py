@@ -624,16 +624,42 @@ class ApprovalView(discord.ui.View):
                 )
                 return
 
-        # Update embed
-        embed = interaction.message.embeds[0]
-        embed.color = discord.Color.green()
-        embed.add_field(
-            name='✅ Approved', value=f"By {interaction.user.mention}", inline=False
-        )
-        await interaction.message.edit(embed=embed, view=None)
+        # Acknowledge the interaction first (Discord requires a response within 3 s)
         await interaction.response.send_message(
             "✅ Request approved and sheet updated!", ephemeral=True
         )
+
+        # Remove the request from #slot-approvals
+        try:
+            await interaction.message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass
+
+        # Post a compact record to #approval-archive (create the channel if needed)
+        archive_channel = discord.utils.get(
+            interaction.guild.text_channels, name='approval-archive'
+        )
+        if archive_channel is None:
+            try:
+                archive_channel = await interaction.guild.create_text_channel('approval-archive')
+            except discord.Forbidden:
+                archive_channel = None
+
+        if archive_channel:
+            op_name = op['name'] if op else 'Unknown'
+            unit_line = f"  ·  **{req['unit_role']}**" if req['unit_role'] else ""
+            archive_embed = discord.Embed(
+                description=(
+                    f"**{op_name}**{unit_line}\n"
+                    f"<@{req['member_id']}> → **{req['slot_label']}**"
+                ),
+                color=discord.Color.green(),
+            )
+            archive_embed.add_field(
+                name='✅ Approved by', value=interaction.user.mention, inline=True
+            )
+            archive_embed.timestamp = discord.utils.utcnow()
+            await archive_channel.send(embed=archive_embed)
 
         # DM the approved member
         try:
