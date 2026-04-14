@@ -240,12 +240,23 @@ async def _process_slot_selection(
             return
 
     op = await database.get_active_operation(str(interaction.guild_id))
-    embed = discord.Embed(title='📋 Slot Request', color=discord.Color.yellow())
-    embed.add_field(name='Member', value=interaction.user.mention, inline=True)
-    embed.add_field(name='Requested Slot', value=f"**{slot['label']}**", inline=True)
-    embed.add_field(name='Operation', value=op['name'] if op else 'Unknown', inline=False)
+
+    # Use the unit's Discord role colour, fall back to yellow
+    color = discord.Color.yellow()
     if unit_role:
-        embed.add_field(name='Unit', value=unit_role, inline=True)
+        role_obj = discord.utils.get(interaction.guild.roles, name=unit_role)
+        if role_obj and role_obj.color.value:
+            color = role_obj.color
+
+    op_name = op['name'] if op else 'Unknown'
+    unit_line = f"  ·  **{unit_role}**" if unit_role else ""
+    embed = discord.Embed(
+        description=(
+            f"**{op_name}**{unit_line}\n"
+            f"{interaction.user.mention} → **{slot['label']}**"
+        ),
+        color=color,
+    )
     embed.set_footer(text=f"Request ID: {request_id}")
     embed.timestamp = discord.utils.utcnow()
 
