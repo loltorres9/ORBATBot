@@ -308,6 +308,48 @@ class AdminCog(commands.Cog):
         )
 
     @app_commands.command(
+        name='debug-slots',
+        description='Show raw slot data the bot reads from the sheet — use to diagnose missing slots (Admin only)',
+    )
+    @app_commands.describe(squad='Filter to a specific squad name (optional)')
+    @app_commands.default_permissions(manage_guild=True)
+    async def debug_slots(self, interaction: discord.Interaction, squad: str = None):
+        await interaction.response.defer(ephemeral=True)
+        op = await database.get_active_operation(str(interaction.guild_id))
+        if not op:
+            await interaction.followup.send("❌ No active operation.", ephemeral=True)
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, sheets.load_slots, op['sheet_url']),
+                timeout=30,
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to load sheet: `{e}`", ephemeral=True)
+            return
+
+        slots = data['slots']
+        if squad:
+            slots = [s for s in slots if squad.lower() in s['squad'].lower()]
+
+        if not slots:
+            await interaction.followup.send(
+                f"No available slots found{f' for squad matching `{squad}`' if squad else ''}.\n"
+                "This means `load_slots` found no `<Insert Name>` cells on the sheet.",
+                ephemeral=True,
+            )
+            return
+
+        lines = [f"**{len(slots)} available slot(s) found** (sheet → bot view):\n"]
+        for s in slots[:40]:
+            lines.append(f"`r{s['row']}c{s.get('col')}` **{s['squad']}** — {s['role']}")
+        if len(slots) > 40:
+            lines.append(f"_…and {len(slots) - 40} more_")
+
+        await interaction.followup.send('\n'.join(lines), ephemeral=True)
+
+    @app_commands.command(
         name='current-operation',
         description='Show which operation is currently active (Admin only)',
     )
