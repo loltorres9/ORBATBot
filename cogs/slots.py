@@ -243,13 +243,14 @@ async def _process_slot_selection(
 
     # Use the unit's Discord role colour, fall back to yellow
     color = discord.Color.yellow()
+    role_obj = None
     if unit_role:
         role_obj = discord.utils.get(interaction.guild.roles, name=unit_role)
         if role_obj and role_obj.color.value:
             color = role_obj.color
 
     op_name = op['name'] if op else 'Unknown'
-    unit_line = f"  ·  **{unit_role}**" if unit_role else ""
+    unit_line = f"  ·  {role_obj.mention}" if role_obj else (f"  ·  **{unit_role}**" if unit_role else "")
     embed = discord.Embed(
         description=(
             f"**{op_name}**{unit_line}\n"
