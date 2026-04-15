@@ -668,9 +668,11 @@ class AdminCog(commands.Cog):
                 inline=False,
             )
 
+        orbat_channel = discord.utils.get(interaction.guild.text_channels, name='orbat')
+        orbat_ref = orbat_channel.mention if orbat_channel else '`#orbat`'
         embed.add_field(
             name='📋 Sign up',
-            value='Use `/request-slot` to request a slot.',
+            value=f'Head to {orbat_ref} to view available slots and request your position.',
             inline=False,
         )
         embed.set_footer(text=f'Posted by {interaction.user.display_name}')
