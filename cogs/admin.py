@@ -607,6 +607,69 @@ class AdminCog(commands.Cog):
         )
 
     @app_commands.command(
+        name='archive-old-approvals',
+        description='Move already-approved messages from #slot-approvals to #approval-archive (Admin only)',
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def archive_old_approvals(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        approvals_channel = discord.utils.get(
+            interaction.guild.text_channels, name='slot-approvals'
+        )
+        if not approvals_channel:
+            await interaction.followup.send(
+                "❌ No `#slot-approvals` channel found.", ephemeral=True
+            )
+            return
+
+        archive_channel = discord.utils.get(
+            interaction.guild.text_channels, name='approval-archive'
+        )
+        if archive_channel is None:
+            try:
+                archive_channel = await interaction.guild.create_text_channel('approval-archive')
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    "❌ Cannot create `#approval-archive` — grant me **Manage Channels**.",
+                    ephemeral=True,
+                )
+                return
+
+        moved = 0
+        skipped = 0
+        bot_id = self.bot.user.id
+
+        async for message in approvals_channel.history(limit=500, oldest_first=True):
+            if message.author.id != bot_id:
+                continue
+            if not message.embeds:
+                continue
+            embed = message.embeds[0]
+            # Approved messages are green and have an "Approved" field
+            is_green = (
+                embed.color is not None
+                and embed.color.value == discord.Color.green().value
+            )
+            has_approval_field = any(
+                'approved' in (f.name or '').lower() for f in embed.fields
+            )
+            if not (is_green and has_approval_field):
+                continue
+            try:
+                await archive_channel.send(embed=embed)
+                await message.delete()
+                moved += 1
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                skipped += 1
+
+        await interaction.followup.send(
+            f"✅ Moved **{moved}** approved message(s) to {archive_channel.mention}."
+            + (f"\n⚠️ **{skipped}** could not be moved (permissions or already deleted)." if skipped else ""),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
         name='sync',
         description='Force-sync slash commands with Discord and refresh ORBAT (Admin only)',
     )
