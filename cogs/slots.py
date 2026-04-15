@@ -12,7 +12,7 @@ APPROVAL_CHANNEL_NAME = 'slot-approvals'
 # Roles that gate who can approve/deny a request. A request submitted by a
 # member with one of these roles can only be actioned by someone who shares
 # that same role (or has manage_guild / administrator permissions).
-UNIT_ROLES = {'2nd USC', 'CNTO', 'PXG', 'TFP'}
+UNIT_ROLES = {'2nd USC', 'CNTO', 'PXG', 'TFP', 'SKUA'}
 
 
 def _get_unit_role(member: discord.Member) -> Optional[str]:
@@ -100,32 +100,55 @@ def _build_orbat_embed(operation_name: str, all_slots: list, pending_rows: set, 
     return embed
 
 
-async def _update_orbat(bot: commands.Bot, guild: discord.Guild, op):
-    """Silently refresh the live ORBAT message for this guild, if one exists."""
+async def _update_orbat(bot: commands.Bot, guild: discord.Guild, op, raise_errors: bool = False):
+    """Refresh the live ORBAT message for this guild.
+
+    By default errors are suppressed (fire-and-forget background use).
+    Pass raise_errors=True to let exceptions propagate (e.g. from /sync).
+    """
     stored = await database.get_orbat_message(str(guild.id))
     if not stored:
         return
-    channel = guild.get_channel(int(stored['channel_id']))
-    if not channel:
+
+    try:
+        channel = (
+            guild.get_channel(int(stored['channel_id']))
+            or await guild.fetch_channel(int(stored['channel_id']))
+        )
+    except (discord.NotFound, discord.Forbidden) as e:
+        if raise_errors:
+            raise RuntimeError(f"Cannot access ORBAT channel: {e}") from e
         return
+
     try:
         msg = await channel.fetch_message(int(stored['message_id']))
-    except (discord.NotFound, discord.Forbidden):
+    except (discord.NotFound, discord.Forbidden) as e:
+        if raise_errors:
+            raise RuntimeError(
+                "The stored ORBAT message no longer exists. "
+                "Run `/post-orbat` in your ORBAT channel to set up a fresh one."
+            ) from e
         return
+
     try:
         loop = asyncio.get_event_loop()
         data = await asyncio.wait_for(
             loop.run_in_executor(None, sheets.load_all_slots, op['sheet_url']),
             timeout=30,
         )
-    except Exception:
+    except Exception as e:
+        if raise_errors:
+            raise RuntimeError(f"Failed to load sheet: {e}") from e
         return
+
     pending_rows = set(await database.get_pending_slots(op['id']))
     embed = _build_orbat_embed(data['operation_name'], data['slots'], pending_rows, op['event_time'])
+
     try:
         await msg.edit(embed=embed, view=OrbatRequestButton(bot))
-    except (discord.NotFound, discord.Forbidden):
-        pass
+    except (discord.NotFound, discord.Forbidden) as e:
+        if raise_errors:
+            raise RuntimeError(f"Failed to edit ORBAT message: {e}") from e
 
 
 def _can_action_request(approver: discord.Member, unit_role: Optional[str]) -> bool:
@@ -217,17 +240,42 @@ async def _process_slot_selection(
             return
 
     op = await database.get_active_operation(str(interaction.guild_id))
-    embed = discord.Embed(title='📋 Slot Request', color=discord.Color.yellow())
-    embed.add_field(name='Member', value=interaction.user.mention, inline=True)
-    embed.add_field(name='Requested Slot', value=f"**{slot['label']}**", inline=True)
-    embed.add_field(name='Operation', value=op['name'] if op else 'Unknown', inline=False)
+
+    # Use the unit's Discord role colour, fall back to yellow
+    color = discord.Color.yellow()
     if unit_role:
-        embed.add_field(name='Unit', value=unit_role, inline=True)
+        role_obj = discord.utils.get(interaction.guild.roles, name=unit_role)
+        if role_obj and role_obj.color.value:
+            color = role_obj.color
+
+    op_name = op['name'] if op else 'Unknown'
+    unit_line = f"  ·  **{unit_role}**" if unit_role else ""
+    embed = discord.Embed(
+        description=(
+            f"**{op_name}**{unit_line}\n"
+            f"{interaction.user.mention} → **{slot['label']}**"
+        ),
+        color=color,
+    )
     embed.set_footer(text=f"Request ID: {request_id}")
     embed.timestamp = discord.utils.utcnow()
 
     approval_view = ApprovalView(request_id=request_id, bot=bot)
-    msg = await approval_channel.send(embed=embed, view=approval_view)
+    try:
+        msg = await approval_channel.send(embed=embed, view=approval_view)
+    except Exception as e:
+        # Roll back the DB record so the slot doesn't stay blocked indefinitely
+        await database.deny_request(request_id, 'system', reason='Approval message failed to send')
+        # Best-effort follow-up since response was already sent
+        try:
+            await interaction.followup.send(
+                f"⚠️ Your request was received but the approval message could not be posted (`{e}`). "
+                "The slot has been freed — please try requesting again.",
+                ephemeral=True,
+            )
+        except Exception:
+            pass
+        return
     bot.add_view(approval_view)
 
     await database.update_request_message(
@@ -550,7 +598,7 @@ class ApprovalView(discord.ui.View):
 
         await database.approve_request(self.request_id, interaction.user.display_name)
 
-        # Update Google Sheet
+        # Update Google Sheet — roll back approval if the sheet write fails
         op = await database.get_active_operation(str(interaction.guild_id))
         if op:
             try:
@@ -565,23 +613,53 @@ class ApprovalView(discord.ui.View):
                     req['unit_role'],
                 )
             except Exception as e:
+                # Roll back so the slot doesn't get stuck in approved limbo
+                await database.deny_request(
+                    self.request_id, interaction.user.display_name, reason='Sheet update failed — please re-approve'
+                )
                 await interaction.response.send_message(
-                    f"⚠️ Approved in bot, but sheet update failed: `{e}`\n"
-                    "Please update the sheet manually.",
+                    f"⚠️ Sheet update failed: `{e}`\n"
+                    "The request has been reset to denied so the slot stays open — please try approving again.",
                     ephemeral=True,
                 )
                 return
 
-        # Update embed
-        embed = interaction.message.embeds[0]
-        embed.color = discord.Color.green()
-        embed.add_field(
-            name='✅ Approved', value=f"By {interaction.user.mention}", inline=False
-        )
-        await interaction.message.edit(embed=embed, view=None)
+        # Acknowledge the interaction first (Discord requires a response within 3 s)
         await interaction.response.send_message(
             "✅ Request approved and sheet updated!", ephemeral=True
         )
+
+        # Remove the request from #slot-approvals
+        try:
+            await interaction.message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass
+
+        # Post a compact record to #approval-archive (create the channel if needed)
+        archive_channel = discord.utils.get(
+            interaction.guild.text_channels, name='approval-archive'
+        )
+        if archive_channel is None:
+            try:
+                archive_channel = await interaction.guild.create_text_channel('approval-archive')
+            except discord.Forbidden:
+                archive_channel = None
+
+        if archive_channel:
+            op_name = op['name'] if op else 'Unknown'
+            unit_line = f"  ·  **{req['unit_role']}**" if req['unit_role'] else ""
+            archive_embed = discord.Embed(
+                description=(
+                    f"**{op_name}**{unit_line}\n"
+                    f"<@{req['member_id']}> → **{req['slot_label']}**"
+                ),
+                color=discord.Color.green(),
+            )
+            archive_embed.add_field(
+                name='✅ Approved by', value=interaction.user.mention, inline=True
+            )
+            archive_embed.timestamp = discord.utils.utcnow()
+            await archive_channel.send(embed=archive_embed)
 
         # DM the approved member
         try:

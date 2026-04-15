@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import database, sheets
-from cogs.slots import _build_orbat_embed, _get_unit_role, _update_orbat, OrbatRequestButton, SquadSelectView
+from cogs.slots import _build_orbat_embed, _get_unit_role, _update_orbat, _void_approval_message, OrbatRequestButton, SquadSelectView
 
 UNIT_LEADER_ROLE = 'Unit Leader'
 
@@ -208,7 +208,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("❌ No active operation.", ephemeral=True)
             return
 
-        approved = await database.get_approved_requests(op['id'])
+        active = await database.get_active_requests(op['id'])
 
         # Unit Leaders can only clear slots belonging to their own unit
         is_admin = interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator
@@ -220,11 +220,11 @@ class AdminCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            approved = [r for r in approved if r['unit_role'] == leader_unit]
+            active = [r for r in active if r['unit_role'] == leader_unit]
 
-        if not approved:
+        if not active:
             await interaction.followup.send(
-                "ℹ️ No approved slots to clear.", ephemeral=True
+                "ℹ️ No active slots to clear.", ephemeral=True
             )
             return
 
@@ -232,9 +232,9 @@ class AdminCog(commands.Cog):
             discord.SelectOption(
                 label=f"{req['member_name']} — {req['slot_label']}"[:100],
                 value=str(req['id']),
-                description=f"Row {req['sheet_row']}",
+                description=f"{'✅ approved' if req['status'] == 'approved' else '⏳ pending'}",
             )
-            for req in approved[:25]
+            for req in active[:25]
         ]
 
         select = discord.ui.Select(
@@ -249,34 +249,36 @@ class AdminCog(commands.Cog):
         async def _select_callback(sel_interaction: discord.Interaction):
             request_id = int(sel_interaction.data['values'][0])
             req = await database.get_request_by_id(request_id)
-            if not req or req['status'] != 'approved':
+            if not req or req['status'] not in ('pending', 'approved'):
                 await sel_interaction.response.send_message(
-                    "❌ That slot is no longer approved.", ephemeral=True
+                    "❌ That request is no longer active.", ephemeral=True
                 )
                 return
 
-            # Clear the sheet cell
-            try:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    sheets.clear_slot,
-                    op['sheet_id'],
-                    req['sheet_row'],
-                    req['sheet_col'],
-                    req['member_name'],
-                )
-            except Exception as e:
-                await sel_interaction.response.send_message(
-                    f"⚠️ Could not update the sheet: `{e}`\nPlease clear it manually.",
-                    ephemeral=True,
-                )
-                return
+            # Only clear the sheet cell for approved slots (sheet is only written on approval)
+            if req['status'] == 'approved':
+                try:
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None,
+                        sheets.clear_slot,
+                        op['sheet_id'],
+                        req['sheet_row'],
+                        req['sheet_col'],
+                        req['member_name'],
+                    )
+                except Exception as e:
+                    await sel_interaction.response.send_message(
+                        f"⚠️ Could not update the sheet: `{e}`\nPlease clear it manually.",
+                        ephemeral=True,
+                    )
+                    return
 
             await database.cancel_request_by_id(request_id)
 
+            status_word = 'approved slot' if req['status'] == 'approved' else 'pending request'
             await sel_interaction.response.send_message(
-                f"✅ Cleared **{req['slot_label']}** — removed **{req['member_name']}**.",
+                f"✅ Cleared {status_word} **{req['slot_label']}** for **{req['member_name']}**.",
                 ephemeral=True,
             )
 
@@ -291,6 +293,10 @@ class AdminCog(commands.Cog):
             except (discord.Forbidden, discord.NotFound):
                 pass
 
+            # Void the approval message if it exists (for pending requests)
+            if req['status'] == 'pending':
+                asyncio.create_task(_void_approval_message(bot_ref, sel_interaction.guild, req))
+
             # Refresh ORBAT
             asyncio.create_task(_update_orbat(bot_ref, sel_interaction.guild, op))
 
@@ -300,6 +306,48 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(
             "Select the slot to clear:", view=view, ephemeral=True
         )
+
+    @app_commands.command(
+        name='debug-slots',
+        description='Show raw slot data the bot reads from the sheet — use to diagnose missing slots (Admin only)',
+    )
+    @app_commands.describe(squad='Filter to a specific squad name (optional)')
+    @app_commands.default_permissions(manage_guild=True)
+    async def debug_slots(self, interaction: discord.Interaction, squad: str = None):
+        await interaction.response.defer(ephemeral=True)
+        op = await database.get_active_operation(str(interaction.guild_id))
+        if not op:
+            await interaction.followup.send("❌ No active operation.", ephemeral=True)
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, sheets.load_slots, op['sheet_url']),
+                timeout=30,
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to load sheet: `{e}`", ephemeral=True)
+            return
+
+        slots = data['slots']
+        if squad:
+            slots = [s for s in slots if squad.lower() in s['squad'].lower()]
+
+        if not slots:
+            await interaction.followup.send(
+                f"No available slots found{f' for squad matching `{squad}`' if squad else ''}.\n"
+                "This means `load_slots` found no `<Insert Name>` cells on the sheet.",
+                ephemeral=True,
+            )
+            return
+
+        lines = [f"**{len(slots)} available slot(s) found** (sheet → bot view):\n"]
+        for s in slots[:40]:
+            lines.append(f"`r{s['row']}c{s.get('col')}` **{s['squad']}** — {s['role']}")
+        if len(slots) > 40:
+            lines.append(f"_…and {len(slots) - 40} more_")
+
+        await interaction.followup.send('\n'.join(lines), ephemeral=True)
 
     @app_commands.command(
         name='current-operation',
@@ -341,6 +389,7 @@ class AdminCog(commands.Cog):
             f"✅ Cleared **{count}** pending request(s) for **{op['name']}**.",
             ephemeral=True,
         )
+        asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
 
 
     @app_commands.command(
@@ -558,6 +607,153 @@ class AdminCog(commands.Cog):
         )
 
     @app_commands.command(
+        name='post-event',
+        description='Post an event announcement with mission name and start time (Admin only)',
+    )
+    @app_commands.describe(
+        channel='Channel to post in (defaults to current channel)',
+        mission_name='Mission name — defaults to the active operation name',
+        event_time='Event start time, e.g. 25/06/2025 19:00 — defaults to the active operation time',
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def post_event(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel = None,
+        mission_name: str = None,
+        event_time: str = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        target = channel or interaction.channel
+
+        # Resolve mission name and event time from the active operation if not provided
+        op = await database.get_active_operation(str(interaction.guild_id))
+
+        if mission_name is None:
+            if op:
+                mission_name = op['name']
+            else:
+                await interaction.followup.send(
+                    "❌ No active operation and no `mission_name` provided. "
+                    "Pass a mission name or run `/setup-slots` first.",
+                    ephemeral=True,
+                )
+                return
+
+        parsed_time = None
+        if event_time:
+            try:
+                tz_name = await database.get_guild_timezone(str(interaction.guild_id))
+                parsed_time = _parse_event_time(event_time, tz_name)
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
+        elif op and op['event_time']:
+            from datetime import timezone as _tz
+            parsed_time = op['event_time']
+            if hasattr(parsed_time, 'tzinfo') and parsed_time.tzinfo is None:
+                parsed_time = parsed_time.replace(tzinfo=_tz.utc)
+
+        embed = discord.Embed(
+            title=f"🎖️ {mission_name}",
+            color=discord.Color.dark_red(),
+        )
+
+        if parsed_time:
+            ts = int(parsed_time.timestamp() if hasattr(parsed_time, 'timestamp') else parsed_time)
+            embed.add_field(
+                name='🕐 Operation starts',
+                value=f"<t:{ts}:F>  (<t:{ts}:R>)",
+                inline=False,
+            )
+
+        orbat_channel = discord.utils.get(interaction.guild.text_channels, name='orbat')
+        orbat_ref = orbat_channel.mention if orbat_channel else '`#orbat`'
+        embed.add_field(
+            name='📋 Sign up',
+            value=f'Head to {orbat_ref} to view available slots and request your position.',
+            inline=False,
+        )
+        embed.set_footer(text=f'Posted by {interaction.user.display_name}')
+        embed.timestamp = discord.utils.utcnow()
+
+        try:
+            await target.send(embed=embed)
+        except discord.Forbidden:
+            await interaction.followup.send(
+                f"❌ I don't have permission to post in {target.mention}.", ephemeral=True
+            )
+            return
+
+        await interaction.followup.send(
+            f"✅ Event posted in {target.mention}.", ephemeral=True
+        )
+
+    @app_commands.command(
+        name='archive-old-approvals',
+        description='Move already-approved messages from #slot-approvals to #approval-archive (Admin only)',
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def archive_old_approvals(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        approvals_channel = discord.utils.get(
+            interaction.guild.text_channels, name='slot-approvals'
+        )
+        if not approvals_channel:
+            await interaction.followup.send(
+                "❌ No `#slot-approvals` channel found.", ephemeral=True
+            )
+            return
+
+        archive_channel = discord.utils.get(
+            interaction.guild.text_channels, name='approval-archive'
+        )
+        if archive_channel is None:
+            try:
+                archive_channel = await interaction.guild.create_text_channel('approval-archive')
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    "❌ Cannot create `#approval-archive` — grant me **Manage Channels**.",
+                    ephemeral=True,
+                )
+                return
+
+        moved = 0
+        skipped = 0
+        bot_id = self.bot.user.id
+
+        async for message in approvals_channel.history(limit=500, oldest_first=True):
+            if message.author.id != bot_id:
+                continue
+            if not message.embeds:
+                continue
+            embed = message.embeds[0]
+            # Approved messages are green and have an "Approved" field
+            is_green = (
+                embed.color is not None
+                and embed.color.value == discord.Color.green().value
+            )
+            has_approval_field = any(
+                'approved' in (f.name or '').lower() for f in embed.fields
+            )
+            if not (is_green and has_approval_field):
+                continue
+            try:
+                await archive_channel.send(embed=embed)
+                await message.delete()
+                moved += 1
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                skipped += 1
+
+        await interaction.followup.send(
+            f"✅ Moved **{moved}** approved message(s) to {archive_channel.mention}."
+            + (f"\n⚠️ **{skipped}** could not be moved (permissions or already deleted)." if skipped else ""),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
         name='sync',
         description='Force-sync slash commands with Discord and refresh ORBAT (Admin only)',
     )
@@ -566,12 +762,44 @@ class AdminCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         synced = await self.bot.tree.sync(guild=interaction.guild)
 
-        # Refresh ORBAT from sheet
+        # Repair any pending requests with stale sheet_col, then refresh the ORBAT
         op = await database.get_active_operation(str(interaction.guild_id))
         orbat_note = ""
         if op:
-            asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
-            orbat_note = "\n📋 ORBAT refreshed from sheet."
+            repair_notes = []
+            try:
+                loop = asyncio.get_event_loop()
+                data = await asyncio.wait_for(
+                    loop.run_in_executor(None, sheets.load_slots, op['sheet_url']),
+                    timeout=30,
+                )
+                label_to_slot = {s['label']: s for s in data['slots']}
+                active = await database.get_active_requests(op['id'])
+                repaired = 0
+                for req in active:
+                    correct = label_to_slot.get(req['slot_label'])
+                    if correct and (
+                        req['sheet_row'] != correct['row']
+                        or req['sheet_col'] != correct.get('col')
+                    ):
+                        await database.update_request_sheet_col(
+                            req['id'], correct['row'], correct['col']
+                        )
+                        repaired += 1
+                if repaired:
+                    repair_notes.append(f"Repaired **{repaired}** pending request(s).")
+            except Exception as e:
+                repair_notes.append(f"⚠️ Repair step failed: `{e}`")
+
+            # Refresh ORBAT directly (awaited so errors surface)
+            try:
+                await _update_orbat(self.bot, interaction.guild, op, raise_errors=True)
+                orbat_note = "\n📋 ORBAT refreshed."
+            except Exception as e:
+                orbat_note = f"\n⚠️ ORBAT refresh failed: `{e}`"
+
+            if repair_notes:
+                orbat_note += " " + " ".join(repair_notes)
 
         await interaction.followup.send(
             f"✅ Synced **{len(synced)}** command(s) to this server.{orbat_note}",
