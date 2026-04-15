@@ -607,6 +607,88 @@ class AdminCog(commands.Cog):
         )
 
     @app_commands.command(
+        name='post-event',
+        description='Post an event announcement with mission name and start time (Admin only)',
+    )
+    @app_commands.describe(
+        channel='Channel to post in (defaults to current channel)',
+        mission_name='Mission name — defaults to the active operation name',
+        event_time='Event start time, e.g. 25/06/2025 19:00 — defaults to the active operation time',
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def post_event(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel = None,
+        mission_name: str = None,
+        event_time: str = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        target = channel or interaction.channel
+
+        # Resolve mission name and event time from the active operation if not provided
+        op = await database.get_active_operation(str(interaction.guild_id))
+
+        if mission_name is None:
+            if op:
+                mission_name = op['name']
+            else:
+                await interaction.followup.send(
+                    "❌ No active operation and no `mission_name` provided. "
+                    "Pass a mission name or run `/setup-slots` first.",
+                    ephemeral=True,
+                )
+                return
+
+        parsed_time = None
+        if event_time:
+            try:
+                tz_name = await database.get_guild_timezone(str(interaction.guild_id))
+                parsed_time = _parse_event_time(event_time, tz_name)
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
+        elif op and op['event_time']:
+            from datetime import timezone as _tz
+            parsed_time = op['event_time']
+            if hasattr(parsed_time, 'tzinfo') and parsed_time.tzinfo is None:
+                parsed_time = parsed_time.replace(tzinfo=_tz.utc)
+
+        embed = discord.Embed(
+            title=f"🎖️ {mission_name}",
+            color=discord.Color.dark_red(),
+        )
+
+        if parsed_time:
+            ts = int(parsed_time.timestamp() if hasattr(parsed_time, 'timestamp') else parsed_time)
+            embed.add_field(
+                name='🕐 Operation starts',
+                value=f"<t:{ts}:F>  (<t:{ts}:R>)",
+                inline=False,
+            )
+
+        embed.add_field(
+            name='📋 Sign up',
+            value='Use `/request-slot` to request a slot.',
+            inline=False,
+        )
+        embed.set_footer(text=f'Posted by {interaction.user.display_name}')
+        embed.timestamp = discord.utils.utcnow()
+
+        try:
+            await target.send(embed=embed)
+        except discord.Forbidden:
+            await interaction.followup.send(
+                f"❌ I don't have permission to post in {target.mention}.", ephemeral=True
+            )
+            return
+
+        await interaction.followup.send(
+            f"✅ Event posted in {target.mention}.", ephemeral=True
+        )
+
+    @app_commands.command(
         name='archive-old-approvals',
         description='Move already-approved messages from #slot-approvals to #approval-archive (Admin only)',
     )

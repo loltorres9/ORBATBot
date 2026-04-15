@@ -20,6 +20,7 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 - `/assign-slot <member>` — assign a member to a slot directly, bypassing approval; uses the same two-step picker (Unit Leaders scoped to their own unit; Admins unrestricted)
 - `/clear-slot` — remove a member from an approved slot; restores the sheet cell including stripping the unit tag
 - `/clear-requests` — cancel all pending requests for the current operation
+- `/post-event [channel] [mission_name] [event_time]` — post a formatted event announcement embed in any channel; defaults to the active operation's name and time
 - `/archive-old-approvals` — move pre-existing approved messages from `#slot-approvals` to `#approval-archive` (one-time migration)
 - `/debug-slots` — show the raw slot data the bot reads from the sheet; useful for diagnosing missing slots
 - `/sync` — force-sync slash commands with Discord; also refreshes the live ORBAT embed
@@ -48,7 +49,7 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 | `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
 | `/assign-slot` | ❌ | ✅ (own unit only) | ✅ |
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone` | ❌ | ❌ | ✅ |
-| `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
+| `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals`, `/post-event` | ❌ | ❌ | ✅ |
 | Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
 
 **Unit roles:** `2nd USC`, `CNTO`, `PXG`, `TFP`, `SKUA`
