@@ -730,15 +730,22 @@ class AdminCog(commands.Cog):
             if not message.embeds:
                 continue
             embed = message.embeds[0]
-            # Approved messages are green and have an "Approved" field
-            is_green = (
-                embed.color is not None
-                and embed.color.value == discord.Color.green().value
+            if embed.color is None:
+                continue
+
+            color_val = embed.color.value
+            field_names = [f.name or '' for f in embed.fields]
+
+            is_approved = (
+                color_val == discord.Color.green().value
+                and any('approved' in n.lower() for n in field_names)
             )
-            has_approval_field = any(
-                'approved' in (f.name or '').lower() for f in embed.fields
+            is_denied = (
+                color_val in (discord.Color.red().value, discord.Color.dark_gray().value)
+                and any('denied' in n.lower() for n in field_names)
             )
-            if not (is_green and has_approval_field):
+
+            if not (is_approved or is_denied):
                 continue
             try:
                 await archive_channel.send(embed=embed)
@@ -748,7 +755,7 @@ class AdminCog(commands.Cog):
                 skipped += 1
 
         await interaction.followup.send(
-            f"✅ Moved **{moved}** approved message(s) to {archive_channel.mention}."
+            f"✅ Moved **{moved}** message(s) to {archive_channel.mention}."
             + (f"\n⚠️ **{skipped}** could not be moved (permissions or already deleted)." if skipped else ""),
             ephemeral=True,
         )

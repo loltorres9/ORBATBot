@@ -506,36 +506,59 @@ class DenialModal(discord.ui.Modal, title='Deny Slot Request'):
         reason = self.reason.value.strip() or 'No reason provided'
         await database.deny_request(self.request_id, interaction.user.display_name, reason)
 
-        # Edit the approval embed to reflect the denial
+        req = await database.get_request_by_id(self.request_id)
+        op = await database.get_active_operation(str(interaction.guild_id))
+
+        # Remove the request from #slot-approvals
         try:
             channel = self.bot.get_channel(self.channel_id)
             if channel:
                 msg = await channel.fetch_message(self.message_id)
-                embed = msg.embeds[0]
-                embed.color = discord.Color.red()
-                embed.add_field(
-                    name='❌ Denied',
-                    value=f"By {interaction.user.mention}\nReason: {reason}",
-                    inline=False,
-                )
-                await msg.edit(embed=embed, view=None)
+                await msg.delete()
         except (discord.NotFound, discord.Forbidden):
             pass
+
+        # Post a compact record to #approval-archive
+        archive_channel = discord.utils.get(
+            interaction.guild.text_channels, name='approval-archive'
+        )
+        if archive_channel is None:
+            try:
+                archive_channel = await interaction.guild.create_text_channel('approval-archive')
+            except discord.Forbidden:
+                archive_channel = None
+
+        if archive_channel and req:
+            op_name = op['name'] if op else 'Unknown'
+            unit_line = f"  ·  **{req['unit_role']}**" if req['unit_role'] else ""
+            archive_embed = discord.Embed(
+                description=(
+                    f"**{op_name}**{unit_line}\n"
+                    f"<@{req['member_id']}> → **{req['slot_label']}**"
+                ),
+                color=discord.Color.red(),
+            )
+            archive_embed.add_field(
+                name='❌ Denied by', value=interaction.user.mention, inline=True
+            )
+            archive_embed.add_field(
+                name='Reason', value=reason, inline=True
+            )
+            archive_embed.timestamp = discord.utils.utcnow()
+            await archive_channel.send(embed=archive_embed)
 
         await interaction.response.send_message("❌ Request denied.", ephemeral=True)
 
         # Refresh the live ORBAT board (fire-and-forget)
-        op = await database.get_active_operation(str(interaction.guild_id))
         if op:
             asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
 
         # DM the member
         try:
             member = await interaction.guild.fetch_member(self.requester_id)
-            req = await database.get_request_by_id(self.request_id)
             await member.send(
                 f"❌ **Slot Request Denied**\n"
-                f"Slot: **{req['slot_label']}**\n"
+                f"Slot: **{req['slot_label'] if req else 'Unknown'}**\n"
                 f"Reason: {reason}\n\n"
                 f"You can request a different slot with `/request-slot`."
             )
