@@ -318,6 +318,8 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
 
     e.g. "[] <Insert Name>"  -> "[2nd USC] MemberName"
     or   "3. Role - [] <Insert Name>" -> "3. Role - [2nd USC] MemberName"
+
+    The member's name is formatted as bold.
     """
     client = get_client()
     spreadsheet = client.open_by_key(sheet_id)
@@ -328,3 +330,27 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
     if unit_role:
         new_value = re.sub(r'\[\]', f'[{unit_role}]', new_value, count=1)
     worksheet.update_cell(row, col, new_value)
+
+    # Apply bold formatting to the cell
+    cell_range = gspread.utils.a1_range_name(worksheet.title, row, col)
+    worksheet.spreadsheet.batch_update({
+        'requests': [{
+            'repeatCell': {
+                'range': {
+                    'sheetId': worksheet.id,
+                    'rowIndex': row - 1,
+                    'columnIndex': col - 1,
+                    'endRowIndex': row,
+                    'endColumnIndex': col,
+                },
+                'cell': {
+                    'userEnteredFormat': {
+                        'textFormat': {
+                            'bold': True
+                        }
+                    }
+                },
+                'fields': 'userEnteredFormat.textFormat.bold'
+            }
+        }]
+    })
