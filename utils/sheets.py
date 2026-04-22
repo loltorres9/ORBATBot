@@ -331,6 +331,9 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
         new_value = re.sub(r'\[\]', f'[{unit_role}]', new_value, count=1)
     worksheet.update_cell(row, col, new_value)
 
-    # Apply bold formatting to the cell
-    cell_a1 = gspread.utils.rowcol_to_a1(row, col)
-    worksheet.format(cell_a1, {'textFormat': {'bold': True}})
+    # Apply bold formatting — non-fatal, the assignment itself already succeeded
+    try:
+        cell_a1 = gspread.utils.rowcol_to_a1(row, col)
+        worksheet.format(cell_a1, {'textFormat': {'bold': True}})
+    except Exception:
+        pass
