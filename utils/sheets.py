@@ -332,7 +332,6 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
     worksheet.update_cell(row, col, new_value)
 
     # Apply bold formatting to the cell
-    cell_range = gspread.utils.a1_range_name(worksheet.title, row, col)
     worksheet.spreadsheet.batch_update({
         'requests': [{
             'repeatCell': {
