@@ -336,20 +336,20 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
         'requests': [{
             'repeatCell': {
                 'range': {
-                    'sheetId': worksheet.id,
-                    'rowIndex': row - 1,
-                    'columnIndex': col - 1,
-                    'endRowIndex': row,
-                    'endColumnIndex': col,
+                    'sheet_id': worksheet.id,
+                    'row_index': row - 1,
+                    'column_index': col - 1,
+                    'end_row_index': row,
+                    'end_column_index': col,
                 },
                 'cell': {
-                    'userEnteredFormat': {
-                        'textFormat': {
+                    'user_entered_format': {
+                        'text_format': {
                             'bold': True
                         }
                     }
                 },
-                'fields': 'userEnteredFormat.textFormat.bold'
+                'fields': 'user_entered_format.text_format.bold'
             }
         }]
     })
