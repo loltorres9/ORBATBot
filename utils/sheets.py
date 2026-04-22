@@ -310,6 +310,13 @@ def clear_slot(sheet_id: str, row: int, col: int, member_name: str):
         new_value = '[] <Insert Name>'
     worksheet.update_cell(row, col, new_value)
 
+    # Remove bold formatting — non-fatal
+    try:
+        cell_a1 = gspread.utils.rowcol_to_a1(row, col)
+        worksheet.format(cell_a1, {'textFormat': {'bold': False}})
+    except Exception:
+        pass
+
 
 def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: str = None):
     """
