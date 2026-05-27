@@ -46,12 +46,12 @@ def _is_available(cell: str) -> bool:
 def _extract_role(cell: str) -> str:
     """
     From "3. Team Leader Alpha - [] <Insert Name>"
-    returns "Team Leader Alpha".
+    returns "3. Team Leader Alpha".
+    The number prefix is kept so duplicate role names within the same squad
+    (e.g. two Rifleman slots) remain distinguishable.
     """
-    # Remove leading number
-    role = _SLOT_PREFIX.sub('', cell.strip())
-    # Remove " - [tag] anything" suffix
-    role = re.sub(r'\s*[-–]\s*\[.*', '', role)
+    # Remove " - [tag] anything" suffix only
+    role = re.sub(r'\s*[-–]\s*\[.*', '', cell.strip())
     return role.strip()
 
 
