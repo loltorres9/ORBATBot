@@ -291,17 +291,19 @@ def load_all_slots(sheet_url: str) -> dict:
 
 def clear_slot(sheet_id: str, row: int, col: int, member_name: str):
     """
-    Reverse an assignment: restore the cell to '[] <Insert Name>'.
+    Reverse an assignment: restore the assignment portion of the cell to
+    '[] <Insert Name>' while preserving the role prefix.
 
-    Tries to surgically replace just the member name after '[]'; falls back
-    to a plain text replacement; and as a last resort rewrites the cell as
-    '[] <Insert Name>'.
+    For single-cell format "7. Rifleman - [2nd USC] Panz" this restores
+    "7. Rifleman - [] <Insert Name>". For a standalone assignment cell
+    like "[2nd USC] Panz" it restores "[] <Insert Name>".
     """
     client = get_client()
     spreadsheet = client.open_by_key(sheet_id)
     worksheet = spreadsheet.sheet1
 
     current = worksheet.cell(row, col).value or ''
+
     # Replace "[UnitTag] MemberName" or "[] MemberName" → "[] <Insert Name>"
     new_value = re.sub(
         r'\[.*?\]\s*' + re.escape(member_name),
@@ -310,12 +312,16 @@ def clear_slot(sheet_id: str, row: int, col: int, member_name: str):
         flags=re.IGNORECASE,
     )
     if new_value == current:
-        # Fallback: replace the name anywhere in the cell, then strip any leftover tag
+        # Fallback: replace the name anywhere in the cell, then fix any leftover tag
         new_value = re.sub(re.escape(member_name), '<Insert Name>', current, flags=re.IGNORECASE)
         new_value = re.sub(r'\[.*?\](\s*<Insert Name>)', r'[]\1', new_value, flags=re.IGNORECASE)
     if new_value == current:
-        # Last resort: reset the cell entirely
-        new_value = '[] <Insert Name>'
+        # Last resort: preserve role prefix, reset only the assignment portion
+        role_part = _extract_role(current)
+        if role_part and role_part != current:
+            new_value = role_part + ' - [] <Insert Name>'
+        else:
+            new_value = '[] <Insert Name>'
     worksheet.update_cell(row, col, new_value)
 
     # Remove bold formatting — non-fatal
