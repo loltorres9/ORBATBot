@@ -51,7 +51,7 @@ def _extract_role(cell: str) -> str:
     (e.g. two Rifleman slots) remain distinguishable.
     """
     # Remove " - [tag] anything" suffix only
-    role = re.sub(r'\s*[-–]\s*\[.*', '', cell.strip())
+    role = re.sub(r'\s*[-–—]\s*[\[<].*', '', cell.strip())
     return role.strip()
 
 
@@ -240,9 +240,17 @@ def load_all_slots(sheet_url: str) -> dict:
                             assign_col = search_col
                             break
                     # Single-cell filled: "1. Role - [TAG] Name" where name is not <Insert Name>
-                    tagged = re.search(r'-\s*\[.*?\]\s*(.+)', search_cell)
+                    tagged = re.search(r'[-–—]\s*\[.*?\]\s*(.+)', search_cell)
                     if tagged:
                         name = tagged.group(1).strip()
+                        if name and '<insert name>' not in name.lower():
+                            assigned_to = name
+                            assign_col = search_col
+                            break
+                    # Single-cell filled without brackets: "1. Role - Name" or "1. Role — Name"
+                    untagged = re.search(r'[-–—]\s*([^\[<].*)', search_cell)
+                    if untagged:
+                        name = untagged.group(1).strip()
                         if name and '<insert name>' not in name.lower():
                             assigned_to = name
                             assign_col = search_col
