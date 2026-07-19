@@ -67,51 +67,61 @@ ORBAT_CHANNEL_NAME = 'orbat'
 _RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2'
 
 
-async def _railway_restart() -> None:
+async def _railway_restart() -> str:
     """Restart the currently running Railway deployment via the public GraphQL API.
 
+    Returns the ID of the restarted deployment.
+
     Requires RAILWAY_API_TOKEN (set manually in the service variables).
-    RAILWAY_SERVICE_ID / RAILWAY_ENVIRONMENT_ID / RAILWAY_PROJECT_ID are
+    RAILWAY_DEPLOYMENT_ID / RAILWAY_SERVICE_ID / RAILWAY_ENVIRONMENT_ID are
     injected automatically by Railway at runtime.
     """
     token = os.getenv('RAILWAY_API_TOKEN')
-    service_id = os.getenv('RAILWAY_SERVICE_ID')
-    environment_id = os.getenv('RAILWAY_ENVIRONMENT_ID')
-    project_id = os.getenv('RAILWAY_PROJECT_ID')
-
     if not token:
         raise RuntimeError('RAILWAY_API_TOKEN is not set')
-    if not (service_id and environment_id):
-        raise RuntimeError(
-            'RAILWAY_SERVICE_ID / RAILWAY_ENVIRONMENT_ID not found — not running on Railway?'
-        )
 
     headers = {'Authorization': f'Bearer {token}'}
     timeout = aiohttp.ClientTimeout(total=15)
 
     async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-        list_input = {'serviceId': service_id, 'environmentId': environment_id}
-        if project_id:
-            list_input['projectId'] = project_id
-        query = (
-            'query Deployments($input: DeploymentListInput!) {'
-            '  deployments(input: $input, first: 1) {'
-            '    edges { node { id status } }'
-            '  }'
-            '}'
-        )
-        async with session.post(
-            _RAILWAY_API_URL, json={'query': query, 'variables': {'input': list_input}}
-        ) as resp:
-            data = await resp.json()
-        if data.get('errors'):
-            raise RuntimeError(data['errors'][0].get('message', 'Railway API error'))
+        # Railway injects the running container's own deployment ID — using it
+        # guarantees we restart ourselves, not whatever a list query returns.
+        deployment_id = os.getenv('RAILWAY_DEPLOYMENT_ID')
+        if not deployment_id:
+            service_id = os.getenv('RAILWAY_SERVICE_ID')
+            environment_id = os.getenv('RAILWAY_ENVIRONMENT_ID')
+            if not (service_id and environment_id):
+                raise RuntimeError(
+                    'RAILWAY_DEPLOYMENT_ID / RAILWAY_SERVICE_ID not found — not running on Railway?'
+                )
+            list_input = {
+                'serviceId': service_id,
+                'environmentId': environment_id,
+                'status': {'in': ['SUCCESS']},
+            }
+            project_id = os.getenv('RAILWAY_PROJECT_ID')
+            if project_id:
+                list_input['projectId'] = project_id
+            query = (
+                'query Deployments($input: DeploymentListInput!) {'
+                '  deployments(input: $input, first: 1) {'
+                '    edges { node { id status } }'
+                '  }'
+                '}'
+            )
+            async with session.post(
+                _RAILWAY_API_URL, json={'query': query, 'variables': {'input': list_input}}
+            ) as resp:
+                data = await resp.json()
+            if data.get('errors'):
+                raise RuntimeError(data['errors'][0].get('message', 'Railway API error'))
 
-        edges = data['data']['deployments']['edges']
-        if not edges:
-            raise RuntimeError('No deployment found for this service')
-        deployment_id = edges[0]['node']['id']
+            edges = data['data']['deployments']['edges']
+            if not edges:
+                raise RuntimeError('No active deployment found for this service')
+            deployment_id = edges[0]['node']['id']
 
+        print(f"Triggering Railway restart for deployment {deployment_id}")
         mutation = 'mutation Restart($id: String!) { deploymentRestart(id: $id) }'
         async with session.post(
             _RAILWAY_API_URL, json={'query': mutation, 'variables': {'id': deployment_id}}
@@ -119,6 +129,9 @@ async def _railway_restart() -> None:
             data = await resp.json()
         if data.get('errors'):
             raise RuntimeError(data['errors'][0].get('message', 'Railway API error'))
+        if not data['data'].get('deploymentRestart'):
+            raise RuntimeError('Railway API did not confirm the restart')
+        return deployment_id
 
 
 class AdminCog(commands.Cog):
@@ -840,9 +853,10 @@ class AdminCog(commands.Cog):
         note = ''
         if os.getenv('RAILWAY_API_TOKEN'):
             try:
-                await _railway_restart()
+                deployment_id = await _railway_restart()
                 await interaction.followup.send(
-                    "🔄 Restart triggered via the Railway API. "
+                    f"🔄 Restart triggered via the Railway API "
+                    f"(deployment `{deployment_id[:8]}`). "
                     "The bot should be back online in ~30–60 seconds.",
                     ephemeral=True,
                 )
