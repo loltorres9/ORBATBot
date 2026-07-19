@@ -24,6 +24,7 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 - `/archive-old-approvals` — move pre-existing approved messages from `#slot-approvals` to `#approval-archive` (one-time migration)
 - `/debug-slots` — show the raw slot data the bot reads from the sheet; useful for diagnosing missing slots
 - `/sync` — force-sync slash commands with Discord; also refreshes the live ORBAT embed
+- `/restart` — restart the bot container on Railway; uses the Railway API if `RAILWAY_API_TOKEN` is set, otherwise exits the process so Railway's restart policy relaunches it
 - Approval channel (`#slot-approvals`) with **Approve / Deny** buttons
 - Approved requests are deleted from `#slot-approvals` and archived as a compact embed in `#approval-archive`
 - Denial modal with optional reason text
@@ -49,7 +50,7 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 | `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
 | `/assign-slot` | ❌ | ✅ (own unit only) | ✅ |
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone` | ❌ | ❌ | ✅ |
-| `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals`, `/post-event` | ❌ | ❌ | ✅ |
+| `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals`, `/post-event`, `/restart` | ❌ | ❌ | ✅ |
 | Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
 
 **Unit roles:** `2nd USC`, `CNTO`, `PXG`, `TFP`, `SKUA`
