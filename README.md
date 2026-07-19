@@ -124,6 +124,7 @@ DB_PASSWORD=choose_a_secure_password
 3. Add a **Postgres** service to your project (Railway dashboard → **+ New** → **Database → PostgreSQL**)
 4. In your bot service → **Variables** — add `DISCORD_TOKEN` and `GOOGLE_CREDENTIALS`
    - `DATABASE_URL` is injected automatically from the Postgres service — no manual entry needed
+   - *(optional)* `RAILWAY_API_TOKEN` — an account or team token from **Account Settings → Tokens**; lets `/restart` trigger a clean restart via the Railway API. Without it, `/restart` still works by exiting the process so Railway's restart policy relaunches it. Project tokens do not work — the bot authenticates with a Bearer header.
 5. Railway will auto-deploy on every push. The `Procfile` tells it to run `python bot.py`
 
 > The database lives in PostgreSQL and persists across all restarts and redeployments. No volume configuration needed.
@@ -292,6 +293,12 @@ Manually post or re-post the live ORBAT board. Defaults to the current channel.
 Cancels all pending requests for the current operation (e.g. to reset before an op).
 
 ```
+/post-event [#channel] [mission_name] [event_time]
+```
+
+Posts a formatted event announcement embed with the mission name, start time (as a Discord timestamp with countdown), and a pointer to `#orbat` for sign-ups. All parameters are optional: the channel defaults to the current one, and the mission name and event time default to the active operation's values.
+
+```
 /archive-old-approvals
 ```
 
@@ -314,6 +321,17 @@ Shows which sheet is currently loaded and links to it.
 ```
 
 Force-syncs slash commands with Discord and refreshes the live ORBAT embed. Only needed if commands appear missing after a deployment.
+
+```
+/restart
+```
+
+Restarts the bot container on Railway — useful if the bot hangs or misbehaves. Two modes:
+
+- **Railway API** (preferred) — if `RAILWAY_API_TOKEN` is set in the service variables, the bot triggers a clean deployment restart via the Railway API
+- **Process exit** (fallback) — without a token, the bot exits with a non-zero code and Railway's `ON_FAILURE` restart policy relaunches the container
+
+Either way the bot is back online in ~30–60 seconds. Slots, buttons, and data survive the restart (PostgreSQL + persistent views). The confirmation is ephemeral and every restart is logged with the requesting user.
 
 ---
 
