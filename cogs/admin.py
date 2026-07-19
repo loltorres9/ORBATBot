@@ -1,7 +1,9 @@
 import asyncio
+import os
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -61,6 +63,62 @@ def _parse_event_time(raw: str, tz_name: str = 'UTC') -> datetime:
     )
 
 ORBAT_CHANNEL_NAME = 'orbat'
+
+_RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2'
+
+
+async def _railway_restart() -> None:
+    """Restart the currently running Railway deployment via the public GraphQL API.
+
+    Requires RAILWAY_API_TOKEN (set manually in the service variables).
+    RAILWAY_SERVICE_ID / RAILWAY_ENVIRONMENT_ID / RAILWAY_PROJECT_ID are
+    injected automatically by Railway at runtime.
+    """
+    token = os.getenv('RAILWAY_API_TOKEN')
+    service_id = os.getenv('RAILWAY_SERVICE_ID')
+    environment_id = os.getenv('RAILWAY_ENVIRONMENT_ID')
+    project_id = os.getenv('RAILWAY_PROJECT_ID')
+
+    if not token:
+        raise RuntimeError('RAILWAY_API_TOKEN is not set')
+    if not (service_id and environment_id):
+        raise RuntimeError(
+            'RAILWAY_SERVICE_ID / RAILWAY_ENVIRONMENT_ID not found — not running on Railway?'
+        )
+
+    headers = {'Authorization': f'Bearer {token}'}
+    timeout = aiohttp.ClientTimeout(total=15)
+
+    async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+        list_input = {'serviceId': service_id, 'environmentId': environment_id}
+        if project_id:
+            list_input['projectId'] = project_id
+        query = (
+            'query Deployments($input: DeploymentListInput!) {'
+            '  deployments(input: $input, first: 1) {'
+            '    edges { node { id status } }'
+            '  }'
+            '}'
+        )
+        async with session.post(
+            _RAILWAY_API_URL, json={'query': query, 'variables': {'input': list_input}}
+        ) as resp:
+            data = await resp.json()
+        if data.get('errors'):
+            raise RuntimeError(data['errors'][0].get('message', 'Railway API error'))
+
+        edges = data['data']['deployments']['edges']
+        if not edges:
+            raise RuntimeError('No deployment found for this service')
+        deployment_id = edges[0]['node']['id']
+
+        mutation = 'mutation Restart($id: String!) { deploymentRestart(id: $id) }'
+        async with session.post(
+            _RAILWAY_API_URL, json={'query': mutation, 'variables': {'id': deployment_id}}
+        ) as resp:
+            data = await resp.json()
+        if data.get('errors'):
+            raise RuntimeError(data['errors'][0].get('message', 'Railway API error'))
 
 
 class AdminCog(commands.Cog):
@@ -752,6 +810,48 @@ class AdminCog(commands.Cog):
             + (f"\n⚠️ **{skipped}** could not be moved (permissions or already deleted)." if skipped else ""),
             ephemeral=True,
         )
+
+    @app_commands.command(
+        name='restart',
+        description='Restart the bot container on Railway (Admin only)',
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def restart(self, interaction: discord.Interaction):
+        if not (
+            interaction.user.guild_permissions.manage_guild
+            or interaction.user.guild_permissions.administrator
+        ):
+            await interaction.response.send_message(
+                "🚫 You need **Manage Server** permissions to restart the bot.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        print(f"Restart requested by {interaction.user} ({interaction.user.id}) in guild {interaction.guild_id}")
+
+        note = ''
+        if os.getenv('RAILWAY_API_TOKEN'):
+            try:
+                await _railway_restart()
+                await interaction.followup.send(
+                    "🔄 Restart triggered via the Railway API. "
+                    "The bot should be back online in ~30–60 seconds.",
+                    ephemeral=True,
+                )
+                return
+            except Exception as e:
+                note = f"⚠️ Railway API restart failed (`{e}`) — falling back to a process restart.\n"
+
+        await interaction.followup.send(
+            f"{note}🔄 Restarting the bot process. "
+            "Railway will bring it back automatically in ~30–60 seconds.",
+            ephemeral=True,
+        )
+        # Give Discord a moment to deliver the response, then exit non-zero so
+        # Railway's ON_FAILURE restart policy relaunches the container.
+        await asyncio.sleep(1)
+        os._exit(1)
 
     @app_commands.command(
         name='sync',
