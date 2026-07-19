@@ -46,12 +46,12 @@ def _is_available(cell: str) -> bool:
 def _extract_role(cell: str) -> str:
     """
     From "3. Team Leader Alpha - [] <Insert Name>"
-    returns "Team Leader Alpha".
+    returns "3. Team Leader Alpha".
+    The number prefix is kept so duplicate role names within the same squad
+    (e.g. two Rifleman slots) remain distinguishable.
     """
-    # Remove leading number
-    role = _SLOT_PREFIX.sub('', cell.strip())
-    # Remove " - [tag] anything" suffix
-    role = re.sub(r'\s*[-–]\s*\[.*', '', role)
+    # Remove " - [tag] anything" suffix only
+    role = re.sub(r'\s*[-–—]\s*[\[<].*', '', cell.strip())
     return role.strip()
 
 
@@ -240,9 +240,17 @@ def load_all_slots(sheet_url: str) -> dict:
                             assign_col = search_col
                             break
                     # Single-cell filled: "1. Role - [TAG] Name" where name is not <Insert Name>
-                    tagged = re.search(r'-\s*\[.*?\]\s*(.+)', search_cell)
+                    tagged = re.search(r'[-–—]\s*\[.*?\]\s*(.+)', search_cell)
                     if tagged:
                         name = tagged.group(1).strip()
+                        if name and '<insert name>' not in name.lower():
+                            assigned_to = name
+                            assign_col = search_col
+                            break
+                    # Single-cell filled without brackets: "1. Role - Name" or "1. Role — Name"
+                    untagged = re.search(r'[-–—]\s*([^\[<].*)', search_cell)
+                    if untagged:
+                        name = untagged.group(1).strip()
                         if name and '<insert name>' not in name.lower():
                             assigned_to = name
                             assign_col = search_col
@@ -283,17 +291,19 @@ def load_all_slots(sheet_url: str) -> dict:
 
 def clear_slot(sheet_id: str, row: int, col: int, member_name: str):
     """
-    Reverse an assignment: restore the cell to '[] <Insert Name>'.
+    Reverse an assignment: restore the assignment portion of the cell to
+    '[] <Insert Name>' while preserving the role prefix.
 
-    Tries to surgically replace just the member name after '[]'; falls back
-    to a plain text replacement; and as a last resort rewrites the cell as
-    '[] <Insert Name>'.
+    For single-cell format "7. Rifleman - [2nd USC] Panz" this restores
+    "7. Rifleman - [] <Insert Name>". For a standalone assignment cell
+    like "[2nd USC] Panz" it restores "[] <Insert Name>".
     """
     client = get_client()
     spreadsheet = client.open_by_key(sheet_id)
     worksheet = spreadsheet.sheet1
 
     current = worksheet.cell(row, col).value or ''
+
     # Replace "[UnitTag] MemberName" or "[] MemberName" → "[] <Insert Name>"
     new_value = re.sub(
         r'\[.*?\]\s*' + re.escape(member_name),
@@ -302,13 +312,24 @@ def clear_slot(sheet_id: str, row: int, col: int, member_name: str):
         flags=re.IGNORECASE,
     )
     if new_value == current:
-        # Fallback: replace the name anywhere in the cell, then strip any leftover tag
+        # Fallback: replace the name anywhere in the cell, then fix any leftover tag
         new_value = re.sub(re.escape(member_name), '<Insert Name>', current, flags=re.IGNORECASE)
         new_value = re.sub(r'\[.*?\](\s*<Insert Name>)', r'[]\1', new_value, flags=re.IGNORECASE)
     if new_value == current:
-        # Last resort: reset the cell entirely
-        new_value = '[] <Insert Name>'
+        # Last resort: preserve role prefix, reset only the assignment portion
+        role_part = _extract_role(current)
+        if role_part and role_part != current:
+            new_value = role_part + ' - [] <Insert Name>'
+        else:
+            new_value = '[] <Insert Name>'
     worksheet.update_cell(row, col, new_value)
+
+    # Remove bold formatting — non-fatal
+    try:
+        cell_a1 = gspread.utils.rowcol_to_a1(row, col)
+        worksheet.format(cell_a1, {'textFormat': {'bold': False}})
+    except Exception:
+        pass
 
 
 def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: str = None):
@@ -318,6 +339,8 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
 
     e.g. "[] <Insert Name>"  -> "[2nd USC] MemberName"
     or   "3. Role - [] <Insert Name>" -> "3. Role - [2nd USC] MemberName"
+
+    The member's name is formatted as bold.
     """
     client = get_client()
     spreadsheet = client.open_by_key(sheet_id)
@@ -328,3 +351,10 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
     if unit_role:
         new_value = re.sub(r'\[\]', f'[{unit_role}]', new_value, count=1)
     worksheet.update_cell(row, col, new_value)
+
+    # Apply bold formatting — non-fatal, the assignment itself already succeeded
+    try:
+        cell_a1 = gspread.utils.rowcol_to_a1(row, col)
+        worksheet.format(cell_a1, {'textFormat': {'bold': True}})
+    except Exception:
+        pass
