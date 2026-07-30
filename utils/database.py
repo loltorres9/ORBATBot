@@ -73,6 +73,26 @@ async def init_db():
                 timezone TEXT NOT NULL DEFAULT 'UTC'
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS game_roles (
+                id SERIAL PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                role_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                emoji TEXT,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (guild_id, role_id)
+            )
+        ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS game_role_panels (
+                guild_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         # Add event scheduling columns to existing operations tables
         await db.execute('''
             ALTER TABLE operations ADD COLUMN IF NOT EXISTS
@@ -377,6 +397,63 @@ async def get_competing_requests(operation_id: int, sheet_row: int, sheet_col: i
                WHERE operation_id = $1 AND sheet_row = $2 AND sheet_col = $3
                AND id != $4 AND status = 'pending'""",
             operation_id, sheet_row, sheet_col, exclude_request_id,
+        )
+
+
+async def add_game_role(guild_id: str, role_id: str, name: str,
+                        emoji: str = None, description: str = None):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''INSERT INTO game_roles (guild_id, role_id, name, emoji, description)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (guild_id, role_id) DO UPDATE SET
+                   name = EXCLUDED.name,
+                   emoji = EXCLUDED.emoji,
+                   description = EXCLUDED.description''',
+            guild_id, role_id, name, emoji, description,
+        )
+
+
+async def remove_game_role(guild_id: str, role_id: str) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute(
+            'DELETE FROM game_roles WHERE guild_id = $1 AND role_id = $2',
+            guild_id, role_id,
+        )
+        return int(result.split()[-1]) > 0
+
+
+async def get_game_roles(guild_id: str) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM game_roles WHERE guild_id = $1 ORDER BY name',
+            guild_id,
+        )
+
+
+async def save_game_role_panel(guild_id: str, channel_id: str, message_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''INSERT INTO game_role_panels (guild_id, channel_id, message_id)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (guild_id) DO UPDATE SET
+                   channel_id = EXCLUDED.channel_id,
+                   message_id = EXCLUDED.message_id,
+                   updated_at = CURRENT_TIMESTAMP''',
+            guild_id, channel_id, message_id,
+        )
+
+
+async def get_game_role_panel(guild_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow(
+            'SELECT channel_id, message_id FROM game_role_panels WHERE guild_id = $1',
+            guild_id,
         )
 
 
