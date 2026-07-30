@@ -143,7 +143,7 @@ Standalone events, independent of `operations` and Google Sheets — see Events 
 | `reminder_minutes` | INTEGER | Default 30; NULL means no reminder |
 | `reminder_fired` | INTEGER | 0/1 — reset to 0 when `event_time` changes |
 | `status` | TEXT | `scheduled` / `cancelled` / `completed` |
-| `recurrence` | TEXT | NULL, or `daily` / `weekly` / `biweekly` / `monthly` |
+| `recurrence` | TEXT | NULL, or `daily` / `weekly` / `biweekly` / `monthly` / `monthly_nth` / `monthly_last` |
 | `recurrence_until` | TIMESTAMP | Optional end of the series (naive UTC) |
 | `recurrence_anchor` | TIMESTAMP | The **first** occurrence's start, carried unchanged down the series |
 | `created_at` / `updated_at` | TIMESTAMP | |
@@ -443,7 +443,26 @@ Every change re-reads the event and refreshes the message through `_refresh_even
 
 ### Recurrence
 
-Stored key → what the user picks: `daily` → Daily, `weekly` → Weekly, `biweekly` → **Every 2 weeks**, `monthly` → Monthly (same day each month). `_RECURRENCE_LABELS` holds the mapping and `_REPEAT_CHOICES` the command choices; the choice values are exactly those keys plus `none`.
+Stored key → what the user picks:
+
+| Key | Choice | Pattern |
+|---|---|---|
+| `daily` | Daily | |
+| `weekly` | Weekly | |
+| `biweekly` | Every 2 weeks | |
+| `monthly` | Monthly — same date | The 15th every month, clamped in short months |
+| `monthly_last` | Monthly — last weekday | **Last Saturday of the month** |
+| `monthly_nth` | Monthly — same weekday | 2nd Saturday of the month |
+
+`_RECURRENCE_LABELS` holds the mapping and `_REPEAT_CHOICES` the command choices; the choice values are exactly those keys plus `none`.
+
+**The weekday variants take both weekday and position from the anchor** — there is no separate column for them. `monthly_last` uses the anchor's weekday with position `-1`; `monthly_nth` uses `_weekday_position(anchor)`, i.e. `(day - 1) // 7 + 1`. So a series created on Saturday 13 June means "2nd Saturday" under `monthly_nth`, and "last Saturday" under `monthly_last` regardless of where the anchor sits — `/event-create` warns when the first date isn't itself the last weekday, so the jump doesn't surprise anyone a month later.
+
+`_weekday_day()` returns None when a month has no such day — there is no 5th Saturday in June. That is why `_next_occurrence()` **skips** a None candidate and keeps walking instead of returning None: a 5th-Saturday series must jump over months that lack one rather than end. The only thing that ends the walk is an invalid recurrence key, which is checked before the loop.
+
+`_DAY_NAMES` is a fixed English tuple rather than `calendar.day_name`, which follows the process locale and would leak into user-facing text.
+
+`_recurrence_text(event)` renders the human description ("Monthly · last Saturday of the month") and is used by the embed, `/event-list` and the create/edit replies. It accepts any mapping with `recurrence`, `recurrence_anchor` and `event_time`, so callers can pass a plain dict before a row exists.
 
 `repeat` on `/event-create` and `/event-edit` sets `recurrence`; `repeat_until` bounds the series. `/event-edit repeat:none` stops it — that path goes through `set_event_recurrence()` rather than `update_event()`, because `update_event()` uses `COALESCE` and therefore cannot write NULL.
 

@@ -19,12 +19,15 @@ _RESPONSE_LABELS = {
     'declined': ('❌', 'Declined'),
 }
 
-# Recurrence keys stored in events.recurrence.
+# Recurrence keys stored in events.recurrence. The two weekday variants take
+# their weekday — and for monthly_nth their position — from the series anchor.
 _RECURRENCE_LABELS = {
     'daily': 'Daily',
     'weekly': 'Weekly',
     'biweekly': 'Every 2 weeks',
     'monthly': 'Monthly',
+    'monthly_nth': 'Monthly by weekday',
+    'monthly_last': 'Monthly, last weekday',
 }
 
 _REPEAT_CHOICES = [
@@ -32,8 +35,15 @@ _REPEAT_CHOICES = [
     app_commands.Choice(name='Daily', value='daily'),
     app_commands.Choice(name='Weekly', value='weekly'),
     app_commands.Choice(name='Every 2 weeks', value='biweekly'),
-    app_commands.Choice(name='Monthly (same day each month)', value='monthly'),
+    app_commands.Choice(name='Monthly — same date (e.g. the 15th)', value='monthly'),
+    app_commands.Choice(name='Monthly — last weekday (e.g. last Saturday)', value='monthly_last'),
+    app_commands.Choice(name='Monthly — same weekday (e.g. 2nd Saturday)', value='monthly_nth'),
 ]
+
+# Fixed English names: calendar.day_name follows the process locale, and these
+# strings end up in user-facing text and in the docs.
+_DAY_NAMES = ('Monday', 'Tuesday', 'Wednesday', 'Thursday',
+              'Friday', 'Saturday', 'Sunday')
 
 _REMINDER_CHOICES = [
     app_commands.Choice(name='No reminder', value=0),
@@ -60,8 +70,43 @@ def _add_months(start: datetime, months: int) -> datetime:
     return start.replace(year=year, month=month, day=day)
 
 
+def _weekday_position(dt: datetime) -> int:
+    """1-based position of dt's weekday within its month — 4 for the 4th Saturday."""
+    return (dt.day - 1) // 7 + 1
+
+
+def _is_last_weekday_of_month(dt: datetime) -> bool:
+    return dt.day + 7 > calendar.monthrange(dt.year, dt.month)[1]
+
+
+def _weekday_day(year: int, month: int, weekday: int, position: int) -> Optional[int]:
+    """Day-of-month of the *position*-th given weekday, or of the last one when
+    position is -1. None if that month has no such day (e.g. no 5th Saturday)."""
+    last = calendar.monthrange(year, month)[1]
+    if position == -1:
+        day = last
+        while datetime(year, month, day).weekday() != weekday:
+            day -= 1
+        return day
+    first_weekday = datetime(year, month, 1).weekday()
+    day = 1 + (weekday - first_weekday) % 7 + (position - 1) * 7
+    return day if day <= last else None
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f"{n}{suffix}"
+
+
 def _nth_occurrence(anchor: datetime, recurrence: str, n: int) -> Optional[datetime]:
-    """The nth occurrence counting from the series anchor (n=0 is the anchor)."""
+    """The nth occurrence counting from the series anchor (n=0 is the anchor).
+
+    None means "this n has no valid date" — for the weekday variants a month may
+    simply lack a 5th Saturday — so callers must skip rather than stop.
+    """
     if recurrence == 'daily':
         return anchor + timedelta(days=n)
     if recurrence == 'weekly':
@@ -70,7 +115,30 @@ def _nth_occurrence(anchor: datetime, recurrence: str, n: int) -> Optional[datet
         return anchor + timedelta(weeks=2 * n)
     if recurrence == 'monthly':
         return _add_months(anchor, n)
+    if recurrence in ('monthly_nth', 'monthly_last'):
+        # Shift the month from the 1st so no day-clamping can move us months.
+        target = _add_months(anchor.replace(day=1), n)
+        position = -1 if recurrence == 'monthly_last' else _weekday_position(anchor)
+        day = _weekday_day(target.year, target.month, anchor.weekday(), position)
+        if day is None:
+            return None
+        return anchor.replace(year=target.year, month=target.month, day=day)
     return None
+
+
+def _recurrence_text(event) -> Optional[str]:
+    """Human description of an event's recurrence, naming the weekday where the
+    pattern depends on it."""
+    recurrence = event['recurrence']
+    if recurrence not in _RECURRENCE_LABELS:
+        return None
+    anchor = event['recurrence_anchor'] or event['event_time']
+    day = _DAY_NAMES[anchor.weekday()]
+    if recurrence == 'monthly_last':
+        return f"Monthly · last {day} of the month"
+    if recurrence == 'monthly_nth':
+        return f"Monthly · {_ordinal(_weekday_position(anchor))} {day} of the month"
+    return _RECURRENCE_LABELS[recurrence]
 
 
 def _next_occurrence(anchor: datetime, recurrence: str, after: datetime) -> Optional[datetime]:
@@ -87,9 +155,9 @@ def _next_occurrence(anchor: datetime, recurrence: str, after: datetime) -> Opti
     # Bound the walk so a pathological anchor can't spin forever.
     while n <= 4000:
         candidate = _nth_occurrence(anchor, recurrence, n)
-        if candidate is None:
-            return None
-        if candidate > after:
+        # None means this month has no matching day (no 5th Saturday, say) —
+        # skip it and keep looking rather than ending the series.
+        if candidate is not None and candidate > after:
             return candidate
         n += 1
     return None
@@ -159,7 +227,7 @@ def _build_event_embed(event, signups: list) -> discord.Embed:
         embed.add_field(name='📍 Where', value=event['location'][:1024], inline=False)
 
     if event['recurrence'] in _RECURRENCE_LABELS:
-        repeat = _RECURRENCE_LABELS[event['recurrence']]
+        repeat = _recurrence_text(event)
         if event['recurrence_until']:
             until_ts = int(_as_utc(event['recurrence_until']).timestamp())
             repeat += f" · until <t:{until_ts}:d>"
@@ -570,9 +638,21 @@ class EventsCog(commands.Cog):
         repeat_line = ""
         if recurrence:
             nxt = _next_occurrence(parsed, recurrence, parsed)
-            repeat_line = f"\n🔁 Repeats **{_RECURRENCE_LABELS[recurrence].lower()}**"
+            described = _recurrence_text(
+                {'recurrence': recurrence, 'recurrence_anchor': parsed, 'event_time': parsed}
+            )
+            repeat_line = f"\n🔁 Repeats: **{described}**"
             if until:
                 repeat_line += f" until <t:{int(_as_utc(until).timestamp())}:d>"
+            # Say so when the first date doesn't itself match the pattern, rather
+            # than letting the jump surprise them a month later.
+            if recurrence == 'monthly_last' and not _is_last_weekday_of_month(parsed):
+                repeat_line += (
+                    f"\n⚠️ Note: your first date is the "
+                    f"{_ordinal(_weekday_position(parsed))} {_DAY_NAMES[parsed.weekday()]}, "
+                    f"not the last one. Every occurrence after it is the **last "
+                    f"{_DAY_NAMES[parsed.weekday()]}** of the month."
+                )
             if nxt and not (until and nxt > until):
                 repeat_line += (
                     f"\nThe next one goes up when this one ends, for "
@@ -707,7 +787,11 @@ class EventsCog(commands.Cog):
                 anchor = parsed or record['recurrence_anchor'] or record['event_time']
                 new_until = until if until is not None else record['recurrence_until']
                 await database.set_event_recurrence(event, new_rec, new_until, anchor)
-                repeat_note = f"\n🔁 Now repeats **{_RECURRENCE_LABELS[new_rec].lower()}**"
+                described = _recurrence_text(
+                    {'recurrence': new_rec, 'recurrence_anchor': anchor,
+                     'event_time': anchor}
+                )
+                repeat_note = f"\n🔁 Now repeats: **{described}**"
                 if new_until:
                     repeat_note += f" until <t:{int(_as_utc(new_until).timestamp())}:d>"
                 repeat_note += "."
@@ -837,7 +921,7 @@ class EventsCog(commands.Cog):
                     f"{record['guild_id']}/{record['channel_id']}/{record['message_id']})"
                 )
             repeat = (
-                f" · 🔁 {_RECURRENCE_LABELS[record['recurrence']].lower()}"
+                f" · 🔁 {_recurrence_text(record)}"
                 if record['recurrence'] in _RECURRENCE_LABELS else ''
             )
             embed.add_field(
