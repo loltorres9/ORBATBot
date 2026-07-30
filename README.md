@@ -108,19 +108,39 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 
 ## Role-Based Access
 
+Grouped by the same four feature areas as [Features](#features) above, so the two sections line up.
+
+### 🗺️ ORBAT & Slots
+
 | Command | Members | Unit Leaders | Admins |
 |---|---|---|---|
 | `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
-| `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
-| `/assign-slot` | ❌ | ✅ (own unit only) | ✅ |
-| `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone` | ❌ | ❌ | ✅ |
-| `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals`, `/post-event`, `/restart` | ❌ | ❌ | ✅ |
+| `/assign-slot`, `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
 | Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
-| `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
-| `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
+| `/setup-slots`, `/post-orbat`, `/set-event-time`, `/post-event`, `/clear-requests`, `/current-operation` | ❌ | ❌ | ✅ |
+
+### 📅 Events
+
+| Command | Members | Unit Leaders | Admins |
+|---|---|---|---|
 | `/event-list`, signing up to an event | ✅ | ✅ | ✅ |
 | `/event-create` | ❌ | ✅ | ✅ |
-| `/event-edit`, `/event-cancel` | ❌ | ✅ (own events) | ✅ |
+| `/event-edit`, `/event-cancel` | ❌ | ✅ (own events only) | ✅ |
+
+Editing and cancelling go by **who created the event**, not by rank — one Unit Leader cannot change another's event. Admins can change any.
+
+### 🎮 Game Roles
+
+| Command | Members | Unit Leaders | Admins |
+|---|---|---|---|
+| `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
+| `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
+
+### ⚙️ Server & Maintenance
+
+| Command | Members | Unit Leaders | Admins |
+|---|---|---|---|
+| `/set-timezone`, `/sync`, `/restart`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
 
 **Unit roles:** `2nd USC`, `CNTO`, `PXG`, `TFP`, `SKUA`
 
