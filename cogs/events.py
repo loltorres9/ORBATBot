@@ -1,5 +1,6 @@
 import asyncio
 import calendar
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -10,14 +11,18 @@ from discord.ext import commands, tasks
 from utils import database
 from cogs.admin import _is_unit_leader_or_admin, _parse_event_time
 
-# Response keys stored in event_signups.response, in the order they're displayed.
-RESPONSES = ('accepted', 'tentative', 'declined')
+# The built-in response set, used by every event that defines no custom one.
+# Keys match what pre-existing sign-up rows already store.
+DEFAULT_RESPONSES = (
+    {'key': 'accepted',  'label': 'Accepted',  'emoji': '✅', 'is_decline': 0},
+    {'key': 'tentative', 'label': 'Tentative', 'emoji': '❓', 'is_decline': 0},
+    {'key': 'declined',  'label': 'Declined',  'emoji': '❌', 'is_decline': 1},
+)
 
-_RESPONSE_LABELS = {
-    'accepted': ('✅', 'Accepted'),
-    'tentative': ('❓', 'Tentative'),
-    'declined': ('❌', 'Declined'),
-}
+# Discord allows 5 buttons per action row; 10 keeps the view to two tidy rows.
+MAX_RESPONSES = 10
+MIN_RESPONSES = 2
+MAX_RESPONSE_LABEL = 40
 
 # Recurrence keys stored in events.recurrence. The two weekday variants take
 # their weekday — and for monthly_nth their position — from the series anchor.
@@ -55,6 +60,110 @@ _REMINDER_CHOICES = [
     app_commands.Choice(name='2 hours before', value=120),
     app_commands.Choice(name='24 hours before', value=1440),
 ]
+
+
+def _is_emoji(token: str) -> bool:
+    """True if *token* is something Discord accepts as a button emoji.
+
+    PartialEmoji.from_str() turns plain words into named emoji that Discord then
+    rejects, taking the whole component with it, so anything with ASCII letters
+    is treated as an ordinary label word instead.
+    """
+    try:
+        parsed = discord.PartialEmoji.from_str(token)
+    except Exception:
+        return False
+    if parsed.id is not None:
+        return True
+    return bool(token) and not any(c.isascii() and c.isalpha() for c in token)
+
+
+def _response_key(label: str) -> str:
+    slug = re.sub(r'[^a-z0-9]+', '_', label.lower()).strip('_')
+    return (slug or 'option')[:24]
+
+
+def _parse_responses(raw: str) -> list:
+    """Parse `✅ Coming | ❓ Maybe | -❌ Can't make it` into response definitions.
+
+    A leading `-` marks a response that means "not coming": those people are
+    left out of reminders, the way Declined always has been.
+    """
+    entries = [part.strip() for part in raw.split('|')]
+    entries = [part for part in entries if part]
+
+    if len(entries) < MIN_RESPONSES:
+        raise ValueError(
+            f"Give at least {MIN_RESPONSES} responses, separated by `|` — "
+            "for example `✅ Coming | ❓ Maybe | -❌ Can't make it`."
+        )
+    if len(entries) > MAX_RESPONSES:
+        raise ValueError(
+            f"That's {len(entries)} responses; {MAX_RESPONSES} is the most that fits on a message."
+        )
+
+    parsed, used = [], set()
+    for order, entry in enumerate(entries):
+        is_decline = 0
+        if entry.startswith('-'):
+            is_decline, entry = 1, entry[1:].strip()
+
+        emoji = None
+        parts = entry.split(None, 1)
+        if parts and _is_emoji(parts[0]):
+            if len(parts) == 1:
+                raise ValueError(f"`{parts[0]}` has no wording after it — every response needs a label.")
+            emoji, entry = parts[0], parts[1].strip()
+
+        if not entry:
+            raise ValueError("Every response needs a label, e.g. `✅ Coming`.")
+        if len(entry) > MAX_RESPONSE_LABEL:
+            raise ValueError(
+                f"`{entry[:20]}…` is too long — keep response labels under "
+                f"{MAX_RESPONSE_LABEL} characters so they fit on a button."
+            )
+
+        key = base = _response_key(entry)
+        suffix = 2
+        while key in used:
+            key = f"{base[:22]}_{suffix}"
+            suffix += 1
+        used.add(key)
+        parsed.append({'key': key, 'label': entry, 'emoji': emoji,
+                       'is_decline': is_decline, 'sort_order': order})
+
+    if all(item['is_decline'] for item in parsed):
+        raise ValueError(
+            "At least one response has to mean *coming* — right now every one is "
+            "marked with `-`, so nobody could ever sign up."
+        )
+    return parsed
+
+
+async def load_responses(event_id: int) -> list:
+    """An event's response set, falling back to the built-in one."""
+    rows = await database.get_event_responses(event_id)
+    return [dict(row) for row in rows] if rows else [dict(r) for r in DEFAULT_RESPONSES]
+
+
+def _attending(signups: list, responses: list) -> list:
+    """Everyone whose response doesn't mean "not coming" — the people a reminder
+    or a cancellation notice is actually for."""
+    declining = {item['key'] for item in responses if item['is_decline']}
+    return [row for row in signups if row['response'] not in declining]
+
+
+def _response_label(responses: list, key: str) -> str:
+    item = discord.utils.find(lambda r: r['key'] == key, responses)
+    return item['label'] if item else key
+
+
+def _describe_responses(responses: list) -> str:
+    return ' · '.join(
+        f"{(r['emoji'] + ' ') if r['emoji'] else ''}{r['label']}"
+        + (' *(not coming)*' if r['is_decline'] else '')
+        for r in responses
+    )
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -180,8 +289,8 @@ def _is_organiser(member: discord.Member, event) -> bool:
     return str(member.id) == event['created_by']
 
 
-def _group_signups(signups: list) -> dict:
-    grouped = {key: [] for key in RESPONSES}
+def _group_signups(signups: list, responses: list) -> dict:
+    grouped = {item['key']: [] for item in responses}
     for row in signups:
         # Ignore any response value we don't recognise rather than crashing.
         grouped.get(row['response'], []).append(row)
@@ -207,8 +316,9 @@ def _format_attendees(rows: list) -> str:
     return '\n'.join(lines)
 
 
-def _build_event_embed(event, signups: list) -> discord.Embed:
-    grouped = _group_signups(signups)
+def _build_event_embed(event, signups: list, responses: list = None) -> discord.Embed:
+    responses = responses or [dict(r) for r in DEFAULT_RESPONSES]
+    grouped = _group_signups(signups, responses)
     start = _as_utc(event['event_time'])
     start_ts = int(start.timestamp())
     status = event['status']
@@ -244,11 +354,11 @@ def _build_event_embed(event, signups: list) -> discord.Embed:
             repeat += "\nThe next one is posted automatically when this one ends."
         embed.add_field(name='🔁 Repeats', value=repeat, inline=False)
 
-    for key in RESPONSES:
-        emoji, label = _RESPONSE_LABELS[key]
-        rows = grouped[key]
+    for item in responses:
+        rows = grouped[item['key']]
+        prefix = f"{item['emoji']} " if item['emoji'] else ''
         embed.add_field(
-            name=f"{emoji} {label} ({len(rows)})",
+            name=f"{prefix}{item['label']} ({len(rows)})"[:256],
             value=_format_attendees(rows),
             inline=True,
         )
@@ -284,11 +394,13 @@ async def _refresh_event_message(bot: commands.Bot, event, view=None) -> bool:
         return False
 
     signups = await database.get_event_signups(event['id'])
+    responses = await load_responses(event['id'])
     if view is None:
-        view = EventRsvpView(event['id'], bot) if event['status'] == 'scheduled' else None
+        view = (EventRsvpView(event['id'], bot, responses)
+                if event['status'] == 'scheduled' else None)
 
     try:
-        await msg.edit(embed=_build_event_embed(event, signups), view=view)
+        await msg.edit(embed=_build_event_embed(event, signups, responses), view=view)
         return True
     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
         return False
@@ -341,12 +453,18 @@ async def _spawn_next_occurrence(bot: commands.Bot, event) -> Optional[int]:
         recurrence_anchor=anchor,
     )
 
+    # A series keeps its response set — the next occurrence must look identical.
+    custom = await database.get_event_responses(event['id'])
+    if custom:
+        await database.set_event_responses(new_id, [dict(row) for row in custom])
+    responses = await load_responses(new_id)
+
     new_event = await database.get_event(new_id)
-    view = EventRsvpView(new_id, bot)
+    view = EventRsvpView(new_id, bot, responses)
     try:
         msg = await channel.send(
             content=f"<@&{event['mention_role_id']}>" if event['mention_role_id'] else None,
-            embed=_build_event_embed(new_event, []),
+            embed=_build_event_embed(new_event, [], responses),
             view=view,
         )
     except (discord.Forbidden, discord.HTTPException):
@@ -368,25 +486,27 @@ class EventRsvpView(discord.ui.View):
     """Accept / Tentative / Decline buttons on an event message. Pressing the
     response you already gave withdraws it."""
 
-    def __init__(self, event_id: int, bot: commands.Bot):
+    def __init__(self, event_id: int, bot: commands.Bot, responses: list = None):
         super().__init__(timeout=None)
         self.event_id = event_id
         self.bot = bot
+        self.responses = responses or [dict(r) for r in DEFAULT_RESPONSES]
 
-        styles = {
-            'accepted': discord.ButtonStyle.success,
-            'tentative': discord.ButtonStyle.secondary,
-            'declined': discord.ButtonStyle.danger,
-        }
-        for key in RESPONSES:
-            emoji, label = _RESPONSE_LABELS[key]
+        for index, item in enumerate(self.responses[:MAX_RESPONSES]):
+            if item['is_decline']:
+                style = discord.ButtonStyle.danger
+            elif index == 0:
+                style = discord.ButtonStyle.success
+            else:
+                style = discord.ButtonStyle.secondary
             button = discord.ui.Button(
-                label=label,
-                style=styles[key],
-                emoji=emoji,
-                custom_id=f'event_rsvp:{event_id}:{key}',
+                label=item['label'][:80],
+                style=style,
+                emoji=item['emoji'] or None,
+                custom_id=f"event_rsvp:{event_id}:{item['key']}",
+                row=index // 5,
             )
-            button.callback = self._make_callback(key)
+            button.callback = self._make_callback(item['key'])
             self.add_item(button)
 
     def _make_callback(self, response: str):
@@ -409,7 +529,13 @@ class EventRsvpView(discord.ui.View):
             return
 
         existing = await database.get_event_signup(self.event_id, str(interaction.user.id))
-        emoji, label = _RESPONSE_LABELS[response]
+        item = discord.utils.find(lambda r: r['key'] == response, self.responses)
+        if item is None:
+            await interaction.response.send_message(
+                "⚠️ That option no longer exists on this event.", ephemeral=True
+            )
+            return
+        emoji, label = item['emoji'] or '•', item['label']
 
         if existing and existing['response'] == response:
             await database.remove_event_signup(self.event_id, str(interaction.user.id))
@@ -466,8 +592,9 @@ class EventsCog(commands.Cog):
 
         start_ts = int(_as_utc(event['event_time']).timestamp())
         signups = await database.get_event_signups(event['id'])
-        # Anyone who said yes or maybe gets the nudge; people who declined don't.
-        attending = [s for s in signups if s['response'] in ('accepted', 'tentative')]
+        responses = await load_responses(event['id'])
+        # Anyone whose answer isn't a "not coming" one gets the nudge.
+        attending = _attending(signups, responses)
 
         for row in attending:
             try:
@@ -475,7 +602,7 @@ class EventsCog(commands.Cog):
                 await member.send(
                     f"⏰ **Event Reminder — {event['title']}**\n"
                     f"Starts <t:{start_ts}:R> (<t:{start_ts}:F>).\n"
-                    f"Your response: **{_RESPONSE_LABELS[row['response']][1]}**"
+                    f"Your response: **{_response_label(responses, row['response'])}**"
                 )
             except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                 pass
@@ -526,6 +653,7 @@ class EventsCog(commands.Cog):
         image_url='Banner image shown on the event',
         repeat='Repeat the event automatically after each occurrence ends',
         repeat_until='Stop repeating after this date, e.g. 31/12/2025 23:59',
+        responses="Your own sign-up buttons, e.g. ✅ Coming | ❓ Maybe | -❌ Can't. Prefix with - for 'not coming'",
     )
     @app_commands.choices(reminder=_REMINDER_CHOICES, repeat=_REPEAT_CHOICES)
     async def event_create(
@@ -542,6 +670,7 @@ class EventsCog(commands.Cog):
         image_url: str = None,
         repeat: str = 'none',
         repeat_until: str = None,
+        responses: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -575,6 +704,14 @@ class EventsCog(commands.Cog):
                 ephemeral=True,
             )
             return
+
+        custom_responses = None
+        if responses:
+            try:
+                custom_responses = _parse_responses(responses)
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
 
         recurrence = repeat if repeat in _RECURRENCE_LABELS else None
         until = None
@@ -615,12 +752,16 @@ class EventsCog(commands.Cog):
             recurrence_until=until,
         )
 
+        if custom_responses:
+            await database.set_event_responses(event_id, custom_responses)
+        active_responses = await load_responses(event_id)
+
         event = await database.get_event(event_id)
-        view = EventRsvpView(event_id, self.bot)
+        view = EventRsvpView(event_id, self.bot, active_responses)
         try:
             msg = await target.send(
                 content=mention.mention if mention else None,
-                embed=_build_event_embed(event, []),
+                embed=_build_event_embed(event, [], active_responses),
                 view=view,
             )
         except discord.Forbidden:
@@ -674,11 +815,15 @@ class EventsCog(commands.Cog):
                     f"\nThe next one goes up when this one ends, for "
                     f"<t:{int(_as_utc(nxt).timestamp())}:F>."
                 )
+        response_line = (
+            f"\n🗳️ Sign-up options: {_describe_responses(custom_responses)}"
+            if custom_responses else ""
+        )
         await interaction.followup.send(
             f"✅ **{title}** created as event **#{event_id}** in {target.mention}.\n"
             f"Starts <t:{ts}:F> (<t:{ts}:R>)."
             + (f"\nReminder {reminder} min before." if reminder else "\nNo reminder set.")
-            + repeat_line,
+            + repeat_line + response_line,
             ephemeral=True,
         )
 
@@ -697,6 +842,7 @@ class EventsCog(commands.Cog):
         reminder='New reminder window',
         repeat='Change the repeat interval, or pick "Don\'t repeat" to stop the series',
         repeat_until='Stop repeating after this date, e.g. 31/12/2025 23:59',
+        responses="Replace the sign-up buttons, e.g. ✅ Coming | ❓ Maybe | -❌ Can't",
     )
     @app_commands.choices(reminder=_REMINDER_CHOICES, repeat=_REPEAT_CHOICES)
     @app_commands.autocomplete(event=_event_autocomplete)
@@ -712,6 +858,7 @@ class EventsCog(commands.Cog):
         reminder: int = None,
         repeat: str = None,
         repeat_until: str = None,
+        responses: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -767,11 +914,20 @@ class EventsCog(commands.Cog):
                 await interaction.followup.send(f"❌ {e}", ephemeral=True)
                 return
 
+        new_responses = None
+        if responses:
+            try:
+                new_responses = _parse_responses(responses)
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
+
         changed = [
             name for name, value in (
                 ('title', title), ('start time', parsed), ('description', description),
                 ('duration', duration), ('location', location), ('reminder', reminder),
                 ('repeat', repeat), ('repeat end', until),
+                ('sign-up options', new_responses),
             ) if value is not None
         ]
         if not changed:
@@ -812,12 +968,27 @@ class EventsCog(commands.Cog):
                     repeat_note += f" until <t:{int(_as_utc(new_until).timestamp())}:d>"
                 repeat_note += "."
 
+        response_note = ""
+        if new_responses:
+            await database.set_event_responses(event, new_responses)
+            # Answers people gave under the old options would otherwise survive
+            # in the table while rendering nowhere.
+            dropped = await database.drop_signups_not_in(
+                event, [item['key'] for item in new_responses]
+            )
+            response_note = f"\n🗳️ Sign-up options: {_describe_responses(new_responses)}"
+            if dropped:
+                response_note += (
+                    f"\n⚠️ **{dropped}** existing sign-up(s) used an option that no longer "
+                    "exists and were cleared — those members need to answer again."
+                )
+
         record = await database.get_event(event)
         reached = await _refresh_event_message(self.bot, record)
         note = "" if reached else "\n⚠️ I couldn't update the event message — it may have been deleted."
         if parsed:
             note += "\nThe reminder was re-armed for the new time."
-        note += repeat_note
+        note += repeat_note + response_note
         await interaction.followup.send(
             f"✅ Updated **{record['title']}** (#{event}): {', '.join(changed)}.{note}",
             ephemeral=True,
@@ -884,7 +1055,7 @@ class EventsCog(commands.Cog):
                     )
 
         signups = await database.get_event_signups(event)
-        notify = [s for s in signups if s['response'] in ('accepted', 'tentative')]
+        notify = _attending(signups, await load_responses(event))
         reason_line = f"\nReason: {reason}" if reason else ""
         for row in notify:
             try:
@@ -926,9 +1097,11 @@ class EventsCog(commands.Cog):
         for record in events:
             ts = int(_as_utc(record['event_time']).timestamp())
             signups = await database.get_event_signups(record['id'])
-            grouped = _group_signups(signups)
+            responses = await load_responses(record['id'])
+            grouped = _group_signups(signups, responses)
             counts = ' · '.join(
-                f"{_RESPONSE_LABELS[key][0]} {len(grouped[key])}" for key in RESPONSES
+                f"{item['emoji'] or item['label']} {len(grouped[item['key']])}"
+                for item in responses
             )
             link = ''
             if record['channel_id'] and record['message_id']:
