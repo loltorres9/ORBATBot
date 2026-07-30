@@ -157,10 +157,25 @@ Index `idx_events_guild_status` on `(guild_id, status, event_time)` backs the up
 | `event_id` | INTEGER | FK → `events.id` **ON DELETE CASCADE** |
 | `member_id` | TEXT | |
 | `member_name` | TEXT | Display name at signup time |
-| `response` | TEXT | `accepted` / `tentative` / `declined` |
+| `response` | TEXT | A key from the event's response set — `accepted` / `tentative` / `declined` unless the event defines its own |
 | `created_at` / `updated_at` | TIMESTAMP | |
 
 `UNIQUE (event_id, member_id)` — one row per member, changing your answer updates it in place. Withdrawing deletes the row entirely, so "no response" and "declined" stay distinct.
+
+### `event_responses`
+Custom sign-up options for one event. **No rows means the event uses `DEFAULT_RESPONSES`** — that fallback is what keeps every event created before this feature working unchanged.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `event_id` | INTEGER | FK → `events.id` **ON DELETE CASCADE** |
+| `key` | TEXT | Slug of the label; goes into the button `custom_id` and into `event_signups.response` |
+| `label` | TEXT | Button text |
+| `emoji` | TEXT | Optional |
+| `is_decline` | INTEGER | 1 = "not coming"; excluded from reminders and cancellation DMs |
+| `sort_order` | INTEGER | Button and embed-field order |
+
+`UNIQUE (event_id, key)`. The default keys are deliberately `accepted` / `tentative` / `declined` so existing `event_signups` rows keep resolving.
 
 ---
 
@@ -195,7 +210,7 @@ Index `idx_events_guild_status` on `(guild_id, status, event_time)` backs the up
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
 | `/event-list`, RSVP buttons on an event | ✅ | ✅ | ✅ |
 | `/event-create` | ❌ | ✅ | ✅ |
-| `/event-edit`, `/event-cancel` | ❌ | ✅ own events | ✅ |
+| `/event-edit`, `/event-cancel`, `/event-delete` | ❌ | ✅ own events | ✅ |
 
 **Admin** = `manage_guild` or `administrator` Discord permission.
 **Unit gating:** `_can_action_request()` in `slots.py` — admins bypass all unit checks; Unit Leaders must share the requester's unit role; requests with no unit role can be actioned by anyone.
@@ -418,7 +433,7 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
 
 Apollo-style standalone events. **Deliberately independent of the slot/ORBAT system** — no Google Sheet, no `operations` row, no `requests`. An event is a message with Accept / Tentative / Decline buttons and a live attendee list.
 
-Staged build toward Apollo parity. Done: sign-ups, reminders, editing, cancelling, auto close-out, **recurring events**. Still to come: **sign-up roles with per-role caps**, then waitlist, templates and a calendar view.
+Staged build toward Apollo parity. Done: sign-ups, reminders, editing, cancelling, auto close-out, **recurring events**, **custom responses**. Still to come: **sign-up roles with per-role caps**, then waitlist, templates and a calendar view.
 
 ### Commands
 
@@ -431,15 +446,36 @@ Only the passed fields change — `update_event()` uses `COALESCE`, so omitted f
 **`/event-cancel <event> [reason] [stop_series]`** (organiser or admin)
 Sets status `cancelled`, re-renders the message in red without buttons, and DMs everyone who accepted or was tentative. On a recurring event, `stop_series` defaults to **False** — cancelling one occurrence posts the next one, since "this week is off, next week isn't" is the common case. `stop_series: True` clears the recurrence first, so nothing can spawn a successor afterwards.
 
+**`/event-delete <event>`** (organiser or admin)
+Deletes the row and its message for good; sign-ups and custom responses go with it via `ON DELETE CASCADE`. Behind a confirmation button because it can't be undone. Its autocomplete uses `get_guild_events()` — **cancelled and completed events included**, since those are the ones being cleaned up, unlike the other `event` params which only offer scheduled ones.
+
+The confirmation states the sign-up count and, when someone is signed up to a scheduled event, warns they will **not** be told and points at `/event-cancel` instead. That is the split: cancel keeps the record and DMs everyone, delete removes it silently.
+
 **`/event-list`** (everyone) — upcoming events with per-response counts and a jump link.
 
 `event` params use autocomplete over the guild's upcoming events, so users pick a title rather than typing an ID.
 
 ### RSVP flow
 
-`EventRsvpView` has three buttons with `custom_id` `event_rsvp:{event_id}:{response}`. Pressing **the response you already gave withdraws it** (deletes the signup row) — that toggle is stated in the embed footer, because it isn't otherwise discoverable. Pressing a different one updates in place via the `UNIQUE (event_id, member_id)` upsert.
+`EventRsvpView` builds one button per response, with `custom_id` `event_rsvp:{event_id}:{key}`. Pressing **the response you already gave withdraws it** (deletes the signup row) — that toggle is stated in the embed footer, because it isn't otherwise discoverable. Pressing a different one updates in place via the `UNIQUE (event_id, member_id)` upsert.
 
 Every change re-reads the event and refreshes the message through `_refresh_event_message()`, fire-and-forget.
+
+### Custom responses
+
+`responses` on `/event-create` and `/event-edit` takes `✅ Coming | ❓ Maybe | -❌ Can't`. `_parse_responses()` splits on `|`, treats a leading `-` as `is_decline`, and pulls a leading emoji off the front when `_is_emoji()` accepts it — the same ASCII-letter guard as `gameroles._is_renderable_emoji`, since a word Discord rejects as an emoji would break the whole button row.
+
+Keys come from `_response_key()` (slug of the label, deduplicated with a numeric suffix). They land in both the `custom_id` and `event_signups.response`, so they must be stable and unique per event.
+
+**`load_responses(event_id)` is the single entry point** — it returns the stored set or a copy of `DEFAULT_RESPONSES`. Anything that renders buttons, groups sign-ups, or decides who gets a reminder goes through it, including `bot.py`'s view restoration: a restored view has to carry that event's own keys or its `custom_id`s won't match.
+
+`_attending()` replaces the old hard-coded `response in ('accepted', 'tentative')` test — reminders and cancellation DMs now go to everyone whose response is not flagged `is_decline`.
+
+Two limits: at least 2 responses, at most `MAX_RESPONSES = 10` (two button rows), labels under 40 characters. A set where *every* option is a decline is rejected, since nobody could sign up.
+
+**Changing the set on a live event clears sign-ups whose key no longer exists** (`drop_signups_not_in()`), and `/event-edit` reports how many. Leaving them would keep rows that render nowhere and silently skew nothing visible.
+
+A recurring event copies its response set to each new occurrence in `_spawn_next_occurrence()`.
 
 ### Recurrence
 
@@ -495,7 +531,7 @@ If the next occurrence can't be posted (channel gone, `Forbidden`), the freshly 
 - **Per-user timezones come free for display.** All times render as Discord timestamps (`<t:…:F>`), which every client localises automatically. Only *input* is guild-timezone based, so a per-user input timezone is the only part still missing.
 - **Persistence** mirrors `ApprovalView`: `setup_hook()` calls `get_live_events()` and re-adds one `EventRsvpView` per open event. Events without a `message_id` are skipped.
 - `_format_attendees()` trims mention lists to Discord's 1024-char field limit and appends "…and N more", while the field *name* keeps the true total.
-- `_group_signups()` ignores unrecognised `response` values rather than raising, so a future response type can't break old embeds.
+- `_group_signups()` ignores unrecognised `response` values rather than raising, so a stale key can't break an embed.
 
 ---
 

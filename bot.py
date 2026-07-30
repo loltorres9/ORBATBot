@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from utils import database
 from cogs.slots import ApprovalView, OrbatRequestButton
 from cogs.gameroles import GameRolePanelView
-from cogs.events import EventRsvpView
+from cogs.events import EventRsvpView, load_responses
 
 load_dotenv()
 
@@ -74,10 +74,14 @@ class ORBATBot(commands.Bot):
 
         print(f"{len(pending)} pending view(s) restored.")
 
-        # Re-register RSVP buttons for every event that is still open
+        # Re-register RSVP buttons for every event that is still open. The custom
+        # ids encode each event's own response keys, so they have to be loaded.
         live_events = await database.get_live_events()
         for event in live_events:
-            self.add_view(EventRsvpView(event_id=event['id'], bot=self))
+            self.add_view(EventRsvpView(
+                event_id=event['id'], bot=self,
+                responses=await load_responses(event['id']),
+            ))
 
         print(f"{len(live_events)} event view(s) restored.")
 

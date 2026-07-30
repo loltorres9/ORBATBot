@@ -131,6 +131,20 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_events_guild_status
                 ON events (guild_id, status, event_time)
         ''')
+        # Per-event custom sign-up responses. No rows means the event uses the
+        # built-in Accepted / Tentative / Declined set.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS event_responses (
+                id SERIAL PRIMARY KEY,
+                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                emoji TEXT,
+                is_decline INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (event_id, key)
+            )
+        ''')
         # Recurrence, added after the events tables shipped
         await db.execute('''
             ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence TEXT
@@ -628,6 +642,26 @@ async def get_upcoming_events(guild_id: str, limit: int = 25) -> list:
         )
 
 
+async def delete_event(event_id: int) -> bool:
+    """Remove an event outright. Sign-ups and custom responses go with it via
+    ON DELETE CASCADE."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute('DELETE FROM events WHERE id = $1', event_id)
+        return int(result.split()[-1]) > 0
+
+
+async def get_guild_events(guild_id: str, limit: int = 25) -> list:
+    """Recent and upcoming events of any status — for picking one to delete."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            '''SELECT * FROM events WHERE guild_id = $1
+               ORDER BY event_time DESC LIMIT $2''',
+            guild_id, limit,
+        )
+
+
 async def get_live_events() -> list:
     """Every event whose message still needs working buttons — used to restore
     persistent views after a restart."""
@@ -678,6 +712,44 @@ async def get_event_signups(event_id: int) -> list:
             'SELECT * FROM event_signups WHERE event_id = $1 ORDER BY created_at',
             event_id,
         )
+
+
+async def get_event_responses(event_id: int) -> list:
+    """Custom responses for an event, in display order. Empty means defaults."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM event_responses WHERE event_id = $1 ORDER BY sort_order',
+            event_id,
+        )
+
+
+async def set_event_responses(event_id: int, responses: list):
+    """Replace an event's response set. An empty list restores the defaults."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            await db.execute('DELETE FROM event_responses WHERE event_id = $1', event_id)
+            for order, item in enumerate(responses):
+                await db.execute(
+                    '''INSERT INTO event_responses
+                       (event_id, key, label, emoji, is_decline, sort_order)
+                       VALUES ($1, $2, $3, $4, $5, $6)''',
+                    event_id, item['key'], item['label'], item.get('emoji'),
+                    int(item.get('is_decline', 0)), order,
+                )
+
+
+async def drop_signups_not_in(event_id: int, valid_keys: list) -> int:
+    """Remove sign-ups whose response no longer exists, so a changed response set
+    can't leave rows that render nowhere."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute(
+            'DELETE FROM event_signups WHERE event_id = $1 AND NOT (response = ANY($2::text[]))',
+            event_id, list(valid_keys),
+        )
+        return int(result.split()[-1])
 
 
 async def get_events_needing_reminder() -> list:

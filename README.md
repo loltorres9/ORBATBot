@@ -55,13 +55,15 @@ Standalone events with their own sign-ups — trainings, movie nights, campaign 
 | Command | Who | What |
 |---|---|---|
 | `/event-list` | Everyone | Upcoming events with sign-up counts and jump links |
-| `/event-create <title> <start_time>` | Unit Leader+ | Create an event; optional description, duration, location, channel, ping role, reminder, banner image and **repeat interval** |
-| `/event-edit <event>` | Organiser or Admin | Change any field; moving the start time re-arms the reminder. `repeat:none` stops a series |
-| `/event-cancel <event> [reason] [stop_series]` | Organiser or Admin | Cancel it and DM everyone who signed up |
+| `/event-create <title> <start_time>` | Unit Leader+ | Create an event; optional description, duration, location, channel, ping role, reminder, banner image, **repeat interval** and **custom sign-up options** |
+| `/event-edit <event>` | Organiser or Admin | Change any field including the sign-up options; moving the start time re-arms the reminder. `repeat:none` stops a series |
+| `/event-cancel <event> [reason] [stop_series]` | Organiser or Admin | Cancel it and DM everyone who signed up; the message stays as a record |
+| `/event-delete <event>` | Organiser or Admin | Delete it and its message for good, after a confirmation |
 
 **How it behaves**
 
 - Sign-up is three buttons — **✅ Accepted**, **❓ Tentative**, **❌ Declined** — with the attendee list updating live for everyone
+- **Custom sign-up options** — replace those three with your own, e.g. `🚁 Pilot | 🔫 Infantry | -❌ Can't`
 - Pressing the button you already chose **withdraws** you, which is not the same as declining
 - **Repeating events** — daily, weekly, every 2 weeks, or monthly by date or by weekday (*last Saturday of the month*); the next one posts itself when the current one ends
 - Reminders DM everyone who accepted or was tentative, plus a channel ping and the event's ping role
@@ -126,7 +128,7 @@ Grouped by the same four feature areas as [Features](#features) above, so the tw
 |---|---|---|---|
 | `/event-list`, signing up to an event | ✅ | ✅ | ✅ |
 | `/event-create` | ❌ | ✅ | ✅ |
-| `/event-edit`, `/event-cancel` | ❌ | ✅ (own events only) | ✅ |
+| `/event-edit`, `/event-cancel`, `/event-delete` | ❌ | ✅ (own events only) | ✅ |
 
 Editing and cancelling go by **who created the event**, not by rank — one Unit Leader cannot change another's event. Admins can change any.
 
@@ -477,7 +479,7 @@ Standalone events with sign-ups — weekly trainings, movie nights, campaign ses
 
 An event is a message with three buttons. Members press one and the attendee list updates live for everyone.
 
-> Built in stages toward full Apollo-style functionality. Already in: sign-ups, reminders, editing, cancelling, automatic close-out and **repeating events**. Coming next: **sign-up roles with per-role limits**, then waitlist, templates and a calendar view.
+> Built in stages toward full Apollo-style functionality. Already in: sign-ups, reminders, editing, cancelling, automatic close-out, **repeating events** and **custom sign-up options**. Coming next: **sign-up roles with per-role limits**, then waitlist, templates and a calendar view.
 
 ### Creating an event (Admins and Unit Leaders)
 
@@ -500,6 +502,7 @@ Everything else is optional:
 | `image_url` | A banner image shown on the event |
 | `repeat` | Daily, weekly, fortnightly, or monthly by date or weekday — see [Repeating events](#repeating-events) |
 | `repeat_until` | Stop repeating after this date |
+| `responses` | Your own sign-up buttons — see [Custom sign-up options](#custom-sign-up-options) |
 
 ```
 /event-edit event:#3 start_time:26/06/2025 20:00
@@ -515,7 +518,24 @@ Marks the event cancelled, greys out the message, removes the buttons and DMs ev
 
 On a **repeating** event this cancels only that one occurrence and posts the next one — "this week is off, next week isn't" is the usual case. Add `stop_series: True` to end the whole series instead.
 
-Both commands autocomplete: start typing and pick the event from the list instead of remembering its number.
+```
+/event-delete event:#3
+```
+
+Removes the event and its message **for good**, together with every sign-up on it. There's a confirmation step first, because it can't be undone.
+
+**Cancel or delete?**
+
+| | `/event-cancel` | `/event-delete` |
+|---|---|---|
+| The message | Stays, greyed out as a record | Removed from the channel |
+| People who signed up | Get a DM | **Are not told** |
+| Sign-ups | Kept | Deleted with the event |
+| Good for | An event that was real but isn't happening | Test events, typos, clutter |
+
+If anyone is signed up to a scheduled event, the confirmation says so and points you at `/event-cancel` instead. Its autocomplete also lists cancelled and finished events — those are usually the ones you want to tidy away.
+
+All these commands autocomplete: start typing and pick the event from the list instead of remembering its number.
 
 ### Repeating events
 
@@ -582,6 +602,31 @@ Press one of the three buttons on the event:
 Pressing a different button changes your answer. **Pressing the button you already chose withdraws you** and takes you off the list entirely — which is not the same as declining. The footer on every event says so.
 
 `/event-list` shows all upcoming events with sign-up counts and a jump link to each one.
+
+### Custom sign-up options
+
+The three default buttons don't suit every event. Give `responses` your own list, separated by `|`:
+
+```
+/event-create title:Air Assault start_time:25/06/2026 19:00 responses:🚁 Pilot | 🔫 Infantry | ❓ Maybe | -❌ Can't make it
+```
+
+That event gets four buttons instead of three, and the attendee list on the message is grouped by exactly those options.
+
+- **An emoji at the start of an entry** becomes the button's icon. It's optional — `Pilot | Infantry` works too.
+- **A leading `-` marks "not coming".** Those people are left out of reminders and cancellation DMs, the way *Declined* always has been. At least one option has to mean *coming*.
+- Between **2 and 10** options, labels under 40 characters.
+- Leave `responses` out and you keep the usual **✅ Accepted / ❓ Tentative / ❌ Declined**.
+
+Everything else behaves the same: pressing the button you already picked withdraws you, and a repeating event carries its options to every future occurrence.
+
+To change the options later:
+
+```
+/event-edit event:#3 responses:✅ In | -❌ Out
+```
+
+If anyone had already signed up with an option you removed, their answer is cleared and the bot tells you how many — they need to answer again. Options you keep are unaffected.
 
 ### Reminders and close-out
 
