@@ -143,6 +143,9 @@ Standalone events, independent of `operations` and Google Sheets — see Events 
 | `reminder_minutes` | INTEGER | Default 30; NULL means no reminder |
 | `reminder_fired` | INTEGER | 0/1 — reset to 0 when `event_time` changes |
 | `status` | TEXT | `scheduled` / `cancelled` / `completed` |
+| `recurrence` | TEXT | NULL, or `daily` / `weekly` / `biweekly` / `monthly` |
+| `recurrence_until` | TIMESTAMP | Optional end of the series (naive UTC) |
+| `recurrence_anchor` | TIMESTAMP | The **first** occurrence's start, carried unchanged down the series |
 | `created_at` / `updated_at` | TIMESTAMP | |
 
 Index `idx_events_guild_status` on `(guild_id, status, event_time)` backs the upcoming-events lookup.
@@ -415,7 +418,7 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
 
 Apollo-style standalone events. **Deliberately independent of the slot/ORBAT system** — no Google Sheet, no `operations` row, no `requests`. An event is a message with Accept / Tentative / Decline buttons and a live attendee list.
 
-This is stage 1 of a staged build toward Apollo parity. Still to come, in priority order: **sign-up roles with per-role caps**, **recurring events**, then waitlist, templates and a calendar view.
+Staged build toward Apollo parity. Done: sign-ups, reminders, editing, cancelling, auto close-out, **recurring events**. Still to come: **sign-up roles with per-role caps**, then waitlist, templates and a calendar view.
 
 ### Commands
 
@@ -425,8 +428,8 @@ Parses `start_time` with `_parse_event_time()` from `admin.py` in the guild's ti
 **`/event-edit <event> [title] [start_time] [description] [duration] [location] [reminder]`** (organiser or admin)
 Only the passed fields change — `update_event()` uses `COALESCE`, so omitted fields keep their value. Changing the time resets `reminder_fired` to 0 so the reminder fires again for the new time.
 
-**`/event-cancel <event> [reason]`** (organiser or admin)
-Sets status `cancelled`, re-renders the message in red without buttons, and DMs everyone who accepted or was tentative.
+**`/event-cancel <event> [reason] [stop_series]`** (organiser or admin)
+Sets status `cancelled`, re-renders the message in red without buttons, and DMs everyone who accepted or was tentative. On a recurring event, `stop_series` defaults to **False** — cancelling one occurrence posts the next one, since "this week is off, next week isn't" is the common case. `stop_series: True` clears the recurrence first, so nothing can spawn a successor afterwards.
 
 **`/event-list`** (everyone) — upcoming events with per-response counts and a jump link.
 
@@ -438,12 +441,27 @@ Sets status `cancelled`, re-renders the message in red without buttons, and DMs 
 
 Every change re-reads the event and refreshes the message through `_refresh_event_message()`, fire-and-forget.
 
+### Recurrence
+
+Stored key → what the user picks: `daily` → Daily, `weekly` → Weekly, `biweekly` → **Every 2 weeks**, `monthly` → Monthly (same day each month). `_RECURRENCE_LABELS` holds the mapping and `_REPEAT_CHOICES` the command choices; the choice values are exactly those keys plus `none`.
+
+`repeat` on `/event-create` and `/event-edit` sets `recurrence`; `repeat_until` bounds the series. `/event-edit repeat:none` stops it — that path goes through `set_event_recurrence()` rather than `update_event()`, because `update_event()` uses `COALESCE` and therefore cannot write NULL.
+
+**One live occurrence at a time.** There is no pre-generated calendar of rows. When `event_task` finishes an occurrence it calls `_spawn_next_occurrence()`, which creates and posts the next one and registers its view. Sign-ups deliberately do **not** carry over — each occurrence is answered fresh.
+
+**`recurrence_anchor` is why monthly repeats don't drift.** `_next_occurrence()` always measures from the anchor via `_nth_occurrence(anchor, recurrence, n)`, never from the previous occurrence. Measuring from the previous one would turn a 31 January series into 28 Feb → 28 Mar, permanently losing the 31st; anchoring gives 28 Feb → 31 Mar. `_add_months()` clamps to the last valid day of the target month.
+
+The same property fixes catch-up: `_next_occurrence()` walks `n` upward until the candidate is past the cutoff, so a bot that was offline for ten weeks posts **one** occurrence in the future rather than one per missed week. The walk is bounded at 4000 iterations.
+
+If the next occurrence can't be posted (channel gone, `Forbidden`), the freshly created row is set to `cancelled` so the series stops cleanly instead of retrying every minute.
+
 ### Background loop
 
 `EventsCog.event_task` runs every 60 s (separate from `bot.py`'s `reminder_task`, which stays operation-only):
 
 1. **Reminders** — `reminder_fired` is set *before* sending, so a failure can't cause a retry storm. DMs go to `accepted` and `tentative` only; the channel ping adds `mention_role_id` if set.
 2. **Finishing** — events past `event_time + duration` flip to `completed` and their message is re-rendered grey with buttons removed.
+3. **Handover** — a completed event with a `recurrence` spawns its next occurrence. Because the source is already `completed` by then, it is out of `get_finished_events()` and cannot spawn twice.
 
 `cog_unload()` cancels the loop; verified not to leak past unload.
 

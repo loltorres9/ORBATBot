@@ -131,6 +131,19 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_events_guild_status
                 ON events (guild_id, status, event_time)
         ''')
+        # Recurrence, added after the events tables shipped
+        await db.execute('''
+            ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence TEXT
+        ''')
+        await db.execute('''
+            ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence_until TIMESTAMP
+        ''')
+        # The first occurrence's start time, carried unchanged down the series so
+        # monthly repeats keep anchoring on the original day instead of drifting
+        # once a short month clamps the date.
+        await db.execute('''
+            ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence_anchor TIMESTAMP
+        ''')
         # Add event scheduling columns to existing operations tables
         await db.execute('''
             ALTER TABLE operations ADD COLUMN IF NOT EXISTS
@@ -503,25 +516,52 @@ async def get_game_role_panel(guild_id: str):
 # is correct regardless of the database session's timezone setting.
 # ---------------------------------------------------------------------------
 
+def _naive(dt):
+    """Strip tzinfo so values match the naive-UTC columns."""
+    if dt is not None and hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
 async def create_event(guild_id: str, title: str, event_time, created_by: str,
                        created_by_name: str = None, description: str = None,
                        duration_minutes: int = None, location: str = None,
                        image_url: str = None, mention_role_id: str = None,
-                       reminder_minutes: int = 30) -> int:
-    if hasattr(event_time, 'tzinfo') and event_time.tzinfo is not None:
-        event_time = event_time.replace(tzinfo=None)
+                       reminder_minutes: int = 30, recurrence: str = None,
+                       recurrence_until=None, recurrence_anchor=None) -> int:
+    event_time = _naive(event_time)
+    # A new series anchors on its own first start time.
+    if recurrence and recurrence_anchor is None:
+        recurrence_anchor = event_time
     pool = await get_pool()
     async with pool.acquire() as db:
         row = await db.fetchrow(
             '''INSERT INTO events
                (guild_id, title, event_time, created_by, created_by_name, description,
-                duration_minutes, location, image_url, mention_role_id, reminder_minutes)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                duration_minutes, location, image_url, mention_role_id, reminder_minutes,
+                recurrence, recurrence_until, recurrence_anchor)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                RETURNING id''',
             guild_id, title, event_time, created_by, created_by_name, description,
             duration_minutes, location, image_url, mention_role_id, reminder_minutes,
+            recurrence, _naive(recurrence_until), _naive(recurrence_anchor),
         )
         return row['id']
+
+
+async def set_event_recurrence(event_id: int, recurrence: str = None,
+                               recurrence_until=None, recurrence_anchor=None):
+    """Set the recurrence outright. Unlike update_event this can clear it, which
+    is how a series is stopped."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE events
+               SET recurrence = $2, recurrence_until = $3, recurrence_anchor = $4,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $1''',
+            event_id, recurrence, _naive(recurrence_until), _naive(recurrence_anchor),
+        )
 
 
 async def get_event(event_id: int):
