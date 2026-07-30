@@ -392,7 +392,9 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
 ### Railway (production)
 - Bot service: `python bot.py` (via Procfile)
 - PostgreSQL service: `DATABASE_URL` injected automatically
-- Auto-deploys on push to `master`
+- Auto-deploys on push to `main` — the single deployment branch. There is no
+  `master`; an earlier one was folded into `main` and deleted, so never
+  recreate it or target a PR at it.
 
 ### Docker (self-hosted)
 - `docker-compose.yml`: bot + postgres:16 containers
