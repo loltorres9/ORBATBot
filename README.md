@@ -523,7 +523,7 @@ Both commands autocomplete: start typing and pick the event from the list instea
 /event-create title:Weekly Training start_time:25/06/2025 19:00 repeat:Weekly
 ```
 
-Six patterns to choose from. Optionally add `repeat_until:31/12/2025 23:59` to end the series on a date.
+Seven patterns to choose from. Optionally add `repeat_until:31/12/2025 23:59` to end the series on a date.
 
 | `repeat` | Meaning | Example series |
 |---|---|---|
@@ -533,6 +533,7 @@ Six patterns to choose from. Optionally add `repeat_until:31/12/2025 23:59` to e
 | **Monthly — same date** | Same day number each month | 15 Jun → 15 Jul → 15 Aug |
 | **Monthly — last weekday** | **Last <weekday> of each month** | 27 Jun → 25 Jul → 29 Aug → 26 Sep |
 | **Monthly — same weekday** | Same weekday *position* each month | 2nd Sat: 13 Jun → 11 Jul → 8 Aug |
+| **Weekly — except the last one of the month** | Every week, but **skipping** the last `<weekday>` | 6 Jun → 13 Jun → 20 Jun → *(skips 27)* → 4 Jul |
 
 The weekday and the position both come from **the start time you give it**. So for a monthly op on the last Saturday:
 
@@ -541,6 +542,19 @@ The weekday and the position both come from **the start time you give it**. So f
 ```
 
 27 June 2026 is a Saturday, so the series runs on the last Saturday of every month from then on — 25 Jul, 29 Aug, 26 Sep, 31 Oct, and so on, always at 19:00. If the date you pick is *not* itself the last Saturday of its month, the bot says so when creating the event, so the shift doesn't surprise you later.
+
+#### Weekly ops around a monthly one
+
+**Weekly — except the last one of the month** is the counterpart: every Saturday *apart from* the last one. Pair the two and you get a monthly op on the last Saturday with weekly ops on all the others, with no double-booking:
+
+```
+/event-create title:Monthly Op start_time:27/06/2026 19:00 repeat:Monthly — last weekday
+/event-create title:Weekly Op  start_time:06/06/2026 19:00 repeat:Weekly — except the last one of the month
+```
+
+The weekly series runs 6, 13, 20 June, skips the 27th, then 4, 11, 18 July, skips the 25th, and so on. It adapts to the month: in a month with four Saturdays it runs three times, in a month with five it runs four times — always every Saturday but the last.
+
+Note this is *not* the same as picking the 1st through 4th Saturdays separately. In a four-Saturday month the 4th Saturday **is** the last one, so that approach would double-book your monthly op.
 
 Only ever **one occurrence exists at a time**. When the current one finishes, the bot posts the next automatically in the same channel, with the same description, duration, location, ping role and reminder. Sign-ups start fresh each time — nobody is carried over, so an "Accepted" always means someone answered for *that* date.
 
