@@ -642,6 +642,26 @@ async def get_upcoming_events(guild_id: str, limit: int = 25) -> list:
         )
 
 
+async def delete_event(event_id: int) -> bool:
+    """Remove an event outright. Sign-ups and custom responses go with it via
+    ON DELETE CASCADE."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute('DELETE FROM events WHERE id = $1', event_id)
+        return int(result.split()[-1]) > 0
+
+
+async def get_guild_events(guild_id: str, limit: int = 25) -> list:
+    """Recent and upcoming events of any status — for picking one to delete."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            '''SELECT * FROM events WHERE guild_id = $1
+               ORDER BY event_time DESC LIMIT $2''',
+            guild_id, limit,
+        )
+
+
 async def get_live_events() -> list:
     """Every event whose message still needs working buttons — used to restore
     persistent views after a restart."""

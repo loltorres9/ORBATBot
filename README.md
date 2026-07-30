@@ -57,7 +57,8 @@ Standalone events with their own sign-ups — trainings, movie nights, campaign 
 | `/event-list` | Everyone | Upcoming events with sign-up counts and jump links |
 | `/event-create <title> <start_time>` | Unit Leader+ | Create an event; optional description, duration, location, channel, ping role, reminder, banner image, **repeat interval** and **custom sign-up options** |
 | `/event-edit <event>` | Organiser or Admin | Change any field including the sign-up options; moving the start time re-arms the reminder. `repeat:none` stops a series |
-| `/event-cancel <event> [reason] [stop_series]` | Organiser or Admin | Cancel it and DM everyone who signed up |
+| `/event-cancel <event> [reason] [stop_series]` | Organiser or Admin | Cancel it and DM everyone who signed up; the message stays as a record |
+| `/event-delete <event>` | Organiser or Admin | Delete it and its message for good, after a confirmation |
 
 **How it behaves**
 
@@ -127,7 +128,7 @@ Grouped by the same four feature areas as [Features](#features) above, so the tw
 |---|---|---|---|
 | `/event-list`, signing up to an event | ✅ | ✅ | ✅ |
 | `/event-create` | ❌ | ✅ | ✅ |
-| `/event-edit`, `/event-cancel` | ❌ | ✅ (own events only) | ✅ |
+| `/event-edit`, `/event-cancel`, `/event-delete` | ❌ | ✅ (own events only) | ✅ |
 
 Editing and cancelling go by **who created the event**, not by rank — one Unit Leader cannot change another's event. Admins can change any.
 
@@ -517,7 +518,24 @@ Marks the event cancelled, greys out the message, removes the buttons and DMs ev
 
 On a **repeating** event this cancels only that one occurrence and posts the next one — "this week is off, next week isn't" is the usual case. Add `stop_series: True` to end the whole series instead.
 
-Both commands autocomplete: start typing and pick the event from the list instead of remembering its number.
+```
+/event-delete event:#3
+```
+
+Removes the event and its message **for good**, together with every sign-up on it. There's a confirmation step first, because it can't be undone.
+
+**Cancel or delete?**
+
+| | `/event-cancel` | `/event-delete` |
+|---|---|---|
+| The message | Stays, greyed out as a record | Removed from the channel |
+| People who signed up | Get a DM | **Are not told** |
+| Sign-ups | Kept | Deleted with the event |
+| Good for | An event that was real but isn't happening | Test events, typos, clutter |
+
+If anyone is signed up to a scheduled event, the confirmation says so and points you at `/event-cancel` instead. Its autocomplete also lists cancelled and finished events — those are usually the ones you want to tidy away.
+
+All these commands autocomplete: start typing and pick the event from the list instead of remembering its number.
 
 ### Repeating events
 

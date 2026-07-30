@@ -376,6 +376,24 @@ def _build_event_embed(event, signups: list, responses: list = None) -> discord.
     return embed
 
 
+async def _delete_event_message(bot: commands.Bot, event) -> bool:
+    """Remove an event's message from its channel. False if it can't be reached."""
+    if not event['channel_id'] or not event['message_id']:
+        return False
+    channel = bot.get_channel(int(event['channel_id']))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(event['channel_id']))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return False
+    try:
+        msg = await channel.fetch_message(int(event['message_id']))
+        await msg.delete()
+        return True
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return False
+
+
 async def _refresh_event_message(bot: commands.Bot, event, view=None) -> bool:
     """Re-render an event's message. Returns False if it could not be reached."""
     if not event['channel_id'] or not event['message_id']:
@@ -1072,6 +1090,105 @@ class EventsCog(commands.Cog):
             f"**{len(notify)}** attendee(s).{series_note}",
             ephemeral=True,
         )
+
+    async def _any_event_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Unlike the others this offers cancelled and finished events too — those
+        are exactly the ones you clean up."""
+        events = await database.get_guild_events(str(interaction.guild_id), limit=25)
+        needle = current.lower()
+        marks = {'scheduled': '📅', 'cancelled': '❌', 'completed': '🏁'}
+        return [
+            app_commands.Choice(
+                name=f"{marks.get(e['status'], '•')} #{e['id']} · {e['title']}"[:100],
+                value=e['id'],
+            )
+            for e in events
+            if needle in e['title'].lower() or needle in str(e['id'])
+        ][:25]
+
+    @app_commands.command(
+        name='event-delete',
+        description='Delete an event and its message for good — organiser or admin only',
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(event='The event to delete, including cancelled and finished ones')
+    @app_commands.autocomplete(event=_any_event_autocomplete)
+    async def event_delete(self, interaction: discord.Interaction, event: int):
+        await interaction.response.defer(ephemeral=True)
+
+        record = await database.get_event(event)
+        if record is None or record['guild_id'] != str(interaction.guild_id):
+            await interaction.followup.send("❌ No such event on this server.", ephemeral=True)
+            return
+        if not _is_organiser(interaction.user, record):
+            await interaction.followup.send(
+                "🚫 Only the organiser or an admin can delete this event.", ephemeral=True
+            )
+            return
+
+        signups = await database.get_event_signups(event)
+        responses = await load_responses(event)
+        attending = _attending(signups, responses)
+
+        warning = ""
+        if record['status'] == 'scheduled' and attending:
+            warning = (
+                f"\n\n⚠️ **{len(attending)}** member(s) are signed up and **will not be "
+                "told**. If this event was real, use `/event-cancel` instead — that keeps "
+                "the record and DMs everyone."
+            )
+        if record['recurrence'] in _RECURRENCE_LABELS:
+            warning += "\n🔁 This is a repeating event; deleting it ends the series."
+
+        ts = int(_as_utc(record['event_time']).timestamp())
+        embed = discord.Embed(
+            title='⚠️ Delete Event — Confirmation',
+            description=(
+                f"**{record['title']}** (#{event}) — <t:{ts}:F>\n"
+                f"Status: **{record['status']}** · **{len(signups)}** sign-up(s)\n\n"
+                "This removes the event message and every sign-up on it. "
+                "**It cannot be undone.**" + warning
+            ),
+            color=discord.Color.red(),
+        )
+
+        bot_ref = self.bot
+
+        class ConfirmDeleteView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=60)
+
+            @discord.ui.button(label='Yes, delete it', style=discord.ButtonStyle.danger, emoji='🗑️')
+            async def confirm(self, btn: discord.Interaction, _button: discord.ui.Button):
+                self.stop()
+                current = await database.get_event(event)
+                if current is None:
+                    await btn.response.edit_message(
+                        content="ℹ️ That event is already gone.", embed=None, view=None
+                    )
+                    return
+                removed_message = await _delete_event_message(bot_ref, current)
+                await database.delete_event(event)
+                note = "" if removed_message else (
+                    "\n⚠️ The message couldn't be removed — it may already be deleted, "
+                    "or I lack permission in that channel."
+                )
+                await btn.response.edit_message(
+                    content=(
+                        f"🗑️ Deleted **{current['title']}** (#{event}) and its "
+                        f"**{len(signups)}** sign-up(s).{note}"
+                    ),
+                    embed=None, view=None,
+                )
+
+            @discord.ui.button(label='Keep it', style=discord.ButtonStyle.secondary, emoji='✖️')
+            async def keep(self, btn: discord.Interaction, _button: discord.ui.Button):
+                self.stop()
+                await btn.response.edit_message(
+                    content="Nothing deleted.", embed=None, view=None
+                )
+
+        await interaction.followup.send(embed=embed, view=ConfirmDeleteView(), ephemeral=True)
 
     @app_commands.command(
         name='event-list',

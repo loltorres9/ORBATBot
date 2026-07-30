@@ -210,7 +210,7 @@ Custom sign-up options for one event. **No rows means the event uses `DEFAULT_RE
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
 | `/event-list`, RSVP buttons on an event | ✅ | ✅ | ✅ |
 | `/event-create` | ❌ | ✅ | ✅ |
-| `/event-edit`, `/event-cancel` | ❌ | ✅ own events | ✅ |
+| `/event-edit`, `/event-cancel`, `/event-delete` | ❌ | ✅ own events | ✅ |
 
 **Admin** = `manage_guild` or `administrator` Discord permission.
 **Unit gating:** `_can_action_request()` in `slots.py` — admins bypass all unit checks; Unit Leaders must share the requester's unit role; requests with no unit role can be actioned by anyone.
@@ -445,6 +445,11 @@ Only the passed fields change — `update_event()` uses `COALESCE`, so omitted f
 
 **`/event-cancel <event> [reason] [stop_series]`** (organiser or admin)
 Sets status `cancelled`, re-renders the message in red without buttons, and DMs everyone who accepted or was tentative. On a recurring event, `stop_series` defaults to **False** — cancelling one occurrence posts the next one, since "this week is off, next week isn't" is the common case. `stop_series: True` clears the recurrence first, so nothing can spawn a successor afterwards.
+
+**`/event-delete <event>`** (organiser or admin)
+Deletes the row and its message for good; sign-ups and custom responses go with it via `ON DELETE CASCADE`. Behind a confirmation button because it can't be undone. Its autocomplete uses `get_guild_events()` — **cancelled and completed events included**, since those are the ones being cleaned up, unlike the other `event` params which only offer scheduled ones.
+
+The confirmation states the sign-up count and, when someone is signed up to a scheduled event, warns they will **not** be told and points at `/event-cancel` instead. That is the split: cancel keeps the record and DMs everyone, delete removes it silently.
 
 **`/event-list`** (everyone) — upcoming events with per-response counts and a jump link.
 
