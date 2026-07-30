@@ -2,6 +2,8 @@
 
 A Discord bot for managing Arma 3 operation slot requests. Members request slots via a two-step squad → slot picker or the **📋 Request a Slot** button on the ORBAT embed; admins and Unit Leaders approve or deny requests with a button click, and the Google Sheet is updated automatically.
 
+It also manages **self-assignable game roles** — permission-free tag roles for games like Minecraft or DCS that members opt into themselves, so you can `@mention` everyone who plays a given game. See [Game Roles](#game-roles).
+
 ---
 
 ## Features
@@ -25,6 +27,13 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 - `/debug-slots` — show the raw slot data the bot reads from the sheet; useful for diagnosing missing slots
 - `/sync` — force-sync slash commands with Discord; also refreshes the live ORBAT embed
 - `/restart` — restart the bot container on Railway; uses the Railway API if `RAILWAY_API_TOKEN` is set, otherwise exits the process so Railway's restart policy relaunches it
+- **Self-assignable game roles** — permission-free tag roles for games (Minecraft, DCS, …) that members opt into themselves
+- **🎮 Choose your game roles** button — persistent panel button; members pick their games without a command
+- `/game-roles` — pick your own game roles from a menu with your current roles pre-ticked
+- `/game-role-add <name> [emoji] [description]` — create a permission-free game role and make it self-assignable
+- `/game-role-remove <role> [delete_role]` — stop a role being self-assignable, optionally deleting it
+- `/game-role-panel [channel]` — post the self-assign panel; it updates itself when roles change
+- `/game-role-list` — list every game role on the server
 - Approval channel (`#slot-approvals`) with **Approve / Deny** buttons
 - Approved requests are deleted from `#slot-approvals` and archived as a compact embed in `#approval-archive`
 - Denial modal with optional reason text
@@ -52,10 +61,14 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone` | ❌ | ❌ | ✅ |
 | `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals`, `/post-event`, `/restart` | ❌ | ❌ | ✅ |
 | Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
+| `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
+| `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
 
 **Unit roles:** `2nd USC`, `CNTO`, `PXG`, `TFP`, `SKUA`
 
 A **Unit Leader** is any member with the `Unit Leader` Discord role. They can approve/deny requests, assign slots, and manage slots for members who share their unit role. Admins (Manage Server permission) have unrestricted access.
+
+The unit roles and `Unit Leader` can never be turned into game roles — the bot refuses, so members can't self-assign their way into approval rights.
 
 ---
 
@@ -90,8 +103,10 @@ The bot also supports **ORBAT-style sheets** where slots appear as cell values (
 2. Go to **Bot** → **Add Bot** → copy the **Token**
 3. Go to **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
-   - Bot permissions: `Send Messages`, `Embed Links`, `Read Message History`, `Manage Channels`, `Use Slash Commands`
+   - Bot permissions: `Send Messages`, `Embed Links`, `Read Message History`, `Manage Channels`, `Use Slash Commands`, `Manage Roles`
 4. Paste the generated URL in your browser and invite the bot to your server
+
+> **`Manage Roles` is only needed for the game roles feature.** Without it, everything else works fine and the game role commands will tell you what's missing. If you add the permission later, you don't have to re-invite the bot — grant it to the bot's role in **Server Settings → Roles**.
 
 > **Important — command visibility:** After the bot joins, go to **Server Settings → Integrations → ORBATBot → Manage**. Make sure `@everyone` is set to ✅ (allow). If it is set to ❌, all commands will be hidden from regular members regardless of what the bot configures. Admin-only commands are restricted automatically by the bot — you do not need to configure those manually.
 
@@ -224,6 +239,12 @@ Forfeits your current slot (pending or approved) and lets you pick a new one via
 ```
 
 Removes you from the operation entirely. Works for both pending and approved slots. If you were approved, your slot is also cleared from the sheet. Shows a confirmation prompt before acting.
+
+```
+/game-roles
+```
+
+Pick which game roles you want (Minecraft, DCS, …). Unrelated to operation slots — see [Game Roles](#game-roles).
 
 ---
 
@@ -362,6 +383,59 @@ When an event time is set, the bot automatically:
 - Posts a ping in `#orbat` tagging all approved members
 
 Reminders fire at the configured window before the event (default 30 minutes). The reminder fires once and will not repeat.
+
+---
+
+## Game Roles
+
+Self-assignable tag roles for games — Minecraft, DCS, Squad, whatever your members play. They are completely separate from the slot and ORBAT system, and they exist for one purpose: so anyone can `@mention` everyone who plays a given game.
+
+**These roles never grant permissions.** Roles the bot creates are created with no permissions at all and are mentionable by everyone. If you point the bot at a role that already exists, it checks it first and refuses when the role:
+
+- grants any server permission at all
+- is `@everyone`, or is managed by an integration (bot roles, the Nitro booster role)
+- is a unit role or `Unit Leader` — otherwise a member could self-assign their way into slot-approval rights
+- sits at or above the bot's own role, which Discord won't let it assign
+
+### Setting them up (Admins)
+
+```
+/game-role-add name:Minecraft emoji:⛏️ description:Vanilla and modded
+```
+
+Creates a permission-free, mentionable role called `Minecraft` and makes it self-assignable. `emoji` and `description` are optional and only affect how the role looks in the picker.
+
+If a role with that **exact name** already exists, it is reused rather than duplicated — so you can make your existing game roles self-assignable without recreating them. Running the command again for the same name just updates the emoji and description. You can have up to **25** game roles, which is as many as a Discord menu can show.
+
+```
+/game-role-panel #game-roles
+```
+
+Posts the panel: an embed listing every game role plus a **🎮 Choose your game roles** button. This is the normal way members opt in — no command to remember. There is one panel per server, and it updates itself whenever you add or remove a game role. The button keeps working after a bot restart.
+
+```
+/game-role-remove role:Minecraft
+```
+
+Stops the role being self-assignable. By default the Discord role itself stays and members who have it keep it — pass `delete_role: True` to delete it outright, which removes it from everyone. If you delete a game role in Discord directly, the bot drops it from its own list the next time it reads them.
+
+### Picking them (Members)
+
+Click **🎮 Choose your game roles** on the panel, or run:
+
+```
+/game-roles
+```
+
+Both open the same private menu listing every game role, with the ones you already have **already ticked**. Tick the games you play, untick the ones you don't, and submit — your game roles are set to exactly what you left selected. Deselecting everything is valid and removes all of them.
+
+Only the roles that actually changed are touched, and you get a short summary of what was added and removed. `/game-role-list` shows the available roles without changing anything.
+
+### Requirements
+
+The bot needs the **Manage Roles** permission, and its own role must sit **above** the game roles in **Server Settings → Roles** — Discord does not let a bot hand out roles ranked at or above its own. If either is missing, the bot says so with the specific fix instead of failing silently.
+
+No privileged intents are needed for this feature.
 
 ---
 
