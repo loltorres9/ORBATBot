@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from utils import database
 from cogs.slots import ApprovalView, OrbatRequestButton
+from cogs.gameroles import GameRolePanelView
 
 load_dotenv()
 
@@ -42,6 +43,13 @@ class ORBATBot(commands.Bot):
             print("❌ Failed to load cogs.admin:")
             traceback.print_exc()
 
+        try:
+            await self.load_extension('cogs.gameroles')
+            print("✅ Loaded cogs.gameroles")
+        except Exception:
+            print("❌ Failed to load cogs.gameroles:")
+            traceback.print_exc()
+
         registered = [c.name for c in self.tree.get_commands()]
         print(f"Commands registered in tree: {registered}")
 
@@ -49,6 +57,8 @@ class ORBATBot(commands.Bot):
         # continue to work after a bot restart.
         # Persistent ORBAT request button — one instance covers all guilds
         self.add_view(OrbatRequestButton(bot=self))
+        # Persistent game-role panel button — likewise global
+        self.add_view(GameRolePanelView(bot=self))
 
         pending = await database.get_all_pending_requests()
         for req in pending:
