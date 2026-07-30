@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from utils import database
 from cogs.slots import ApprovalView, OrbatRequestButton
 from cogs.gameroles import GameRolePanelView
+from cogs.events import EventRsvpView
 
 load_dotenv()
 
@@ -50,6 +51,13 @@ class ORBATBot(commands.Bot):
             print("❌ Failed to load cogs.gameroles:")
             traceback.print_exc()
 
+        try:
+            await self.load_extension('cogs.events')
+            print("✅ Loaded cogs.events")
+        except Exception:
+            print("❌ Failed to load cogs.events:")
+            traceback.print_exc()
+
         registered = [c.name for c in self.tree.get_commands()]
         print(f"Commands registered in tree: {registered}")
 
@@ -65,6 +73,13 @@ class ORBATBot(commands.Bot):
             self.add_view(ApprovalView(request_id=req['id'], bot=self))
 
         print(f"{len(pending)} pending view(s) restored.")
+
+        # Re-register RSVP buttons for every event that is still open
+        live_events = await database.get_live_events()
+        for event in live_events:
+            self.add_view(EventRsvpView(event_id=event['id'], bot=self))
+
+        print(f"{len(live_events)} event view(s) restored.")
 
         self.reminder_task.start()
         print("✅ Reminder task started.")

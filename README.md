@@ -4,6 +4,8 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 
 It also manages **self-assignable game roles** — permission-free tag roles for games like Minecraft or DCS that members opt into themselves, so you can `@mention` everyone who plays a given game. See [Game Roles](#game-roles).
 
+And it runs **standalone events** with sign-ups — trainings, movie nights, anything — where members answer Accepted / Tentative / Declined on a button and get reminded before the start. No Google Sheet involved. See [Events](#events).
+
 ---
 
 ## Features
@@ -34,6 +36,13 @@ It also manages **self-assignable game roles** — permission-free tag roles for
 - `/game-role-remove <role> [delete_role]` — stop a role being self-assignable, optionally deleting it
 - `/game-role-panel [channel]` — post the self-assign panel; it updates itself when roles change
 - `/game-role-list` — list every game role on the server
+- **Standalone events with sign-ups** — Accepted / Tentative / Declined on buttons, live attendee list, independent of the ORBAT system
+- `/event-create <title> <start_time>` — create an event; optional description, duration, location, channel, ping role, reminder and banner image
+- `/event-edit <event>` — change any field of an event; moving the time re-arms the reminder
+- `/event-cancel <event> [reason]` — cancel an event and DM everyone who signed up
+- `/event-list` — upcoming events with sign-up counts and jump links
+- Event reminders — DMs everyone who accepted or was tentative, plus a channel ping
+- Finished events close themselves out automatically (greyed out, buttons removed)
 - Approval channel (`#slot-approvals`) with **Approve / Deny** buttons
 - Approved requests are deleted from `#slot-approvals` and archived as a compact embed in `#approval-archive`
 - Denial modal with optional reason text
@@ -63,6 +72,9 @@ It also manages **self-assignable game roles** — permission-free tag roles for
 | Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
 | `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
+| `/event-list`, signing up to an event | ✅ | ✅ | ✅ |
+| `/event-create` | ❌ | ✅ | ✅ |
+| `/event-edit`, `/event-cancel` | ❌ | ✅ (own events) | ✅ |
 
 **Unit roles:** `2nd USC`, `CNTO`, `PXG`, `TFP`, `SKUA`
 
@@ -246,6 +258,12 @@ Removes you from the operation entirely. Works for both pending and approved slo
 
 Pick which game roles you want (Minecraft, DCS, …). Unrelated to operation slots — see [Game Roles](#game-roles).
 
+```
+/event-list
+```
+
+Show upcoming events and sign up to them with the buttons on each event. Unrelated to operation slots — see [Events](#events).
+
 ---
 
 ### Unit Leaders
@@ -383,6 +401,70 @@ When an event time is set, the bot automatically:
 - Posts a ping in `#orbat` tagging all approved members
 
 Reminders fire at the configured window before the event (default 30 minutes). The reminder fires once and will not repeat.
+
+---
+
+## Events
+
+Standalone events with sign-ups — weekly trainings, movie nights, campaign sessions. **Completely separate from the ORBAT slot system:** no Google Sheet, no operation required, and signing up to an event does not touch anyone's slot.
+
+An event is a message with three buttons. Members press one and the attendee list updates live for everyone.
+
+> This is the first stage of a staged build toward full Apollo-style functionality. Already in: sign-ups, reminders, editing, cancelling, automatic close-out. Coming next, in this order: **sign-up roles with per-role limits**, **recurring events**, then waitlist, templates and a calendar view.
+
+### Creating an event (Admins and Unit Leaders)
+
+```
+/event-create title:Weekly Training start_time:25/06/2025 19:00
+```
+
+Start times use the same format as the rest of the bot — `DD/MM/YYYY HH:MM` or `YYYY-MM-DD HH:MM` — and are read in the server timezone you set with `/set-timezone`. Times in the past are rejected.
+
+Everything else is optional:
+
+| Option | What it does |
+|---|---|
+| `description` | What the event is about |
+| `duration` | Length in minutes; shows an end time and decides when the event counts as finished |
+| `location` | Free text — a voice channel, a server name, a map |
+| `channel` | Where to post it (defaults to the current channel) |
+| `mention` | A role to ping when the reminder fires |
+| `reminder` | 15 / 30 / 60 min, 2 h, 24 h before, or no reminder at all |
+| `image_url` | A banner image shown on the event |
+
+```
+/event-edit event:#3 start_time:26/06/2025 20:00
+```
+
+Changes only what you pass — everything else keeps its value. Moving the start time re-arms the reminder, so it fires again for the new time. Only the organiser or an admin can edit.
+
+```
+/event-cancel event:#3 reason:Server maintenance
+```
+
+Marks the event cancelled, greys out the message, removes the buttons and DMs everyone who accepted or was tentative. The event stays visible as a record rather than vanishing.
+
+Both commands autocomplete: start typing and pick the event from the list instead of remembering its number.
+
+### Signing up (Members)
+
+Press one of the three buttons on the event:
+
+- **✅ Accepted** — you're coming
+- **❓ Tentative** — you might be
+- **❌ Declined** — you can't make it
+
+Pressing a different button changes your answer. **Pressing the button you already chose withdraws you** and takes you off the list entirely — which is not the same as declining. The footer on every event says so.
+
+`/event-list` shows all upcoming events with sign-up counts and a jump link to each one.
+
+### Reminders and close-out
+
+When the reminder window is reached, everyone who accepted or was tentative gets a DM, and the event's channel gets a ping — including the `mention` role if one was set. People who declined are left alone. The reminder fires once.
+
+Times always display as Discord timestamps, so **everyone sees the start in their own local time** without configuring anything.
+
+Once an event's start time — plus its duration, if set — has passed, the bot marks it finished, greys out the message and removes the buttons, so old events can't collect stray sign-ups.
 
 ---
 

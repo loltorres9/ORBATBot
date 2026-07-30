@@ -93,6 +93,44 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS events (
+                id SERIAL PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                channel_id TEXT,
+                message_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                event_time TIMESTAMP NOT NULL,
+                duration_minutes INTEGER,
+                location TEXT,
+                image_url TEXT,
+                mention_role_id TEXT,
+                created_by TEXT NOT NULL,
+                created_by_name TEXT,
+                reminder_minutes INTEGER DEFAULT 30,
+                reminder_fired INTEGER DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'scheduled',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS event_signups (
+                id SERIAL PRIMARY KEY,
+                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                member_id TEXT NOT NULL,
+                member_name TEXT NOT NULL,
+                response TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (event_id, member_id)
+            )
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_events_guild_status
+                ON events (guild_id, status, event_time)
+        ''')
         # Add event scheduling columns to existing operations tables
         await db.execute('''
             ALTER TABLE operations ADD COLUMN IF NOT EXISTS
@@ -454,6 +492,183 @@ async def get_game_role_panel(guild_id: str):
         return await db.fetchrow(
             'SELECT channel_id, message_id FROM game_role_panels WHERE guild_id = $1',
             guild_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Events
+#
+# event_time is naive UTC, like operations.event_time. These queries compare it
+# against NOW() AT TIME ZONE 'UTC' rather than CURRENT_TIMESTAMP so the result
+# is correct regardless of the database session's timezone setting.
+# ---------------------------------------------------------------------------
+
+async def create_event(guild_id: str, title: str, event_time, created_by: str,
+                       created_by_name: str = None, description: str = None,
+                       duration_minutes: int = None, location: str = None,
+                       image_url: str = None, mention_role_id: str = None,
+                       reminder_minutes: int = 30) -> int:
+    if hasattr(event_time, 'tzinfo') and event_time.tzinfo is not None:
+        event_time = event_time.replace(tzinfo=None)
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            '''INSERT INTO events
+               (guild_id, title, event_time, created_by, created_by_name, description,
+                duration_minutes, location, image_url, mention_role_id, reminder_minutes)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               RETURNING id''',
+            guild_id, title, event_time, created_by, created_by_name, description,
+            duration_minutes, location, image_url, mention_role_id, reminder_minutes,
+        )
+        return row['id']
+
+
+async def get_event(event_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow('SELECT * FROM events WHERE id = $1', event_id)
+
+
+async def save_event_message(event_id: int, channel_id: str, message_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            'UPDATE events SET channel_id = $1, message_id = $2 WHERE id = $3',
+            channel_id, message_id, event_id,
+        )
+
+
+async def update_event(event_id: int, title: str = None, description: str = None,
+                       event_time=None, duration_minutes: int = None,
+                       location: str = None, image_url: str = None,
+                       reminder_minutes: int = None):
+    """Update only the fields that were passed. Changing the time re-arms the reminder."""
+    if event_time is not None and hasattr(event_time, 'tzinfo') and event_time.tzinfo is not None:
+        event_time = event_time.replace(tzinfo=None)
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE events SET
+                   title = COALESCE($2, title),
+                   description = COALESCE($3, description),
+                   event_time = COALESCE($4, event_time),
+                   duration_minutes = COALESCE($5, duration_minutes),
+                   location = COALESCE($6, location),
+                   image_url = COALESCE($7, image_url),
+                   reminder_minutes = COALESCE($8, reminder_minutes),
+                   reminder_fired = CASE WHEN $4::timestamp IS NOT NULL
+                                         THEN 0 ELSE reminder_fired END,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $1''',
+            event_id, title, description, event_time, duration_minutes,
+            location, image_url, reminder_minutes,
+        )
+
+
+async def set_event_status(event_id: int, status: str) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute(
+            "UPDATE events SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+            status, event_id,
+        )
+        return int(result.split()[-1]) > 0
+
+
+async def get_upcoming_events(guild_id: str, limit: int = 25) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            """SELECT * FROM events
+               WHERE guild_id = $1 AND status = 'scheduled'
+               ORDER BY event_time
+               LIMIT $2""",
+            guild_id, limit,
+        )
+
+
+async def get_live_events() -> list:
+    """Every event whose message still needs working buttons — used to restore
+    persistent views after a restart."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            "SELECT * FROM events WHERE status = 'scheduled' AND message_id IS NOT NULL"
+        )
+
+
+async def set_event_signup(event_id: int, member_id: str, member_name: str, response: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''INSERT INTO event_signups (event_id, member_id, member_name, response)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (event_id, member_id) DO UPDATE SET
+                   member_name = EXCLUDED.member_name,
+                   response = EXCLUDED.response,
+                   updated_at = CURRENT_TIMESTAMP''',
+            event_id, member_id, member_name, response,
+        )
+
+
+async def remove_event_signup(event_id: int, member_id: str) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute(
+            'DELETE FROM event_signups WHERE event_id = $1 AND member_id = $2',
+            event_id, member_id,
+        )
+        return int(result.split()[-1]) > 0
+
+
+async def get_event_signup(event_id: int, member_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow(
+            'SELECT * FROM event_signups WHERE event_id = $1 AND member_id = $2',
+            event_id, member_id,
+        )
+
+
+async def get_event_signups(event_id: int) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM event_signups WHERE event_id = $1 ORDER BY created_at',
+            event_id,
+        )
+
+
+async def get_events_needing_reminder() -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            """SELECT * FROM events
+               WHERE status = 'scheduled'
+                 AND reminder_fired = 0
+                 AND reminder_minutes IS NOT NULL
+                 AND event_time - (reminder_minutes * INTERVAL '1 minute')
+                     <= (NOW() AT TIME ZONE 'UTC')
+                 AND event_time > (NOW() AT TIME ZONE 'UTC')"""
+        )
+
+
+async def mark_event_reminder_fired(event_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute('UPDATE events SET reminder_fired = 1 WHERE id = $1', event_id)
+
+
+async def get_finished_events() -> list:
+    """Scheduled events whose start time (plus duration) has passed."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            """SELECT * FROM events
+               WHERE status = 'scheduled'
+                 AND event_time + (COALESCE(duration_minutes, 0) * INTERVAL '1 minute')
+                     < (NOW() AT TIME ZONE 'UTC')"""
         )
 
 
