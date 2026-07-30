@@ -62,6 +62,83 @@ _REMINDER_CHOICES = [
 ]
 
 
+# `<@&123>` as the client produces it, a bare snowflake someone pasted, and every
+# mention-ish token — the last one so user and channel mentions can be stripped
+# out before bare ids are looked for.
+_ROLE_MENTION_RE = re.compile(r'<@&(\d+)>')
+_ANY_MENTION_RE = re.compile(r'<[^>]*>')
+_BARE_ID_RE = re.compile(r'(?<!\d)(\d{15,25})(?!\d)')
+
+# events.mention_role_id holds a comma-separated list of role ids. A row written
+# before multi-role support holds a single id, which parses as a one-item list —
+# which is why this needed no migration.
+MAX_MENTION_ROLES = 10
+
+
+def _mention_ids(event) -> list:
+    return [part for part in (event['mention_role_id'] or '').split(',') if part]
+
+
+def _mention_text(event) -> str:
+    """The ping prefix for an event's message and reminder."""
+    return ' '.join(f'<@&{role_id}>' for role_id in _mention_ids(event))
+
+
+def _parse_mention_roles(raw: str, guild: discord.Guild):
+    """Resolve `@Role @Other` (or ids, or comma-separated names) into roles.
+
+    Returns (roles, unknown). Raises ValueError when nothing usable is in there.
+    """
+    raw = (raw or '').strip()
+    if not raw:
+        return [], []
+
+    ids = _ROLE_MENTION_RE.findall(raw)
+    # Drop every <...> token before hunting bare snowflakes, otherwise the digits
+    # inside a user mention like <@123> would be taken for a role id.
+    leftover = _ANY_MENTION_RE.sub(' ', raw)
+    ids += _BARE_ID_RE.findall(leftover)
+
+    seen, ordered = set(), []
+    for role_id in ids:
+        if role_id not in seen:
+            seen.add(role_id)
+            ordered.append(role_id)
+
+    roles, unknown = [], []
+    if ordered:
+        for role_id in ordered:
+            role = guild.get_role(int(role_id))
+            if role is None:
+                unknown.append(role_id)
+            else:
+                roles.append(role)
+    else:
+        # Nothing looked like a mention — fall back to comma-separated names, so
+        # typing the names out still works.
+        for name in (part.strip() for part in leftover.split(',')):
+            if not name:
+                continue
+            role = discord.utils.find(
+                lambda r: r.name.lower() == name.lower(), guild.roles
+            )
+            if role is None:
+                unknown.append(name)
+            elif role not in roles:
+                roles.append(role)
+
+    if not roles:
+        raise ValueError(
+            "I couldn't find any of those roles. Type `@` and pick them from the "
+            "list, or give their exact names separated by commas."
+        )
+    if len(roles) > MAX_MENTION_ROLES:
+        raise ValueError(
+            f"That's {len(roles)} roles; {MAX_MENTION_ROLES} is the most I'll ping at once."
+        )
+    return roles, unknown
+
+
 def _is_emoji(token: str) -> bool:
     """True if *token* is something Discord accepts as a button emoji.
 
@@ -481,7 +558,7 @@ async def _spawn_next_occurrence(bot: commands.Bot, event) -> Optional[int]:
     view = EventRsvpView(new_id, bot, responses)
     try:
         msg = await channel.send(
-            content=f"<@&{event['mention_role_id']}>" if event['mention_role_id'] else None,
+            content=_mention_text(event) or None,
             embed=_build_event_embed(new_event, [], responses),
             view=view,
         )
@@ -632,8 +709,9 @@ class EventsCog(commands.Cog):
             return
 
         mentions = ' '.join(f"<@{row['member_id']}>" for row in attending)
-        if event['mention_role_id']:
-            mentions = f"<@&{event['mention_role_id']}> {mentions}".strip()
+        role_ping = _mention_text(event)
+        if role_ping:
+            mentions = f"{role_ping} {mentions}".strip()
         try:
             await channel.send(
                 f"⏰ **{event['title']}** starts <t:{start_ts}:R>!\n{mentions}".strip()
@@ -666,7 +744,7 @@ class EventsCog(commands.Cog):
         duration='Length in minutes',
         location='Where it happens, e.g. a voice channel or server name',
         channel='Where to post the event (defaults to the current channel)',
-        mention='Role to ping when the reminder fires',
+        mention='Role(s) to ping — type @ and pick, several are fine',
         reminder='How long before the start to remind attendees',
         image_url='Banner image shown on the event',
         repeat='Repeat the event automatically after each occurrence ends',
@@ -683,7 +761,7 @@ class EventsCog(commands.Cog):
         duration: int = None,
         location: str = None,
         channel: discord.TextChannel = None,
-        mention: discord.Role = None,
+        mention: str = None,
         reminder: int = 30,
         image_url: str = None,
         repeat: str = 'none',
@@ -722,6 +800,16 @@ class EventsCog(commands.Cog):
                 ephemeral=True,
             )
             return
+
+        mention_roles, unknown_mentions = [], []
+        if mention:
+            try:
+                mention_roles, unknown_mentions = _parse_mention_roles(
+                    mention, interaction.guild
+                )
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
 
         custom_responses = None
         if responses:
@@ -764,7 +852,7 @@ class EventsCog(commands.Cog):
             duration_minutes=duration,
             location=location.strip() if location else None,
             image_url=image_url.strip() if image_url else None,
-            mention_role_id=str(mention.id) if mention else None,
+            mention_role_id=','.join(str(r.id) for r in mention_roles) or None,
             reminder_minutes=reminder or None,
             recurrence=recurrence,
             recurrence_until=until,
@@ -778,7 +866,7 @@ class EventsCog(commands.Cog):
         view = EventRsvpView(event_id, self.bot, active_responses)
         try:
             msg = await target.send(
-                content=mention.mention if mention else None,
+                content=' '.join(r.mention for r in mention_roles) or None,
                 embed=_build_event_embed(event, [], active_responses),
                 view=view,
             )
@@ -837,11 +925,29 @@ class EventsCog(commands.Cog):
             f"\n🗳️ Sign-up options: {_describe_responses(custom_responses)}"
             if custom_responses else ""
         )
+        mention_line = ""
+        if mention_roles:
+            mention_line = (
+                f"\n📣 Pinging {len(mention_roles)} role(s): "
+                + ', '.join(r.mention for r in mention_roles)
+            )
+            not_pingable = [r for r in mention_roles if not r.mentionable]
+            if not_pingable:
+                mention_line += (
+                    "\n⚠️ " + ', '.join(f"**{r.name}**" for r in not_pingable)
+                    + " isn't mentionable, so it will show as text without notifying "
+                    "anyone unless I have **Mention All Roles**."
+                )
+        if unknown_mentions:
+            mention_line += (
+                "\n⚠️ Ignored, couldn't be resolved: "
+                + ', '.join(f"`{x}`" for x in unknown_mentions)
+            )
         await interaction.followup.send(
             f"✅ **{title}** created as event **#{event_id}** in {target.mention}.\n"
             f"Starts <t:{ts}:F> (<t:{ts}:R>)."
             + (f"\nReminder {reminder} min before." if reminder else "\nNo reminder set.")
-            + repeat_line + response_line,
+            + repeat_line + response_line + mention_line,
             ephemeral=True,
         )
 
@@ -861,6 +967,7 @@ class EventsCog(commands.Cog):
         repeat='Change the repeat interval, or pick "Don\'t repeat" to stop the series',
         repeat_until='Stop repeating after this date, e.g. 31/12/2025 23:59',
         responses="Replace the sign-up buttons, e.g. ✅ Coming | ❓ Maybe | -❌ Can't",
+        mention='Change the ping roles — type @ and pick, or `none` to stop pinging',
     )
     @app_commands.choices(reminder=_REMINDER_CHOICES, repeat=_REPEAT_CHOICES)
     @app_commands.autocomplete(event=_event_autocomplete)
@@ -877,6 +984,7 @@ class EventsCog(commands.Cog):
         repeat: str = None,
         repeat_until: str = None,
         responses: str = None,
+        mention: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -940,12 +1048,26 @@ class EventsCog(commands.Cog):
                 await interaction.followup.send(f"❌ {e}", ephemeral=True)
                 return
 
+        new_mentions = None      # None = leave alone, [] = clear
+        unknown_mentions = []
+        if mention is not None:
+            if mention.strip().lower() in ('none', 'clear', '-'):
+                new_mentions = []
+            else:
+                try:
+                    new_mentions, unknown_mentions = _parse_mention_roles(
+                        mention, interaction.guild
+                    )
+                except ValueError as e:
+                    await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                    return
+
         changed = [
             name for name, value in (
                 ('title', title), ('start time', parsed), ('description', description),
                 ('duration', duration), ('location', location), ('reminder', reminder),
                 ('repeat', repeat), ('repeat end', until),
-                ('sign-up options', new_responses),
+                ('sign-up options', new_responses), ('ping roles', new_mentions),
             ) if value is not None
         ]
         if not changed:
@@ -1001,12 +1123,27 @@ class EventsCog(commands.Cog):
                     "exists and were cleared — those members need to answer again."
                 )
 
+        mention_note = ""
+        if new_mentions is not None:
+            await database.set_event_mentions(
+                event, ','.join(str(r.id) for r in new_mentions) or None
+            )
+            if new_mentions:
+                mention_note = "\n📣 Now pings: " + ', '.join(r.mention for r in new_mentions)
+            else:
+                mention_note = "\n📣 No roles are pinged for this event any more."
+        if unknown_mentions:
+            mention_note += (
+                "\n⚠️ Ignored, couldn't be resolved: "
+                + ', '.join(f"`{x}`" for x in unknown_mentions)
+            )
+
         record = await database.get_event(event)
         reached = await _refresh_event_message(self.bot, record)
         note = "" if reached else "\n⚠️ I couldn't update the event message — it may have been deleted."
         if parsed:
             note += "\nThe reminder was re-armed for the new time."
-        note += repeat_note + response_note
+        note += repeat_note + response_note + mention_note
         await interaction.followup.send(
             f"✅ Updated **{record['title']}** (#{event}): {', '.join(changed)}.{note}",
             ephemeral=True,

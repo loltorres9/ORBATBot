@@ -497,7 +497,7 @@ Everything else is optional:
 | `duration` | Length in minutes; shows an end time and decides when the event counts as finished |
 | `location` | Free text — a voice channel, a server name, a map |
 | `channel` | Where to post it (defaults to the current channel) |
-| `mention` | A role to ping when the reminder fires |
+| `mention` | Role(s) to ping — type `@` and pick as many as you need |
 | `reminder` | 15 / 30 / 60 min, 2 h, 24 h before, or no reminder at all |
 | `image_url` | A banner image shown on the event |
 | `repeat` | Daily, weekly, fortnightly, or monthly by date or weekday — see [Repeating events](#repeating-events) |
@@ -602,6 +602,27 @@ Press one of the three buttons on the event:
 Pressing a different button changes your answer. **Pressing the button you already chose withdraws you** and takes you off the list entirely — which is not the same as declining. The footer on every event says so.
 
 `/event-list` shows all upcoming events with sign-up counts and a jump link to each one.
+
+### Pinging roles
+
+`mention` takes **as many roles as you need**, not just one:
+
+```
+/event-create title:Joint Op start_time:25/06/2026 19:00 mention:@2nd USC @CNTO @TFP
+```
+
+Type `@` in the field and pick them from the list — Discord turns each into a proper mention. All of them get pinged when the event is posted and again when the reminder fires. Up to 10 roles.
+
+If you'd rather type them, comma-separated names work too: `mention:2nd USC, CNTO`. Anything the bot can't find is reported back instead of being quietly ignored.
+
+To change or remove them later:
+
+```
+/event-edit event:#3 mention:@2nd USC @PXG   # replace the list
+/event-edit event:#3 mention:none            # stop pinging anyone
+```
+
+> A role only actually notifies people if it's **mentionable**, or if the bot has **Mention All Roles**. The bot warns you when you pick a role that isn't.
 
 ### Custom sign-up options
 

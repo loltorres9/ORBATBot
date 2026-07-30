@@ -137,7 +137,7 @@ Standalone events, independent of `operations` and Google Sheets — see Events 
 | `duration_minutes` | INTEGER | Optional; drives the end time and "finished" detection |
 | `location` | TEXT | Optional free text |
 | `image_url` | TEXT | Optional banner |
-| `mention_role_id` | TEXT | Role pinged on post and on the reminder |
+| `mention_role_id` | TEXT | **Comma-separated** role ids pinged on post and on the reminder. Singular name kept: a row written before multi-role support holds one id, which parses as a one-item list — which is why this needed no migration |
 | `created_by` | TEXT | Discord user ID of the organiser |
 | `created_by_name` | TEXT | Display name at creation time |
 | `reminder_minutes` | INTEGER | Default 30; NULL means no reminder |
@@ -460,6 +460,16 @@ The confirmation states the sign-up count and, when someone is signed up to a sc
 `EventRsvpView` builds one button per response, with `custom_id` `event_rsvp:{event_id}:{key}`. Pressing **the response you already gave withdraws it** (deletes the signup row) — that toggle is stated in the embed footer, because it isn't otherwise discoverable. Pressing a different one updates in place via the `UNIQUE (event_id, member_id)` upsert.
 
 Every change re-reads the event and refreshes the message through `_refresh_event_message()`, fire-and-forget.
+
+### Ping roles
+
+`mention` on `/event-create` and `/event-edit` is a **string**, not a `discord.Role` — the app-command system has no multi-role option type, and a string field still lets the client turn `@Role` into a proper `<@&id>` token.
+
+`_parse_mention_roles()` collects `<@&id>` tokens, then **strips every `<…>` token** before scanning for bare snowflakes. Without that strip, the digits inside a user mention `<@123>` are matched by the bare-id pattern and get stored as a role, which then renders as `<@&123>` and silently pings nobody. If nothing mention-shaped is found it falls back to comma-separated role *names*.
+
+Capped at `MAX_MENTION_ROLES = 10`. Unresolvable entries are reported rather than dropped silently, and roles that aren't `mentionable` produce a warning, since the bot needs **Mention All Roles** to actually notify through those.
+
+`/event-edit mention:none` clears the pings via `set_event_mentions()` — `update_event()` uses `COALESCE` and so cannot write NULL, the same reason `set_event_recurrence()` exists.
 
 ### Custom responses
 
