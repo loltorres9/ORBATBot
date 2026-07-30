@@ -1,4 +1,5 @@
 import asyncio
+import calendar
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -18,6 +19,22 @@ _RESPONSE_LABELS = {
     'declined': ('❌', 'Declined'),
 }
 
+# Recurrence keys stored in events.recurrence.
+_RECURRENCE_LABELS = {
+    'daily': 'Daily',
+    'weekly': 'Weekly',
+    'biweekly': 'Every 2 weeks',
+    'monthly': 'Monthly',
+}
+
+_REPEAT_CHOICES = [
+    app_commands.Choice(name="Don't repeat", value='none'),
+    app_commands.Choice(name='Daily', value='daily'),
+    app_commands.Choice(name='Weekly', value='weekly'),
+    app_commands.Choice(name='Every 2 weeks', value='biweekly'),
+    app_commands.Choice(name='Monthly (same day each month)', value='monthly'),
+]
+
 _REMINDER_CHOICES = [
     app_commands.Choice(name='No reminder', value=0),
     app_commands.Choice(name='15 minutes before', value=15),
@@ -31,6 +48,51 @@ _REMINDER_CHOICES = [
 def _as_utc(dt: datetime) -> datetime:
     """Attach UTC to the naive timestamps we store, so .timestamp() is correct."""
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _add_months(start: datetime, months: int) -> datetime:
+    """Shift by whole months, clamping to the last valid day of the target month
+    so 31 January + 1 month lands on 28/29 February rather than overflowing."""
+    total = start.month - 1 + months
+    year = start.year + total // 12
+    month = total % 12 + 1
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return start.replace(year=year, month=month, day=day)
+
+
+def _nth_occurrence(anchor: datetime, recurrence: str, n: int) -> Optional[datetime]:
+    """The nth occurrence counting from the series anchor (n=0 is the anchor)."""
+    if recurrence == 'daily':
+        return anchor + timedelta(days=n)
+    if recurrence == 'weekly':
+        return anchor + timedelta(weeks=n)
+    if recurrence == 'biweekly':
+        return anchor + timedelta(weeks=2 * n)
+    if recurrence == 'monthly':
+        return _add_months(anchor, n)
+    return None
+
+
+def _next_occurrence(anchor: datetime, recurrence: str, after: datetime) -> Optional[datetime]:
+    """First occurrence strictly after *after*.
+
+    Always measured from the anchor, never from the previous occurrence, so a
+    monthly series stays on its original day and a bot that was offline for
+    weeks catches up to the present in one step instead of posting every
+    missed occurrence.
+    """
+    if recurrence not in _RECURRENCE_LABELS or anchor is None:
+        return None
+    n = 1
+    # Bound the walk so a pathological anchor can't spin forever.
+    while n <= 4000:
+        candidate = _nth_occurrence(anchor, recurrence, n)
+        if candidate is None:
+            return None
+        if candidate > after:
+            return candidate
+        n += 1
+    return None
 
 
 def _is_organiser(member: discord.Member, event) -> bool:
@@ -96,6 +158,15 @@ def _build_event_embed(event, signups: list) -> discord.Embed:
     if event['location']:
         embed.add_field(name='📍 Where', value=event['location'][:1024], inline=False)
 
+    if event['recurrence'] in _RECURRENCE_LABELS:
+        repeat = _RECURRENCE_LABELS[event['recurrence']]
+        if event['recurrence_until']:
+            until_ts = int(_as_utc(event['recurrence_until']).timestamp())
+            repeat += f" · until <t:{until_ts}:d>"
+        if status == 'scheduled':
+            repeat += "\nThe next one is posted automatically when this one ends."
+        embed.add_field(name='🔁 Repeats', value=repeat, inline=False)
+
     for key in RESPONSES:
         emoji, label = _RESPONSE_LABELS[key]
         rows = grouped[key]
@@ -144,6 +215,72 @@ async def _refresh_event_message(bot: commands.Bot, event, view=None) -> bool:
         return True
     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
         return False
+
+
+async def _spawn_next_occurrence(bot: commands.Bot, event) -> Optional[int]:
+    """Create and post the next occurrence of a recurring event.
+
+    Returns the new event id, or None if the series has no next occurrence —
+    because it doesn't recur, has run past recurrence_until, or its channel
+    is gone. Sign-ups deliberately do not carry over: each occurrence is
+    answered fresh.
+    """
+    if event['recurrence'] not in _RECURRENCE_LABELS:
+        return None
+
+    anchor = event['recurrence_anchor'] or event['event_time']
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Never behind the event itself, so a series can't spawn into its own past.
+    after = max(now, event['event_time'])
+    next_time = _next_occurrence(anchor, event['recurrence'], after)
+    if next_time is None:
+        return None
+    if event['recurrence_until'] and next_time > event['recurrence_until']:
+        return None
+    if not event['channel_id']:
+        return None
+
+    channel = bot.get_channel(int(event['channel_id']))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(event['channel_id']))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+
+    new_id = await database.create_event(
+        guild_id=event['guild_id'],
+        title=event['title'],
+        event_time=next_time,
+        created_by=event['created_by'],
+        created_by_name=event['created_by_name'],
+        description=event['description'],
+        duration_minutes=event['duration_minutes'],
+        location=event['location'],
+        image_url=event['image_url'],
+        mention_role_id=event['mention_role_id'],
+        reminder_minutes=event['reminder_minutes'],
+        recurrence=event['recurrence'],
+        recurrence_until=event['recurrence_until'],
+        recurrence_anchor=anchor,
+    )
+
+    new_event = await database.get_event(new_id)
+    view = EventRsvpView(new_id, bot)
+    try:
+        msg = await channel.send(
+            content=f"<@&{event['mention_role_id']}>" if event['mention_role_id'] else None,
+            embed=_build_event_embed(new_event, []),
+            view=view,
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        # Couldn't post it — drop the recurrence so the series stops cleanly
+        # rather than retrying every minute forever.
+        await database.set_event_status(new_id, 'cancelled')
+        return None
+
+    await database.save_event_message(new_id, str(channel.id), str(msg.id))
+    bot.add_view(view)
+    return new_id
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +375,8 @@ class EventsCog(commands.Cog):
             event = await database.get_event(event['id'])
             # Buttons come off once the event is over.
             await _refresh_event_message(self.bot, event, view=None)
+            # A recurring event hands over to its next occurrence here.
+            await _spawn_next_occurrence(self.bot, event)
 
     @event_task.before_loop
     async def before_event_task(self):
@@ -308,8 +447,10 @@ class EventsCog(commands.Cog):
         mention='Role to ping when the reminder fires',
         reminder='How long before the start to remind attendees',
         image_url='Banner image shown on the event',
+        repeat='Repeat the event automatically after each occurrence ends',
+        repeat_until='Stop repeating after this date, e.g. 31/12/2025 23:59',
     )
-    @app_commands.choices(reminder=_REMINDER_CHOICES)
+    @app_commands.choices(reminder=_REMINDER_CHOICES, repeat=_REPEAT_CHOICES)
     async def event_create(
         self,
         interaction: discord.Interaction,
@@ -322,6 +463,8 @@ class EventsCog(commands.Cog):
         mention: discord.Role = None,
         reminder: int = 30,
         image_url: str = None,
+        repeat: str = 'none',
+        repeat_until: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -356,6 +499,28 @@ class EventsCog(commands.Cog):
             )
             return
 
+        recurrence = repeat if repeat in _RECURRENCE_LABELS else None
+        until = None
+        if repeat_until:
+            if recurrence is None:
+                await interaction.followup.send(
+                    "❌ `repeat_until` only makes sense together with `repeat`.",
+                    ephemeral=True,
+                )
+                return
+            try:
+                until = _parse_event_time(repeat_until, tz_name)
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
+            if until <= parsed:
+                await interaction.followup.send(
+                    "❌ `repeat_until` has to be after the first start time, "
+                    "otherwise the event would never repeat.",
+                    ephemeral=True,
+                )
+                return
+
         target = channel or interaction.channel
         event_id = await database.create_event(
             guild_id=str(interaction.guild_id),
@@ -369,6 +534,8 @@ class EventsCog(commands.Cog):
             image_url=image_url.strip() if image_url else None,
             mention_role_id=str(mention.id) if mention else None,
             reminder_minutes=reminder or None,
+            recurrence=recurrence,
+            recurrence_until=until,
         )
 
         event = await database.get_event(event_id)
@@ -400,10 +567,22 @@ class EventsCog(commands.Cog):
         self.bot.add_view(view)
 
         ts = int(_as_utc(parsed).timestamp())
+        repeat_line = ""
+        if recurrence:
+            nxt = _next_occurrence(parsed, recurrence, parsed)
+            repeat_line = f"\n🔁 Repeats **{_RECURRENCE_LABELS[recurrence].lower()}**"
+            if until:
+                repeat_line += f" until <t:{int(_as_utc(until).timestamp())}:d>"
+            if nxt and not (until and nxt > until):
+                repeat_line += (
+                    f"\nThe next one goes up when this one ends, for "
+                    f"<t:{int(_as_utc(nxt).timestamp())}:F>."
+                )
         await interaction.followup.send(
             f"✅ **{title}** created as event **#{event_id}** in {target.mention}.\n"
             f"Starts <t:{ts}:F> (<t:{ts}:R>)."
-            + (f"\nReminder {reminder} min before." if reminder else "\nNo reminder set."),
+            + (f"\nReminder {reminder} min before." if reminder else "\nNo reminder set.")
+            + repeat_line,
             ephemeral=True,
         )
 
@@ -420,8 +599,10 @@ class EventsCog(commands.Cog):
         duration='New length in minutes',
         location='New location',
         reminder='New reminder window',
+        repeat='Change the repeat interval, or pick "Don\'t repeat" to stop the series',
+        repeat_until='Stop repeating after this date, e.g. 31/12/2025 23:59',
     )
-    @app_commands.choices(reminder=_REMINDER_CHOICES)
+    @app_commands.choices(reminder=_REMINDER_CHOICES, repeat=_REPEAT_CHOICES)
     @app_commands.autocomplete(event=_event_autocomplete)
     async def event_edit(
         self,
@@ -433,6 +614,8 @@ class EventsCog(commands.Cog):
         duration: int = None,
         location: str = None,
         reminder: int = None,
+        repeat: str = None,
+        repeat_until: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -472,10 +655,27 @@ class EventsCog(commands.Cog):
             )
             return
 
+        until = None
+        if repeat_until:
+            if repeat == 'none':
+                await interaction.followup.send(
+                    "❌ `repeat_until` conflicts with stopping the repeat. "
+                    "Pass one or the other.",
+                    ephemeral=True,
+                )
+                return
+            try:
+                until = _parse_event_time(repeat_until, tz_name if start_time else
+                                          await database.get_guild_timezone(str(interaction.guild_id)))
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
+
         changed = [
             name for name, value in (
                 ('title', title), ('start time', parsed), ('description', description),
                 ('duration', duration), ('location', location), ('reminder', reminder),
+                ('repeat', repeat), ('repeat end', until),
             ) if value is not None
         ]
         if not changed:
@@ -494,11 +694,30 @@ class EventsCog(commands.Cog):
             reminder_minutes=reminder,
         )
 
+        repeat_note = ""
+        if repeat is not None or until is not None:
+            new_rec = record['recurrence'] if repeat is None else (
+                repeat if repeat in _RECURRENCE_LABELS else None
+            )
+            if new_rec is None:
+                await database.set_event_recurrence(event, None, None, None)
+                repeat_note = "\n🔁 The series is stopped — no further occurrences will be posted."
+            else:
+                # Re-anchor when the start time moved, so the series follows it.
+                anchor = parsed or record['recurrence_anchor'] or record['event_time']
+                new_until = until if until is not None else record['recurrence_until']
+                await database.set_event_recurrence(event, new_rec, new_until, anchor)
+                repeat_note = f"\n🔁 Now repeats **{_RECURRENCE_LABELS[new_rec].lower()}**"
+                if new_until:
+                    repeat_note += f" until <t:{int(_as_utc(new_until).timestamp())}:d>"
+                repeat_note += "."
+
         record = await database.get_event(event)
         reached = await _refresh_event_message(self.bot, record)
         note = "" if reached else "\n⚠️ I couldn't update the event message — it may have been deleted."
         if parsed:
             note += "\nThe reminder was re-armed for the new time."
+        note += repeat_note
         await interaction.followup.send(
             f"✅ Updated **{record['title']}** (#{event}): {', '.join(changed)}.{note}",
             ephemeral=True,
@@ -509,10 +728,15 @@ class EventsCog(commands.Cog):
         description='Cancel an event and notify everyone who signed up',
     )
     @app_commands.guild_only()
-    @app_commands.describe(event='The event to cancel', reason='Why it is being cancelled')
+    @app_commands.describe(
+        event='The event to cancel',
+        reason='Why it is being cancelled',
+        stop_series='For a repeating event: also stop all future occurrences',
+    )
     @app_commands.autocomplete(event=_event_autocomplete)
     async def event_cancel(
-        self, interaction: discord.Interaction, event: int, reason: str = None
+        self, interaction: discord.Interaction, event: int, reason: str = None,
+        stop_series: bool = False,
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -531,9 +755,33 @@ class EventsCog(commands.Cog):
             )
             return
 
+        recurring = record['recurrence'] in _RECURRENCE_LABELS
+        if recurring and stop_series:
+            # Clear it first so nothing can spawn a successor afterwards.
+            await database.set_event_recurrence(event, None, None, None)
+            record = await database.get_event(event)
+
         await database.set_event_status(event, 'cancelled')
         record = await database.get_event(event)
         await _refresh_event_message(self.bot, record, view=None)
+
+        series_note = ""
+        if recurring:
+            if stop_series:
+                series_note = "\n🔁 The whole series is stopped — no further occurrences."
+            else:
+                next_id = await _spawn_next_occurrence(self.bot, record)
+                if next_id:
+                    nxt = await database.get_event(next_id)
+                    ts = int(_as_utc(nxt['event_time']).timestamp())
+                    series_note = (
+                        f"\n🔁 Only this occurrence was cancelled. The next one is up "
+                        f"as **#{next_id}** for <t:{ts}:F>."
+                    )
+                else:
+                    series_note = (
+                        "\n🔁 This was the last occurrence in the series — nothing follows it."
+                    )
 
         signups = await database.get_event_signups(event)
         notify = [s for s in signups if s['response'] in ('accepted', 'tentative')]
@@ -550,7 +798,7 @@ class EventsCog(commands.Cog):
 
         await interaction.followup.send(
             f"✅ Cancelled **{record['title']}** (#{event}) and notified "
-            f"**{len(notify)}** attendee(s).",
+            f"**{len(notify)}** attendee(s).{series_note}",
             ephemeral=True,
         )
 
@@ -588,9 +836,13 @@ class EventsCog(commands.Cog):
                     f" · [jump](https://discord.com/channels/"
                     f"{record['guild_id']}/{record['channel_id']}/{record['message_id']})"
                 )
+            repeat = (
+                f" · 🔁 {_RECURRENCE_LABELS[record['recurrence']].lower()}"
+                if record['recurrence'] in _RECURRENCE_LABELS else ''
+            )
             embed.add_field(
                 name=f"#{record['id']} · {record['title']}"[:256],
-                value=f"<t:{ts}:F> (<t:{ts}:R>)\n{counts}{link}",
+                value=f"<t:{ts}:F> (<t:{ts}:R>)\n{counts}{repeat}{link}",
                 inline=False,
             )
         await interaction.followup.send(embed=embed, ephemeral=True)

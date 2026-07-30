@@ -55,14 +55,15 @@ Standalone events with their own sign-ups — trainings, movie nights, campaign 
 | Command | Who | What |
 |---|---|---|
 | `/event-list` | Everyone | Upcoming events with sign-up counts and jump links |
-| `/event-create <title> <start_time>` | Unit Leader+ | Create an event; optional description, duration, location, channel, ping role, reminder and banner image |
-| `/event-edit <event>` | Organiser or Admin | Change any field; moving the start time re-arms the reminder |
-| `/event-cancel <event> [reason]` | Organiser or Admin | Cancel it and DM everyone who signed up |
+| `/event-create <title> <start_time>` | Unit Leader+ | Create an event; optional description, duration, location, channel, ping role, reminder, banner image and **repeat interval** |
+| `/event-edit <event>` | Organiser or Admin | Change any field; moving the start time re-arms the reminder. `repeat:none` stops a series |
+| `/event-cancel <event> [reason] [stop_series]` | Organiser or Admin | Cancel it and DM everyone who signed up |
 
 **How it behaves**
 
 - Sign-up is three buttons — **✅ Accepted**, **❓ Tentative**, **❌ Declined** — with the attendee list updating live for everyone
 - Pressing the button you already chose **withdraws** you, which is not the same as declining
+- **Repeating events** — daily, weekly, every 2 weeks or monthly; the next one posts itself when the current one ends
 - Reminders DM everyone who accepted or was tentative, plus a channel ping and the event's ping role
 - Times render as Discord timestamps, so everyone sees the start in their own local time
 - Finished events close themselves out — greyed out, buttons removed, no stray sign-ups
@@ -476,7 +477,7 @@ Standalone events with sign-ups — weekly trainings, movie nights, campaign ses
 
 An event is a message with three buttons. Members press one and the attendee list updates live for everyone.
 
-> This is the first stage of a staged build toward full Apollo-style functionality. Already in: sign-ups, reminders, editing, cancelling, automatic close-out. Coming next, in this order: **sign-up roles with per-role limits**, **recurring events**, then waitlist, templates and a calendar view.
+> Built in stages toward full Apollo-style functionality. Already in: sign-ups, reminders, editing, cancelling, automatic close-out and **repeating events**. Coming next: **sign-up roles with per-role limits**, then waitlist, templates and a calendar view.
 
 ### Creating an event (Admins and Unit Leaders)
 
@@ -497,6 +498,8 @@ Everything else is optional:
 | `mention` | A role to ping when the reminder fires |
 | `reminder` | 15 / 30 / 60 min, 2 h, 24 h before, or no reminder at all |
 | `image_url` | A banner image shown on the event |
+| `repeat` | Daily, weekly, every 2 weeks or monthly — see [Repeating events](#repeating-events) |
+| `repeat_until` | Stop repeating after this date |
 
 ```
 /event-edit event:#3 start_time:26/06/2025 20:00
@@ -510,7 +513,31 @@ Changes only what you pass — everything else keeps its value. Moving the start
 
 Marks the event cancelled, greys out the message, removes the buttons and DMs everyone who accepted or was tentative. The event stays visible as a record rather than vanishing.
 
+On a **repeating** event this cancels only that one occurrence and posts the next one — "this week is off, next week isn't" is the usual case. Add `stop_series: True` to end the whole series instead.
+
 Both commands autocomplete: start typing and pick the event from the list instead of remembering its number.
+
+### Repeating events
+
+```
+/event-create title:Weekly Training start_time:25/06/2025 19:00 repeat:Weekly
+```
+
+Choose **Daily**, **Weekly**, **Every 2 weeks** or **Monthly**. Optionally add `repeat_until:31/12/2025 23:59` to end the series on a date.
+
+Only ever **one occurrence exists at a time**. When the current one finishes, the bot posts the next automatically in the same channel, with the same description, duration, location, ping role and reminder. Sign-ups start fresh each time — nobody is carried over, so an "Accepted" always means someone answered for *that* date.
+
+To change or stop a series, use `/event-edit`:
+
+```
+/event-edit event:#3 repeat:Monthly      # change the interval
+/event-edit event:#3 repeat:Don't repeat # stop after this occurrence
+```
+
+Two details worth knowing:
+
+- **Monthly keeps its day.** A series on the 31st becomes the 28th in February and then goes *back* to the 31st in March — it doesn't get stuck on the 28th. The same applies to leap years.
+- **Downtime doesn't produce a backlog.** If the bot is offline for a month, it does not post the missed occurrences on startup. It posts the next one that is actually still ahead.
 
 ### Signing up (Members)
 
@@ -530,7 +557,7 @@ When the reminder window is reached, everyone who accepted or was tentative gets
 
 Times always display as Discord timestamps, so **everyone sees the start in their own local time** without configuring anything.
 
-Once an event's start time — plus its duration, if set — has passed, the bot marks it finished, greys out the message and removes the buttons, so old events can't collect stray sign-ups.
+Once an event's start time — plus its duration, if set — has passed, the bot marks it finished, greys out the message and removes the buttons, so old events can't collect stray sign-ups. If the event repeats, that is also the moment the next one goes up.
 
 ---
 
