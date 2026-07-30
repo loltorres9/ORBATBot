@@ -59,6 +59,10 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Reserved for a planned secondary "open slots" message. Nothing reads or
+        # writes it today — the accessors were removed as dead code. Kept so an
+        # existing deployment's table isn't orphaned; drop it here if the idea
+        # is abandoned for good.
         await db.execute('''
             CREATE TABLE IF NOT EXISTS open_slots_messages (
                 guild_id TEXT PRIMARY KEY,
@@ -369,29 +373,6 @@ async def get_orbat_message(guild_id: str):
     async with pool.acquire() as db:
         return await db.fetchrow(
             'SELECT channel_id, message_id FROM orbat_messages WHERE guild_id = $1',
-            guild_id,
-        )
-
-
-async def save_open_slots_message(guild_id: str, channel_id: str, message_id: str):
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute(
-            '''INSERT INTO open_slots_messages (guild_id, channel_id, message_id)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (guild_id) DO UPDATE SET
-                   channel_id = EXCLUDED.channel_id,
-                   message_id = EXCLUDED.message_id,
-                   updated_at = CURRENT_TIMESTAMP''',
-            guild_id, channel_id, message_id,
-        )
-
-
-async def get_open_slots_message(guild_id: str):
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        return await db.fetchrow(
-            'SELECT channel_id, message_id FROM open_slots_messages WHERE guild_id = $1',
             guild_id,
         )
 

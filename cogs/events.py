@@ -664,17 +664,39 @@ class EventsCog(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def event_task(self):
-        for event in await database.get_events_needing_reminder():
-            await database.mark_event_reminder_fired(event['id'])
-            await self._send_event_reminder(event)
+        # discord.ext.tasks stops a loop for good on an unhandled exception, so
+        # one transient failure — a database blip during a redeploy, say — would
+        # silently kill every reminder and close-out until the next restart.
+        # Swallow per-event so the rest of this tick still runs.
+        try:
+            due = await database.get_events_needing_reminder()
+        except Exception as e:
+            print(f"event_task: could not load due reminders: {e!r}")
+            due = []
 
-        for event in await database.get_finished_events():
-            await database.set_event_status(event['id'], 'completed')
-            event = await database.get_event(event['id'])
-            # Buttons come off once the event is over.
-            await _refresh_event_message(self.bot, event, view=None)
-            # A recurring event hands over to its next occurrence here.
-            await _spawn_next_occurrence(self.bot, event)
+        for event in due:
+            try:
+                await database.mark_event_reminder_fired(event['id'])
+                await self._send_event_reminder(event)
+            except Exception as e:
+                print(f"event_task: reminder for event {event['id']} failed: {e!r}")
+
+        try:
+            finished = await database.get_finished_events()
+        except Exception as e:
+            print(f"event_task: could not load finished events: {e!r}")
+            return
+
+        for event in finished:
+            try:
+                await database.set_event_status(event['id'], 'completed')
+                event = await database.get_event(event['id'])
+                # Buttons come off once the event is over.
+                await _refresh_event_message(self.bot, event, view=None)
+                # A recurring event hands over to its next occurrence here.
+                await _spawn_next_occurrence(self.bot, event)
+            except Exception as e:
+                print(f"event_task: closing out event {event['id']} failed: {e!r}")
 
     @event_task.before_loop
     async def before_event_task(self):

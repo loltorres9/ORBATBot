@@ -29,8 +29,16 @@ requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
 Procfile                # Railway: python bot.py
-railway.json
+railway.json            # Railway build + ON_FAILURE restart policy (backs /restart)
+.env.example            # Template for local/Docker runs — keep in sync with the table below
+.python-version         # 3.11
+README.md               # User-facing docs — commands, setup, deployment
+CLAUDE.md               # This file
 ```
+
+There is no test suite, CI or linter config. The date logic in `cogs/events.py`
+(`_next_occurrence()`, `_weekday_day()`, `_add_months()`, `_nth_occurrence()`) is
+pure and Discord-free, so it is the obvious first thing to cover if that changes.
 
 ---
 
@@ -41,7 +49,16 @@ railway.json
 | `DISCORD_TOKEN` | Bot token from Discord Developer Portal |
 | `GOOGLE_CREDENTIALS` | Full JSON content of the service account key file |
 | `DB_PASSWORD` | PostgreSQL password (docker-compose only) |
-| `DATABASE_URL` | Full connection string — injected automatically by Railway; constructed by docker-compose |
+| `DATABASE_URL` | Full connection string — injected automatically by Railway; constructed by docker-compose; set by hand for local development |
+| `RAILWAY_API_TOKEN` | **Optional.** Account or team token that lets `/restart` trigger a clean deployment restart via the Railway GraphQL API. Without it `/restart` still works, by exiting non-zero so Railway's `ON_FAILURE` policy relaunches the container. Project tokens do **not** work — `_railway_restart()` authenticates with a `Bearer` header |
+
+Railway injects these at runtime; nothing sets them manually. `_railway_restart()` reads them to find the deployment to restart:
+
+| Variable | Used for |
+|---|---|
+| `RAILWAY_DEPLOYMENT_ID` | The running container's own deployment — preferred, because it guarantees the bot restarts *itself* |
+| `RAILWAY_SERVICE_ID` / `RAILWAY_ENVIRONMENT_ID` | Fallback when the deployment id is absent: query the service's latest `SUCCESS` deployment |
+| `RAILWAY_PROJECT_ID` | Narrows that fallback query when present |
 
 ---
 
@@ -96,7 +113,7 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 | `updated_at` | TIMESTAMP | |
 
 ### `open_slots_messages`
-Same structure as `orbat_messages`. Tracks a secondary "open slots" message (currently unused in active commands but schema exists).
+Same structure as `orbat_messages`. Reserved for a planned secondary "open slots" message. **Nothing reads or writes it** — the table is still created so existing deployments aren't orphaned, but the accessors were removed as dead code. Re-add them if the feature is picked up.
 
 ### `guild_settings`
 | Column | Type | Notes |
@@ -205,7 +222,7 @@ Custom sign-up options for one event. **No rows means the event uses `DEFAULT_RE
 | `/assign-slot` | ❌ | ✅ own unit | ✅ |
 | Approve / Deny in `#slot-approvals` | ❌ | ✅ own unit | ✅ |
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone`, `/post-event` | ❌ | ❌ | ✅ |
-| `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
+| `/setup-slots`, `/current-operation`, `/sync`, `/restart`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
 | `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
 | `/event-list`, RSVP buttons on an event | ✅ | ✅ | ✅ |
@@ -329,6 +346,13 @@ Shows raw slot data from the sheet as the bot sees it. Useful for diagnosing mis
 **`/sync`**
 Force-syncs slash commands with Discord. Also repairs stale `sheet_col` values on pending requests and refreshes the ORBAT.
 
+**`/restart`**
+Restarts the bot. Two paths, in order:
+1. **Railway GraphQL API** — used when `RAILWAY_API_TOKEN` is set. `_railway_restart()` prefers `RAILWAY_DEPLOYMENT_ID` so the bot restarts *itself* rather than whatever a list query happens to return, falling back to the service's latest `SUCCESS` deployment. Returns the deployment id, which the reply shows truncated.
+2. **Process exit** — the fallback, also used when the API call raises. `os._exit(1)` after a 1 s pause (so Discord can deliver the ephemeral reply) trips Railway's `ON_FAILURE` restart policy.
+
+Nothing is lost either way: state lives in PostgreSQL and every view is re-registered by `setup_hook()`. Every invocation is printed with the requesting user and guild.
+
 ---
 
 ## Approval & Denial Flow
@@ -421,9 +445,12 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
 
 ### Startup sequence
 1. `init_db()` — creates/migrates schema
-2. Load `cogs.slots`, `cogs.admin`, and `cogs.gameroles`
-3. Re-register persistent views: `OrbatRequestButton`, `GameRolePanelView`, and one `ApprovalView` per pending request
-4. Start `reminder_task`
+2. Load `cogs.slots`, `cogs.admin`, `cogs.gameroles`, and `cogs.events`. Each is wrapped in its own `try`, so one cog failing to import doesn't take the others down
+3. Re-register persistent views:
+   - `OrbatRequestButton` and `GameRolePanelView` — one global instance each
+   - one `ApprovalView` per `pending` request
+   - one `EventRsvpView` per event from `get_live_events()`, each built with **that event's own responses** via `load_responses()` — a restored view carrying the default keys wouldn't match the message's `custom_id`s
+4. Start `reminder_task` (operations). `EventsCog.event_task` starts separately, from the cog's `__init__`
 5. `on_ready`: `copy_global_to` + guild sync for each guild (instant, vs up-to-1-hour global sync)
 6. `on_guild_join`: sync immediately when bot joins a new server
 
@@ -529,11 +556,13 @@ If the next occurrence can't be posted (channel gone, `Forbidden`), the freshly 
 
 `EventsCog.event_task` runs every 60 s (separate from `bot.py`'s `reminder_task`, which stays operation-only):
 
-1. **Reminders** — `reminder_fired` is set *before* sending, so a failure can't cause a retry storm. DMs go to `accepted` and `tentative` only; the channel ping adds `mention_role_id` if set.
+1. **Reminders** — `reminder_fired` is set *before* sending, so a failure can't cause a retry storm. DMs go to everyone `_attending()` returns, i.e. every response not flagged `is_decline`; the channel ping adds `mention_role_id` if set.
 2. **Finishing** — events past `event_time + duration` flip to `completed` and their message is re-rendered grey with buttons removed.
 3. **Handover** — a completed event with a `recurrence` spawns its next occurrence. Because the source is already `completed` by then, it is out of `get_finished_events()` and cannot spawn twice.
 
 `cog_unload()` cancels the loop; verified not to leak past unload.
+
+**Both stages catch per-item.** `discord.ext.tasks` stops a loop permanently on an unhandled exception — it logs and never runs again — so one transient failure (a database blip during a redeploy, say) would silently kill every reminder and close-out until the next restart. Each item is therefore wrapped individually, and the two fetch queries separately, so a single bad event can't take the tick down. `bot.py`'s `reminder_task` does the same, which is why its body lives in `_send_operation_reminder()`. **Anything added to either loop needs the same treatment.**
 
 ### Notes for future changes
 
