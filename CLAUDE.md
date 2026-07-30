@@ -21,6 +21,7 @@ cogs/
   slots.py              # All member-facing commands + approval/denial flow + views
   admin.py              # All admin/unit-leader commands
   gameroles.py          # Self-assignable game roles (Minecraft, DCS, …) + panel
+  events.py             # Standalone events with RSVP buttons + reminder loop
 utils/
   database.py           # All PostgreSQL queries (asyncpg)
   sheets.py             # Google Sheets read/write (gspread)
@@ -121,6 +122,43 @@ Self-assignable cosmetic roles (Minecraft, DCS, …) — see Game Roles below.
 ### `game_role_panels`
 Same structure as `orbat_messages`. Tracks the live game-role self-assign panel message.
 
+### `events`
+Standalone events, independent of `operations` and Google Sheets — see Events below.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | Shown to users as `#id` |
+| `guild_id` | TEXT | |
+| `channel_id` | TEXT | Channel the event message lives in |
+| `message_id` | TEXT | The event message; NULL until posted |
+| `title` | TEXT | |
+| `description` | TEXT | Optional |
+| `event_time` | TIMESTAMP | **Naive UTC**, like `operations.event_time` |
+| `duration_minutes` | INTEGER | Optional; drives the end time and "finished" detection |
+| `location` | TEXT | Optional free text |
+| `image_url` | TEXT | Optional banner |
+| `mention_role_id` | TEXT | Role pinged on post and on the reminder |
+| `created_by` | TEXT | Discord user ID of the organiser |
+| `created_by_name` | TEXT | Display name at creation time |
+| `reminder_minutes` | INTEGER | Default 30; NULL means no reminder |
+| `reminder_fired` | INTEGER | 0/1 — reset to 0 when `event_time` changes |
+| `status` | TEXT | `scheduled` / `cancelled` / `completed` |
+| `created_at` / `updated_at` | TIMESTAMP | |
+
+Index `idx_events_guild_status` on `(guild_id, status, event_time)` backs the upcoming-events lookup.
+
+### `event_signups`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `event_id` | INTEGER | FK → `events.id` **ON DELETE CASCADE** |
+| `member_id` | TEXT | |
+| `member_name` | TEXT | Display name at signup time |
+| `response` | TEXT | `accepted` / `tentative` / `declined` |
+| `created_at` / `updated_at` | TIMESTAMP | |
+
+`UNIQUE (event_id, member_id)` — one row per member, changing your answer updates it in place. Withdrawing deletes the row entirely, so "no response" and "declined" stay distinct.
+
 ---
 
 ## Discord Channels (auto-created)
@@ -152,6 +190,9 @@ Same structure as `orbat_messages`. Tracks the live game-role self-assign panel 
 | `/setup-slots`, `/current-operation`, `/sync`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
 | `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
+| `/event-list`, RSVP buttons on an event | ✅ | ✅ | ✅ |
+| `/event-create` | ❌ | ✅ | ✅ |
+| `/event-edit`, `/event-cancel` | ❌ | ✅ own events | ✅ |
 
 **Admin** = `manage_guild` or `administrator` Discord permission.
 **Unit gating:** `_can_action_request()` in `slots.py` — admins bypass all unit checks; Unit Leaders must share the requester's unit role; requests with no unit role can be actioned by anyone.
@@ -194,6 +235,10 @@ Opens the picker directly — same flow as the panel button.
 The panel button and `/game-roles` both call `_send_role_picker()`, which sends an ephemeral `GameRoleSelectView`: one multi-select listing every game role, with the member's current roles **pre-ticked** (`SelectOption.default`) and `min_values=0` so deselecting everything is a valid submission.
 
 On submit the member's game roles are set to exactly what's ticked — the view diffs the selection against their current roles and issues only the needed `add_roles` / `remove_roles` calls, then reports what changed. Selecting no change makes no API calls at all.
+
+**Removal has two paths.** Unticking an option in that select already removes the role, but deselecting a pre-ticked option is easy to miss in Discord's UI, so the picker also carries a **➖ Remove a role** button — added only when the member holds at least one game role. It swaps in `GameRoleRemoveView`: a select listing *only* the roles they currently hold, `min_values=1`, nothing pre-ticked, so selecting is unambiguously "remove this". Both views share `_apply_role_changes()` (add/remove plus Forbidden/HTTPException handling) and `_change_summary()`.
+
+Both paths re-check `interaction.user.roles` at submit time, so a role removed by someone else in the meantime results in a no-op with an explanation rather than a failed API call.
 
 ### Notes for future changes
 
@@ -361,6 +406,52 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
 4. Start `reminder_task`
 5. `on_ready`: `copy_global_to` + guild sync for each guild (instant, vs up-to-1-hour global sync)
 6. `on_guild_join`: sync immediately when bot joins a new server
+
+---
+
+## Events (`cogs/events.py`)
+
+Apollo-style standalone events. **Deliberately independent of the slot/ORBAT system** — no Google Sheet, no `operations` row, no `requests`. An event is a message with Accept / Tentative / Decline buttons and a live attendee list.
+
+This is stage 1 of a staged build toward Apollo parity. Still to come, in priority order: **sign-up roles with per-role caps**, **recurring events**, then waitlist, templates and a calendar view.
+
+### Commands
+
+**`/event-create <title> <start_time> [description] [duration] [location] [channel] [mention] [reminder] [image_url]`** (Admin or Unit Leader)
+Parses `start_time` with `_parse_event_time()` from `admin.py` in the guild's timezone, rejects times in the past, posts the event and registers its view. If the send fails (`Forbidden`, or `HTTPException` from a bad `image_url`) the row is set to `cancelled` so it can't linger as a phantom event.
+
+**`/event-edit <event> [title] [start_time] [description] [duration] [location] [reminder]`** (organiser or admin)
+Only the passed fields change — `update_event()` uses `COALESCE`, so omitted fields keep their value. Changing the time resets `reminder_fired` to 0 so the reminder fires again for the new time.
+
+**`/event-cancel <event> [reason]`** (organiser or admin)
+Sets status `cancelled`, re-renders the message in red without buttons, and DMs everyone who accepted or was tentative.
+
+**`/event-list`** (everyone) — upcoming events with per-response counts and a jump link.
+
+`event` params use autocomplete over the guild's upcoming events, so users pick a title rather than typing an ID.
+
+### RSVP flow
+
+`EventRsvpView` has three buttons with `custom_id` `event_rsvp:{event_id}:{response}`. Pressing **the response you already gave withdraws it** (deletes the signup row) — that toggle is stated in the embed footer, because it isn't otherwise discoverable. Pressing a different one updates in place via the `UNIQUE (event_id, member_id)` upsert.
+
+Every change re-reads the event and refreshes the message through `_refresh_event_message()`, fire-and-forget.
+
+### Background loop
+
+`EventsCog.event_task` runs every 60 s (separate from `bot.py`'s `reminder_task`, which stays operation-only):
+
+1. **Reminders** — `reminder_fired` is set *before* sending, so a failure can't cause a retry storm. DMs go to `accepted` and `tentative` only; the channel ping adds `mention_role_id` if set.
+2. **Finishing** — events past `event_time + duration` flip to `completed` and their message is re-rendered grey with buttons removed.
+
+`cog_unload()` cancels the loop; verified not to leak past unload.
+
+### Notes for future changes
+
+- **Time comparisons.** `event_time` is naive UTC. The event queries compare against `NOW() AT TIME ZONE 'UTC'`, not `CURRENT_TIMESTAMP` — the latter is a `timestamptz` and would be cast using the *session* timezone, which is only correct while the server runs in UTC. The older `operations` queries still use `CURRENT_TIMESTAMP`; prefer the new form for anything added.
+- **Per-user timezones come free for display.** All times render as Discord timestamps (`<t:…:F>`), which every client localises automatically. Only *input* is guild-timezone based, so a per-user input timezone is the only part still missing.
+- **Persistence** mirrors `ApprovalView`: `setup_hook()` calls `get_live_events()` and re-adds one `EventRsvpView` per open event. Events without a `message_id` are skipped.
+- `_format_attendees()` trims mention lists to Discord's 1024-char field limit and appends "…and N more", while the field *name* keeps the true total.
+- `_group_signups()` ignores unrecognised `response` values rather than raising, so a future response type can't break old embeds.
 
 ---
 
