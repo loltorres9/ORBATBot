@@ -10,53 +10,99 @@ And it runs **standalone events** with sign-ups — trainings, movie nights, any
 
 ## Features
 
-- **Two-step slot picker** — choose your squad first, then your slot. Works via `/request-slot`, the ORBAT button, and `/change-slot`
-- **📋 Request a Slot** button — persistent button on the live ORBAT embed; no command needed
-- `/request-slot` — open the squad → slot picker for the current operation
-- `/cancel-request` — cancel your pending slot request
-- `/change-slot` — forfeit your current slot and pick a new one
-- `/leave-operation` — remove yourself from the operation entirely (pending or approved)
-- `/setup-slots <url>` — load a Google Sheet for the current operation; supports optional event time and reminder; auto-posts a live ORBAT to `#orbat`
-- `/set-event-time <time>` — update the event start time for the current operation
-- `/set-timezone <tz>` — set the server's local timezone for event time input (default: UTC)
-- `/post-orbat [channel]` — manually post or re-post the live ORBAT board
-- `/current-operation` — shows which operation is active and links to the sheet
-- `/assign-slot <member>` — assign a member to a slot directly, bypassing approval; uses the same two-step picker (Unit Leaders scoped to their own unit; Admins unrestricted)
-- `/clear-slot` — remove a member from an approved slot; restores the sheet cell including stripping the unit tag
-- `/clear-requests` — cancel all pending requests for the current operation
-- `/post-event [channel] [mission_name] [event_time]` — post a formatted event announcement embed in any channel; defaults to the active operation's name and time
-- `/archive-old-approvals` — move pre-existing approved messages from `#slot-approvals` to `#approval-archive` (one-time migration)
-- `/debug-slots` — show the raw slot data the bot reads from the sheet; useful for diagnosing missing slots
-- `/sync` — force-sync slash commands with Discord; also refreshes the live ORBAT embed
-- `/restart` — restart the bot container on Railway; uses the Railway API if `RAILWAY_API_TOKEN` is set, otherwise exits the process so Railway's restart policy relaunches it
-- **Self-assignable game roles** — permission-free tag roles for games (Minecraft, DCS, …) that members opt into themselves
-- **🎮 Choose your game roles** button — persistent panel button; members pick their games without a command
-- `/game-roles` — pick your own game roles from a menu with your current roles pre-ticked; drop one by unticking it or via the **➖ Remove a role** button
-- `/game-role-add <name> [emoji] [description]` — create a permission-free game role and make it self-assignable
-- `/game-role-remove <role> [delete_role]` — stop a role being self-assignable, optionally deleting it
-- `/game-role-panel [channel]` — post the self-assign panel; it updates itself when roles change
-- `/game-role-list` — list every game role on the server
-- **Standalone events with sign-ups** — Accepted / Tentative / Declined on buttons, live attendee list, independent of the ORBAT system
-- `/event-create <title> <start_time>` — create an event; optional description, duration, location, channel, ping role, reminder and banner image
-- `/event-edit <event>` — change any field of an event; moving the time re-arms the reminder
-- `/event-cancel <event> [reason]` — cancel an event and DM everyone who signed up
-- `/event-list` — upcoming events with sign-up counts and jump links
-- Event reminders — DMs everyone who accepted or was tentative, plus a channel ping
-- Finished events close themselves out automatically (greyed out, buttons removed)
-- Approval channel (`#slot-approvals`) with **Approve / Deny** buttons
-- Approved requests are deleted from `#slot-approvals` and archived as a compact embed in `#approval-archive`
-- Denial modal with optional reason text
-- DM notifications to members on submission, approval, and denial
-- Slots marked 🟢 (available), 🟡 (pending / also requested — compete for slot), or 🔴 (filled) in real time
-- Multiple members can request the same pending slot — the approver picks who gets it; all other competitors are auto-denied and notified
-- Cancelled requests automatically void their approval message (greyed out, buttons removed)
-- Event reminders — bot DMs all approved members and pings `#orbat` before the operation starts
-- Live ORBAT embed shows event time as a Discord timestamp and auto-updates on every slot change
-- Role-based access control — Unit Leaders get extra commands scoped to their own unit (see table below)
-- Approval buttons survive bot restarts (persistent views)
-- Bot syncs slash commands automatically on startup — no manual `/sync` needed
-- Slot availability is re-validated at selection time, preventing race conditions
-- PostgreSQL database — data persists across all restarts and redeployments
+Three independent feature areas plus maintenance commands. **ORBAT & Slots** is the Arma operation system backed by a Google Sheet; **Events** and **Game Roles** work on their own with no sheet involved.
+
+In the **Who** column, *Unit Leader+* means Unit Leaders and Admins, and Unit Leaders are scoped to their own unit. See [Role-Based Access](#role-based-access) for the full matrix.
+
+### 🗺️ ORBAT & Slots
+
+Operation slot requests, approvals and the live ORBAT board, driven from a Google Sheet.
+
+| Command | Who | What |
+|---|---|---|
+| `/request-slot` | Everyone | Open the squad → slot picker for the current operation |
+| `/cancel-request` | Everyone | Cancel your pending slot request |
+| `/change-slot` | Everyone | Forfeit your current slot and pick a new one |
+| `/leave-operation` | Everyone | Remove yourself from the operation entirely (pending or approved) |
+| `/assign-slot <member>` | Unit Leader+ | Assign a member to a slot directly, bypassing approval |
+| `/clear-slot` | Unit Leader+ | Remove a member from a slot; restores the sheet cell and strips the unit tag |
+| `/setup-slots <url>` | Admin | Load a Google Sheet as the current operation; optional event time and reminder; auto-posts the ORBAT to `#orbat` |
+| `/post-orbat [channel]` | Admin | Post or re-post the live ORBAT board |
+| `/set-event-time <time>` | Admin | Update the operation's start time and reminder |
+| `/post-event [channel] [mission_name] [event_time]` | Admin | Post an announcement embed for the operation, pointing at `#orbat` for sign-ups |
+| `/clear-requests` | Admin | Cancel all pending requests for the current operation |
+| `/current-operation` | Admin | Show which operation is active and link to its sheet |
+
+> `/post-event` only *announces* the active operation — sign-up still happens through ORBAT slots. For a standalone event with its own attendee list, use [`/event-create`](#events) instead.
+
+**How it behaves**
+
+- **Two-step slot picker** — squad first, then slot. Used by `/request-slot`, `/change-slot`, `/assign-slot` and the ORBAT button alike
+- **📋 Request a Slot** button — persistent button on the live ORBAT embed, so no command is needed
+- Slots show 🟢 available, 🟡 pending (also requested — compete for it) or 🔴 filled, in real time
+- Several members can request the same slot; the approver picks, and the rest are auto-denied and notified
+- Approvals happen in `#slot-approvals` with **Approve / Deny** buttons and a denial modal for an optional reason
+- Actioned requests leave `#slot-approvals` and are archived as a compact embed in `#approval-archive`
+- Cancelling voids the approval message automatically (greyed out, buttons removed)
+- Members are DMed on submission, approval and denial
+- Operation reminders DM every approved member and ping `#orbat` before the start
+- Availability is re-validated at selection time, so two people can't take the same slot
+
+### 📅 Events
+
+Standalone events with their own sign-ups — trainings, movie nights, campaign sessions. No Google Sheet, no operation required. Full detail in [Events](#events).
+
+| Command | Who | What |
+|---|---|---|
+| `/event-list` | Everyone | Upcoming events with sign-up counts and jump links |
+| `/event-create <title> <start_time>` | Unit Leader+ | Create an event; optional description, duration, location, channel, ping role, reminder and banner image |
+| `/event-edit <event>` | Organiser or Admin | Change any field; moving the start time re-arms the reminder |
+| `/event-cancel <event> [reason]` | Organiser or Admin | Cancel it and DM everyone who signed up |
+
+**How it behaves**
+
+- Sign-up is three buttons — **✅ Accepted**, **❓ Tentative**, **❌ Declined** — with the attendee list updating live for everyone
+- Pressing the button you already chose **withdraws** you, which is not the same as declining
+- Reminders DM everyone who accepted or was tentative, plus a channel ping and the event's ping role
+- Times render as Discord timestamps, so everyone sees the start in their own local time
+- Finished events close themselves out — greyed out, buttons removed, no stray sign-ups
+- `event` parameters autocomplete over upcoming events, so nobody types IDs
+
+### 🎮 Game Roles
+
+Permission-free tag roles for games (Minecraft, DCS, …) that members opt into themselves. Full detail in [Game Roles](#game-roles).
+
+| Command | Who | What |
+|---|---|---|
+| `/game-roles` | Everyone | Pick your own game roles, with the ones you have pre-ticked |
+| `/game-role-list` | Everyone | List every game role on the server |
+| `/game-role-add <name> [emoji] [description]` | Admin | Create a permission-free game role and make it self-assignable |
+| `/game-role-remove <role> [delete_role]` | Admin | Stop a role being self-assignable, optionally deleting it |
+| `/game-role-panel [channel]` | Admin | Post the self-assign panel; it updates itself when roles change |
+
+**How it behaves**
+
+- **🎮 Choose your game roles** button — persistent panel button, so members need no command
+- Roles the bot creates grant **no permissions** and are mentionable; pre-existing roles are refused if they grant any
+- Unit roles and `Unit Leader` can never become game roles, so nobody self-assigns approval rights
+- Drop a role by unticking it, or via the **➖ Remove a role** button for a list of only what you have
+
+### ⚙️ Server & Maintenance
+
+| Command | Who | What |
+|---|---|---|
+| `/set-timezone <tz>` | Admin | Server timezone used when reading any time you type — operations and events alike (default UTC) |
+| `/sync` | Admin | Force-sync slash commands with Discord and refresh the ORBAT embed |
+| `/restart` | Admin | Restart the bot container on Railway |
+| `/debug-slots [squad]` | Admin | Show the raw slot data the bot reads from the sheet, for diagnosing missing slots |
+| `/archive-old-approvals` | Admin | One-time migration of pre-existing approved messages into `#approval-archive` |
+
+### Across the whole bot
+
+- **PostgreSQL** — every operation, request, event, sign-up and game role survives restarts and redeployments
+- **Buttons survive restarts** — approval buttons, the ORBAT request button, the game-role panel and event sign-ups are all persistent views
+- **Commands sync automatically** on startup and when the bot joins a server; `/sync` is only for when something looks missing
+- **Role-based access control** — Unit Leaders get extra commands scoped to their own unit
 
 ---
 
