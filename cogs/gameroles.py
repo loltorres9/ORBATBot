@@ -117,7 +117,9 @@ def _build_panel_embed(entries: list, with_button: bool = True) -> discord.Embed
         title='🎮 Game Roles',
         description=(
             "Pick the games you play. These roles grant **no permissions** — they only "
-            f"let people @mention everyone who plays a game.\n\n{how}"
+            f"let people @mention everyone who plays a game.\n\n{how}\n\n"
+            "Missing something? If you have any suggestions for games or genres to add, "
+            "please contact the @admins."
         ),
         color=discord.Color.blurple(),
     )
