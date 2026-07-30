@@ -63,7 +63,7 @@ Standalone events with their own sign-ups — trainings, movie nights, campaign 
 
 - Sign-up is three buttons — **✅ Accepted**, **❓ Tentative**, **❌ Declined** — with the attendee list updating live for everyone
 - Pressing the button you already chose **withdraws** you, which is not the same as declining
-- **Repeating events** — daily, weekly, every 2 weeks or monthly; the next one posts itself when the current one ends
+- **Repeating events** — daily, weekly, every 2 weeks, or monthly by date or by weekday (*last Saturday of the month*); the next one posts itself when the current one ends
 - Reminders DM everyone who accepted or was tentative, plus a channel ping and the event's ping role
 - Times render as Discord timestamps, so everyone sees the start in their own local time
 - Finished events close themselves out — greyed out, buttons removed, no stray sign-ups
@@ -498,7 +498,7 @@ Everything else is optional:
 | `mention` | A role to ping when the reminder fires |
 | `reminder` | 15 / 30 / 60 min, 2 h, 24 h before, or no reminder at all |
 | `image_url` | A banner image shown on the event |
-| `repeat` | Daily, weekly, every 2 weeks or monthly — see [Repeating events](#repeating-events) |
+| `repeat` | Daily, weekly, fortnightly, or monthly by date or weekday — see [Repeating events](#repeating-events) |
 | `repeat_until` | Stop repeating after this date |
 
 ```
@@ -523,7 +523,24 @@ Both commands autocomplete: start typing and pick the event from the list instea
 /event-create title:Weekly Training start_time:25/06/2025 19:00 repeat:Weekly
 ```
 
-Choose **Daily**, **Weekly**, **Every 2 weeks** or **Monthly**. Optionally add `repeat_until:31/12/2025 23:59` to end the series on a date.
+Six patterns to choose from. Optionally add `repeat_until:31/12/2025 23:59` to end the series on a date.
+
+| `repeat` | Meaning | Example series |
+|---|---|---|
+| **Daily** | Every day | |
+| **Weekly** | Same weekday every week | |
+| **Every 2 weeks** | Same weekday, fortnightly | |
+| **Monthly — same date** | Same day number each month | 15 Jun → 15 Jul → 15 Aug |
+| **Monthly — last weekday** | **Last <weekday> of each month** | 27 Jun → 25 Jul → 29 Aug → 26 Sep |
+| **Monthly — same weekday** | Same weekday *position* each month | 2nd Sat: 13 Jun → 11 Jul → 8 Aug |
+
+The weekday and the position both come from **the start time you give it**. So for a monthly op on the last Saturday:
+
+```
+/event-create title:Monthly Op start_time:27/06/2026 19:00 repeat:Monthly — last weekday
+```
+
+27 June 2026 is a Saturday, so the series runs on the last Saturday of every month from then on — 25 Jul, 29 Aug, 26 Sep, 31 Oct, and so on, always at 19:00. If the date you pick is *not* itself the last Saturday of its month, the bot says so when creating the event, so the shift doesn't surprise you later.
 
 Only ever **one occurrence exists at a time**. When the current one finishes, the bot posts the next automatically in the same channel, with the same description, duration, location, ping role and reminder. Sign-ups start fresh each time — nobody is carried over, so an "Accepted" always means someone answered for *that* date.
 
@@ -534,9 +551,10 @@ To change or stop a series, use `/event-edit`:
 /event-edit event:#3 repeat:Don't repeat # stop after this occurrence
 ```
 
-Two details worth knowing:
+Three details worth knowing:
 
-- **Monthly keeps its day.** A series on the 31st becomes the 28th in February and then goes *back* to the 31st in March — it doesn't get stuck on the 28th. The same applies to leap years.
+- **Monthly keeps its day.** A "same date" series on the 31st becomes the 28th in February and then goes *back* to the 31st in March — it doesn't get stuck on the 28th. The same applies to leap years.
+- **A "5th weekday" series skips months that don't have one.** Pick the 5th Saturday and you get only the months that actually have five — the series doesn't end and doesn't silently slide to the 4th.
 - **Downtime doesn't produce a backlog.** If the bot is offline for a month, it does not post the missed occurrences on startup. It posts the next one that is actually still ahead.
 
 ### Signing up (Members)
