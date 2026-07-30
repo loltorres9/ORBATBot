@@ -620,6 +620,18 @@ async def update_event(event_id: int, title: str = None, description: str = None
         )
 
 
+async def set_event_mentions(event_id: int, role_ids: str = None):
+    """Set the ping roles outright. update_event() uses COALESCE and so cannot
+    clear them, which is what passing None here does."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE events SET mention_role_id = $2, updated_at = CURRENT_TIMESTAMP
+               WHERE id = $1''',
+            event_id, role_ids,
+        )
+
+
 async def set_event_status(event_id: int, status: str) -> bool:
     pool = await get_pool()
     async with pool.acquire() as db:
