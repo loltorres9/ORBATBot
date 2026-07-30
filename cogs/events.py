@@ -28,6 +28,7 @@ _RECURRENCE_LABELS = {
     'monthly': 'Monthly',
     'monthly_nth': 'Monthly by weekday',
     'monthly_last': 'Monthly, last weekday',
+    'weekly_not_last': 'Weekly except the last weekday',
 }
 
 _REPEAT_CHOICES = [
@@ -38,6 +39,7 @@ _REPEAT_CHOICES = [
     app_commands.Choice(name='Monthly — same date (e.g. the 15th)', value='monthly'),
     app_commands.Choice(name='Monthly — last weekday (e.g. last Saturday)', value='monthly_last'),
     app_commands.Choice(name='Monthly — same weekday (e.g. 2nd Saturday)', value='monthly_nth'),
+    app_commands.Choice(name='Weekly — except the last one of the month', value='weekly_not_last'),
 ]
 
 # Fixed English names: calendar.day_name follows the process locale, and these
@@ -111,6 +113,11 @@ def _nth_occurrence(anchor: datetime, recurrence: str, n: int) -> Optional[datet
         return anchor + timedelta(days=n)
     if recurrence == 'weekly':
         return anchor + timedelta(weeks=n)
+    if recurrence == 'weekly_not_last':
+        candidate = anchor + timedelta(weeks=n)
+        # Returning None makes the caller skip this week and keep walking, which
+        # is exactly the exclusion this pattern needs.
+        return None if _is_last_weekday_of_month(candidate) else candidate
     if recurrence == 'biweekly':
         return anchor + timedelta(weeks=2 * n)
     if recurrence == 'monthly':
@@ -138,6 +145,8 @@ def _recurrence_text(event) -> Optional[str]:
         return f"Monthly · last {day} of the month"
     if recurrence == 'monthly_nth':
         return f"Monthly · {_ordinal(_weekday_position(anchor))} {day} of the month"
+    if recurrence == 'weekly_not_last':
+        return f"Every {day} except the last one of the month"
     return _RECURRENCE_LABELS[recurrence]
 
 
@@ -652,6 +661,13 @@ class EventsCog(commands.Cog):
                     f"{_ordinal(_weekday_position(parsed))} {_DAY_NAMES[parsed.weekday()]}, "
                     f"not the last one. Every occurrence after it is the **last "
                     f"{_DAY_NAMES[parsed.weekday()]}** of the month."
+                )
+            if recurrence == 'weekly_not_last' and _is_last_weekday_of_month(parsed):
+                repeat_line += (
+                    f"\n⚠️ Note: your first date **is** the last "
+                    f"{_DAY_NAMES[parsed.weekday()]} of its month, which this pattern "
+                    f"normally skips. It stays where you put it; every occurrence "
+                    f"after it skips the last {_DAY_NAMES[parsed.weekday()]}."
                 )
             if nxt and not (until and nxt > until):
                 repeat_line += (

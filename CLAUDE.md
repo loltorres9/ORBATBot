@@ -143,7 +143,7 @@ Standalone events, independent of `operations` and Google Sheets — see Events 
 | `reminder_minutes` | INTEGER | Default 30; NULL means no reminder |
 | `reminder_fired` | INTEGER | 0/1 — reset to 0 when `event_time` changes |
 | `status` | TEXT | `scheduled` / `cancelled` / `completed` |
-| `recurrence` | TEXT | NULL, or `daily` / `weekly` / `biweekly` / `monthly` / `monthly_nth` / `monthly_last` |
+| `recurrence` | TEXT | NULL, or `daily` / `weekly` / `biweekly` / `monthly` / `monthly_nth` / `monthly_last` / `weekly_not_last` |
 | `recurrence_until` | TIMESTAMP | Optional end of the series (naive UTC) |
 | `recurrence_anchor` | TIMESTAMP | The **first** occurrence's start, carried unchanged down the series |
 | `created_at` / `updated_at` | TIMESTAMP | |
@@ -453,12 +453,17 @@ Stored key → what the user picks:
 | `monthly` | Monthly — same date | The 15th every month, clamped in short months |
 | `monthly_last` | Monthly — last weekday | **Last Saturday of the month** |
 | `monthly_nth` | Monthly — same weekday | 2nd Saturday of the month |
+| `weekly_not_last` | Weekly — except the last one | Every Saturday **except** the last of the month |
 
 `_RECURRENCE_LABELS` holds the mapping and `_REPEAT_CHOICES` the command choices; the choice values are exactly those keys plus `none`.
 
 **The weekday variants take both weekday and position from the anchor** — there is no separate column for them. `monthly_last` uses the anchor's weekday with position `-1`; `monthly_nth` uses `_weekday_position(anchor)`, i.e. `(day - 1) // 7 + 1`. So a series created on Saturday 13 June means "2nd Saturday" under `monthly_nth`, and "last Saturday" under `monthly_last` regardless of where the anchor sits — `/event-create` warns when the first date isn't itself the last weekday, so the jump doesn't surprise anyone a month later.
 
 `_weekday_day()` returns None when a month has no such day — there is no 5th Saturday in June. That is why `_next_occurrence()` **skips** a None candidate and keeps walking instead of returning None: a 5th-Saturday series must jump over months that lack one rather than end. The only thing that ends the walk is an invalid recurrence key, which is checked before the loop.
+
+**`weekly_not_last` is the one exclusion pattern, and it reuses that same skip.** `_nth_occurrence()` advances weekly and returns None whenever the candidate is the last weekday of its month, so the walk steps over it. No extra machinery: adding it was three lines because the skip already existed for the 5th-Saturday case.
+
+It is exactly complementary to `monthly_last` on the same weekday — over an 81-Saturday window the two sets never collide and their union is every Saturday. That is the intended pairing: a monthly op on the last Saturday plus weekly ops on the others.
 
 `_DAY_NAMES` is a fixed English tuple rather than `calendar.day_name`, which follows the process locale and would leak into user-facing text.
 
