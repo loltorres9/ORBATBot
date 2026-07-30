@@ -29,7 +29,7 @@ It also manages **self-assignable game roles** — permission-free tag roles for
 - `/restart` — restart the bot container on Railway; uses the Railway API if `RAILWAY_API_TOKEN` is set, otherwise exits the process so Railway's restart policy relaunches it
 - **Self-assignable game roles** — permission-free tag roles for games (Minecraft, DCS, …) that members opt into themselves
 - **🎮 Choose your game roles** button — persistent panel button; members pick their games without a command
-- `/game-roles` — pick your own game roles from a menu with your current roles pre-ticked
+- `/game-roles` — pick your own game roles from a menu with your current roles pre-ticked; drop one by unticking it or via the **➖ Remove a role** button
 - `/game-role-add <name> [emoji] [description]` — create a permission-free game role and make it self-assignable
 - `/game-role-remove <role> [delete_role]` — stop a role being self-assignable, optionally deleting it
 - `/game-role-panel [channel]` — post the self-assign panel; it updates itself when roles change
@@ -428,6 +428,8 @@ Click **🎮 Choose your game roles** on the panel, or run:
 ```
 
 Both open the same private menu listing every game role, with the ones you already have **already ticked**. Tick the games you play, untick the ones you don't, and submit — your game roles are set to exactly what you left selected. Deselecting everything is valid and removes all of them.
+
+**To drop a role,** either untick it in that menu, or press **➖ Remove a role** for a shorter list containing only the roles you currently have — pick one or several and they are removed. The button only appears when you actually have a game role to give up.
 
 Only the roles that actually changed are touched, and you get a short summary of what was added and removed. `/game-role-list` shows the available roles without changing anything.
 

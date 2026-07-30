@@ -94,6 +94,34 @@ def _select_option(row, role: discord.Role, is_default: bool) -> discord.SelectO
     return option
 
 
+async def _apply_role_changes(interaction: discord.Interaction, to_add: list,
+                              to_remove: list) -> Optional[str]:
+    """Apply role changes to the interacting member. Returns an error message
+    to show them, or None if it worked."""
+    try:
+        if to_add:
+            await interaction.user.add_roles(*to_add, reason='Self-assigned game role')
+        if to_remove:
+            await interaction.user.remove_roles(*to_remove, reason='Self-removed game role')
+    except discord.Forbidden:
+        return (
+            "❌ Discord wouldn't let me change your roles. My role has to sit "
+            "**above** the game roles and I need **Manage Roles** — ask an admin to check."
+        )
+    except discord.HTTPException as e:
+        return f"❌ Could not update your roles: `{e}`"
+    return None
+
+
+def _change_summary(to_add: list, to_remove: list) -> str:
+    lines = []
+    if to_add:
+        lines.append("✅ Added: " + ', '.join(f"**{r.name}**" for r in to_add))
+    if to_remove:
+        lines.append("➖ Removed: " + ', '.join(f"**{r.name}**" for r in to_remove))
+    return '\n'.join(lines)
+
+
 async def _resolve_game_roles(guild: discord.Guild) -> list:
     """Return [(db_row, discord.Role)] for this guild, dropping registrations
     whose Discord role has since been deleted."""
@@ -109,9 +137,11 @@ async def _resolve_game_roles(guild: discord.Guild) -> list:
 
 def _build_panel_embed(entries: list, with_button: bool = True) -> discord.Embed:
     how = (
-        "Press the button below (or run `/game-roles`) to change your selection at any time."
+        "Press the button below (or run `/game-roles`) to pick your games — "
+        "or to drop ones you no longer play."
         if with_button else
-        "Members pick these with `/game-roles`, or from the panel posted by `/game-role-panel`."
+        "Members pick and drop these with `/game-roles`, or from the panel "
+        "posted by `/game-role-panel`."
     )
     embed = discord.Embed(
         title='🎮 Game Roles',
@@ -189,13 +219,14 @@ async def _send_role_picker(interaction: discord.Interaction, bot: commands.Bot)
     view = GameRoleSelectView(interaction.user, entries)
     held = [role.name for _, role in entries if role in interaction.user.roles]
     current = ', '.join(f"**{n}**" for n in held) if held else '_none_'
+    how = (
+        "Tick every game you play and untick the ones you don't — your roles are set "
+        "to exactly what you leave selected. To only drop a role, use **➖ Remove a role**."
+        if held else
+        "Tick every game you play — your roles are set to exactly what you select."
+    )
     await interaction.followup.send(
-        content=(
-            "🎮 **Your Game Roles**\n"
-            f"Currently assigned: {current}\n\n"
-            "Tick every game you play and untick the ones you don't — "
-            "your roles are set to exactly what you leave selected."
-        ),
+        content=f"🎮 **Your Game Roles**\nCurrently assigned: {current}\n\n{how}",
         view=view,
         ephemeral=True,
     )
@@ -212,6 +243,7 @@ class GameRoleSelectView(discord.ui.View):
     def __init__(self, member: discord.Member, entries: list):
         super().__init__(timeout=180)
         entries = entries[:MAX_GAME_ROLES]
+        self.entries = entries
         self.roles_by_id = {str(role.id): role for _, role in entries}
 
         options = [
@@ -227,6 +259,27 @@ class GameRoleSelectView(discord.ui.View):
         select.callback = self._selected
         self.add_item(select)
 
+        # Unticking a pre-selected option already removes the role, but that is
+        # easy to miss in Discord's UI — offer removal as its own visible action.
+        if any(role in member.roles for _, role in entries):
+            remove_btn = discord.ui.Button(
+                label='➖ Remove a role',
+                style=discord.ButtonStyle.secondary,
+            )
+            remove_btn.callback = self._open_remove
+            self.add_item(remove_btn)
+
+    async def _open_remove(self, interaction: discord.Interaction):
+        view = GameRoleRemoveView(interaction.user, self.entries)
+        if not view.roles_by_id:
+            await interaction.response.edit_message(
+                content="ℹ️ You don't have any game roles to remove.", view=None
+            )
+            return
+        await interaction.response.edit_message(
+            content="Select the game roles you want to remove:", view=view
+        )
+
     async def _selected(self, interaction: discord.Interaction):
         chosen = set(interaction.data.get('values', []))
         held = set(interaction.user.roles)
@@ -241,32 +294,49 @@ class GameRoleSelectView(discord.ui.View):
             )
             return
 
-        try:
-            if to_add:
-                await interaction.user.add_roles(*to_add, reason='Self-assigned game role')
-            if to_remove:
-                await interaction.user.remove_roles(*to_remove, reason='Self-removed game role')
-        except discord.Forbidden:
+        error = await _apply_role_changes(interaction, to_add, to_remove)
+        await interaction.response.edit_message(
+            content=error or _change_summary(to_add, to_remove), view=None
+        )
+
+
+class GameRoleRemoveView(discord.ui.View):
+    """Ephemeral select listing only the game roles the member currently holds,
+    so dropping one is a single unambiguous action."""
+
+    def __init__(self, member: discord.Member, entries: list):
+        super().__init__(timeout=180)
+        held = [(row, role) for row, role in entries if role in member.roles][:MAX_GAME_ROLES]
+        self.roles_by_id = {str(role.id): role for _, role in held}
+        if not held:
+            return
+
+        options = [_select_option(row, role, is_default=False) for row, role in held]
+        select = discord.ui.Select(
+            placeholder='Select the roles to remove…',
+            options=options,
+            min_values=1,
+            max_values=len(options),
+        )
+        select.callback = self._selected
+        self.add_item(select)
+
+    async def _selected(self, interaction: discord.Interaction):
+        chosen = set(interaction.data.get('values', []))
+        held = set(interaction.user.roles)
+        to_remove = [r for rid, r in self.roles_by_id.items() if rid in chosen and r in held]
+
+        if not to_remove:
             await interaction.response.edit_message(
-                content=(
-                    "❌ Discord wouldn't let me change your roles. My role has to sit "
-                    "**above** the game roles and I need **Manage Roles** — ask an admin to check."
-                ),
+                content="ℹ️ You don't have those roles any more — nothing to remove.",
                 view=None,
             )
             return
-        except discord.HTTPException as e:
-            await interaction.response.edit_message(
-                content=f"❌ Could not update your roles: `{e}`", view=None
-            )
-            return
 
-        lines = []
-        if to_add:
-            lines.append("✅ Added: " + ', '.join(f"**{r.name}**" for r in to_add))
-        if to_remove:
-            lines.append("➖ Removed: " + ', '.join(f"**{r.name}**" for r in to_remove))
-        await interaction.response.edit_message(content='\n'.join(lines), view=None)
+        error = await _apply_role_changes(interaction, [], to_remove)
+        await interaction.response.edit_message(
+            content=error or _change_summary([], to_remove), view=None
+        )
 
 
 class GameRolePanelView(discord.ui.View):
