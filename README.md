@@ -4,7 +4,7 @@ A Discord bot for managing Arma 3 operation slot requests. Members request slots
 
 It also manages **self-assignable game roles** — permission-free tag roles for games like Minecraft or DCS that members opt into themselves, so you can `@mention` everyone who plays a given game. See [Game Roles](#game-roles).
 
-And it runs **standalone events** with sign-ups — trainings, movie nights, anything — where members answer Accepted / Tentative / Declined on a button and get reminded before the start. No Google Sheet involved. See [Events](#events).
+And it runs **standalone events** with sign-ups — trainings, movie nights, anything — where members answer Accepted / Tentative / Declined on a button, or whatever options the organiser defined, and get reminded before the start. No Google Sheet involved. See [Events](#events).
 
 ---
 
@@ -62,11 +62,11 @@ Standalone events with their own sign-ups — trainings, movie nights, campaign 
 
 **How it behaves**
 
-- Sign-up is three buttons — **✅ Accepted**, **❓ Tentative**, **❌ Declined** — with the attendee list updating live for everyone
+- Sign-up defaults to three buttons — **✅ Accepted**, **❓ Tentative**, **❌ Declined** — with the attendee list updating live for everyone
 - **Custom sign-up options** — replace those three with your own, e.g. `🚁 Pilot | 🔫 Infantry | -❌ Can't`
 - Pressing the button you already chose **withdraws** you, which is not the same as declining
-- **Repeating events** — daily, weekly, every 2 weeks, or monthly by date or by weekday (*last Saturday of the month*); the next one posts itself when the current one ends
-- Reminders DM everyone who accepted or was tentative, plus a channel ping and the event's ping role
+- **Repeating events** — seven patterns: daily, weekly, every 2 weeks, monthly by date, monthly by weekday (*last Saturday* or *2nd Saturday*), and weekly-except-the-last-of-the-month; the next one posts itself when the current one ends
+- Reminders DM everyone who signed up as coming, plus a channel ping and the event's ping role
 - Times render as Discord timestamps, so everyone sees the start in their own local time
 - Finished events close themselves out — greyed out, buttons removed, no stray sign-ups
 - `event` parameters autocomplete over upcoming events, so nobody types IDs
@@ -209,7 +209,7 @@ GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
 DB_PASSWORD=choose_a_secure_password
 ```
 
-> `DATABASE_URL` is constructed automatically by docker-compose from `DB_PASSWORD`. On Railway it is injected automatically — you do not set it manually in either case.
+> `DATABASE_URL` is constructed automatically by docker-compose from `DB_PASSWORD`. On Railway it is injected automatically — you do not set it manually in either case. The only time you fill it in yourself is [running the bot outside Docker](#local-development), which is why `.env.example` carries a commented example of it.
 
 ---
 
@@ -514,7 +514,7 @@ Changes only what you pass — everything else keeps its value. Moving the start
 /event-cancel event:#3 reason:Server maintenance
 ```
 
-Marks the event cancelled, greys out the message, removes the buttons and DMs everyone who accepted or was tentative. The event stays visible as a record rather than vanishing.
+Marks the event cancelled, greys out the message, removes the buttons and DMs everyone who signed up as coming. The event stays visible as a record rather than vanishing. With custom sign-up options that means every option except the ones marked *not coming*.
 
 On a **repeating** event this cancels only that one occurrence and posts the next one — "this week is off, next week isn't" is the usual case. Add `stop_series: True` to end the whole series instead.
 
@@ -593,7 +593,7 @@ Three details worth knowing:
 
 ### Signing up (Members)
 
-Press one of the three buttons on the event:
+Press one of the buttons on the event. Unless the organiser set [custom options](#custom-sign-up-options), they are:
 
 - **✅ Accepted** — you're coming
 - **❓ Tentative** — you might be
@@ -651,7 +651,7 @@ If anyone had already signed up with an option you removed, their answer is clea
 
 ### Reminders and close-out
 
-When the reminder window is reached, everyone who accepted or was tentative gets a DM, and the event's channel gets a ping — including the `mention` role if one was set. People who declined are left alone. The reminder fires once.
+When the reminder window is reached, everyone who signed up as coming gets a DM, and the event's channel gets a ping — including the `mention` roles if any were set. People who declined are left alone, and so is anyone who picked a custom option marked *not coming* with a leading `-`. The reminder fires once.
 
 Times always display as Discord timestamps, so **everyone sees the start in their own local time** without configuring anything.
 
@@ -724,4 +724,4 @@ cp .env.example .env        # fill in your values
 python bot.py
 ```
 
-You will need a PostgreSQL instance running locally and `DATABASE_URL` set in your `.env`. No manual command sync is needed — the bot syncs slash commands to all guilds automatically on startup.
+You will need a PostgreSQL instance running locally and `DATABASE_URL` set in your `.env` — `.env.example` has an entry for it, since this is the one setup where neither Railway nor docker-compose provides it. No manual command sync is needed — the bot syncs slash commands to all guilds automatically on startup.
