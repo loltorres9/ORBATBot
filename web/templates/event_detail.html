@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block title %}{{ event.title }} · {{ guild.name }}{% endblock %}
+{% block tzfoot %}{{ tz }}{% endblock %}
+
+{% block content %}
+<p class="crumbs"><a href="/g/{{ guild.id }}">{{ guild.name }}</a> › #{{ event.id }}</p>
+
+<div class="pagehead">
+  <div>
+    <h1>{{ event.title }}</h1>
+    <p class="muted">
+      <span class="status {{ event.status }}">{{ event.status }}</span>
+      · {{ fmt_dt(event.event_time, tz) }} ({{ relative(event.event_time) }})
+      {% if event.created_by_name %} · organised by {{ event.created_by_name }}{% endif %}
+    </p>
+  </div>
+  {% if message_link(event) %}
+    <a class="button" href="{{ message_link(event) }}" target="_blank" rel="noopener">Open in Discord</a>
+  {% endif %}
+</div>
+
+{% if event.description %}<p class="description">{{ event.description }}</p>{% endif %}
+
+<dl class="facts">
+  {% if event.duration_minutes %}
+    <dt>Duration</dt><dd>{{ event.duration_minutes }} min</dd>
+  {% endif %}
+  {% if event.location %}
+    <dt>Location</dt><dd>{{ event.location }}</dd>
+  {% endif %}
+  <dt>Reminder</dt>
+  <dd>{% if event.reminder_minutes %}{{ event.reminder_minutes }} min before{% else %}none{% endif %}</dd>
+  {% if event.recurrence in recurrence_labels %}
+    <dt>Repeats</dt>
+    <dd>
+      {{ recurrence_text(event) }}
+      {% if event.recurrence_until %} · until {{ fmt_date(event.recurrence_until, tz) }}{% endif %}
+    </dd>
+  {% endif %}
+  {% if event.mention_role_id %}
+    <dt>Pings</dt>
+    <dd>
+      {% for role_id in event.mention_role_id.split(',') %}
+        {% set role = guild.get_role(role_id|int) %}
+        <span class="chip">@{{ role.name if role else 'deleted role' }}</span>
+      {% endfor %}
+    </dd>
+  {% endif %}
+</dl>
+
+<h2>Sign-ups ({{ signup_count }})</h2>
+{% if event.status == 'scheduled' %}
+  <form class="rsvp" method="post" action="/g/{{ guild.id }}/events/{{ event.id }}/rsvp">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for response in responses %}
+      <button class="button rsvpbtn {{ 'chosen' if my_response == response.key }}"
+              name="response" value="{{ response.key }}" type="submit">
+        {{ response.emoji or '•' }} {{ response.label }}
+      </button>
+    {% endfor %}
+  </form>
+  <p class="hint">Pressing the answer you already gave withdraws it — same as on Discord.</p>
+{% endif %}
+
+<div class="columns">
+  {% for response in responses %}
+    <section class="column">
+      <h3>{{ response.emoji or '•' }} {{ response.label }} ({{ grouped[response.key]|length }})</h3>
+      {% if grouped[response.key] %}
+        <ul class="people">
+          {% for row in grouped[response.key] %}<li>{{ row.member_name }}</li>{% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">—</p>
+      {% endif %}
+    </section>
+  {% endfor %}
+</div>
+
+{% if may_manage %}
+  <h2>Manage</h2>
+  <div class="managebar">
+    {% if event.status == 'scheduled' %}
+      <a class="button" href="/g/{{ guild.id }}/events/{{ event.id }}/edit">Edit</a>
+    {% endif %}
+    <a class="button danger" href="/g/{{ guild.id }}/events/{{ event.id }}/delete">Delete</a>
+  </div>
+
+  {% if event.status == 'scheduled' %}
+    <form class="form cancelform" method="post" action="/g/{{ guild.id }}/events/{{ event.id }}/cancel">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field">
+        <span>Cancel this event</span>
+        <input name="reason" placeholder="Reason (optional) — sent to everyone attending">
+      </label>
+      {% if event.recurrence in recurrence_labels %}
+        <label class="check">
+          <input type="checkbox" name="stop_series" value="1">
+          <span>Also stop the whole series (otherwise the next occurrence is posted)</span>
+        </label>
+      {% endif %}
+      <div class="actions">
+        <button class="button danger" type="submit">Cancel event &amp; notify attendees</button>
+      </div>
+    </form>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Your servers · ORBAT{% endblock %}
+
+{% block content %}
+<h1>Your servers</h1>
+
+{% if guilds %}
+  <ul class="cards">
+    {% for item in guilds %}
+      <li class="card">
+        <a class="cardlink" href="/g/{{ item.guild.id }}">
+          {% if item.guild.icon %}
+            <img class="guildicon" src="{{ item.guild.icon.url }}" alt="" width="44" height="44">
+          {% else %}
+            <span class="guildicon placeholder">{{ item.guild.name[0] }}</span>
+          {% endif %}
+          <span class="cardbody">
+            <strong>{{ item.guild.name }}</strong>
+            <span class="muted">as {{ item.member.display_name }}</span>
+          </span>
+        </a>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="empty">
+    You aren't in any server this bot is on — or Discord hasn't told it about you yet.
+  </p>
+{% endif %}
+{% endblock %}

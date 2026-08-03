@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Events{% endblock %}
+{% block tzfoot %}{{ tz }}{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }} · times in {{ tz }}</p>
+  </div>
+  {% if may_create %}
+    <a class="button primary" href="/g/{{ guild.id }}/events/new">+ New event</a>
+  {% endif %}
+</div>
+
+<h2>Upcoming</h2>
+{% if upcoming %}
+  <ul class="eventlist">
+    {% for item in upcoming %}
+      {% set event = item.event %}
+      <li class="event">
+        <a class="eventmain" href="/g/{{ guild.id }}/events/{{ event.id }}">
+          <span class="when">
+            <strong>{{ fmt_dt(event.event_time, tz) }}</strong>
+            <span class="muted">{{ relative(event.event_time) }}</span>
+          </span>
+          <span class="title">{{ event.title }}</span>
+          <span class="meta">
+            #{{ event.id }}
+            {% if event.location %} · 📍 {{ event.location }}{% endif %}
+            {% if event.recurrence in recurrence_labels %} · 🔁 {{ recurrence_text(event) }}{% endif %}
+          </span>
+        </a>
+        <span class="counts">
+          {% for response in item.responses %}
+            <span class="chip" title="{{ response.label }}">
+              {{ response.emoji or response.label }} {{ item.grouped[response.key]|length }}
+            </span>
+          {% endfor %}
+        </span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="empty">
+    No upcoming events.
+    {% if may_create %}<a href="/g/{{ guild.id }}/events/new">Create the first one.</a>{% endif %}
+  </p>
+{% endif %}
+
+{% if past %}
+  <h2>Recently finished and cancelled</h2>
+  <ul class="eventlist quiet">
+    {% for event in past %}
+      <li class="event">
+        <a class="eventmain" href="/g/{{ guild.id }}/events/{{ event.id }}">
+          <span class="when"><strong>{{ fmt_dt(event.event_time, tz) }}</strong></span>
+          <span class="title">{{ event.title }}</span>
+          <span class="meta">#{{ event.id }}</span>
+        </a>
+        <span class="status {{ event.status }}">{{ event.status }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+
+<form class="inlineform" method="post" action="/g/{{ guild.id }}/refresh">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="linkish" type="submit">Changed your roles on Discord? Re-read them</button>
+</form>
+{% endblock %}

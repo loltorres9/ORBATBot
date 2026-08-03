@@ -501,6 +501,28 @@ async def _refresh_event_message(bot: commands.Bot, event, view=None) -> bool:
         return False
 
 
+async def publish_event(bot: commands.Bot, channel, event_id: int,
+                        responses: list = None) -> discord.Message:
+    """Post an event's message, register its buttons and store the message ids.
+
+    The single place an event reaches Discord from — the slash command, the
+    recurrence hand-over and the web UI all go through it, so all three produce
+    an identical message. `Forbidden` and `HTTPException` are left to the caller:
+    each one discards the event differently.
+    """
+    event = await database.get_event(event_id)
+    responses = responses or await load_responses(event_id)
+    view = EventRsvpView(event_id, bot, responses)
+    msg = await channel.send(
+        content=_mention_text(event) or None,
+        embed=_build_event_embed(event, [], responses),
+        view=view,
+    )
+    await database.save_event_message(event_id, str(channel.id), str(msg.id))
+    bot.add_view(view)
+    return msg
+
+
 async def _spawn_next_occurrence(bot: commands.Bot, event) -> Optional[int]:
     """Create and post the next occurrence of a recurring event.
 
@@ -552,24 +574,14 @@ async def _spawn_next_occurrence(bot: commands.Bot, event) -> Optional[int]:
     custom = await database.get_event_responses(event['id'])
     if custom:
         await database.set_event_responses(new_id, [dict(row) for row in custom])
-    responses = await load_responses(new_id)
 
-    new_event = await database.get_event(new_id)
-    view = EventRsvpView(new_id, bot, responses)
     try:
-        msg = await channel.send(
-            content=_mention_text(event) or None,
-            embed=_build_event_embed(new_event, [], responses),
-            view=view,
-        )
+        await publish_event(bot, channel, new_id)
     except (discord.Forbidden, discord.HTTPException):
         # Couldn't post it — drop the recurrence so the series stops cleanly
         # rather than retrying every minute forever.
         await database.set_event_status(new_id, 'cancelled')
         return None
-
-    await database.save_event_message(new_id, str(channel.id), str(msg.id))
-    bot.add_view(view)
     return new_id
 
 
@@ -882,16 +894,9 @@ class EventsCog(commands.Cog):
 
         if custom_responses:
             await database.set_event_responses(event_id, custom_responses)
-        active_responses = await load_responses(event_id)
 
-        event = await database.get_event(event_id)
-        view = EventRsvpView(event_id, self.bot, active_responses)
         try:
-            msg = await target.send(
-                content=' '.join(r.mention for r in mention_roles) or None,
-                embed=_build_event_embed(event, [], active_responses),
-                view=view,
-            )
+            await publish_event(self.bot, target, event_id)
         except discord.Forbidden:
             await database.set_event_status(event_id, 'cancelled')
             await interaction.followup.send(
@@ -908,9 +913,6 @@ class EventsCog(commands.Cog):
                 ephemeral=True,
             )
             return
-
-        await database.save_event_message(event_id, str(target.id), str(msg.id))
-        self.bot.add_view(view)
 
         ts = int(_as_utc(parsed).timestamp())
         repeat_line = ""

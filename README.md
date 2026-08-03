@@ -6,6 +6,8 @@ It also manages **self-assignable game roles** — permission-free tag roles for
 
 And it runs **standalone events** with sign-ups — trainings, movie nights, anything — where members answer Accepted / Tentative / Declined on a button, or whatever options the organiser defined, and get reminded before the start. No Google Sheet involved. See [Events](#events).
 
+Events can also be managed from a **browser** instead of slash commands: an optional web interface with Discord login, running inside the same bot process. See [Web UI](#web-ui).
+
 ---
 
 ## Features
@@ -106,6 +108,7 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 - **Buttons survive restarts** — approval buttons, the ORBAT request button, the game-role panel and event sign-ups are all persistent views
 - **Commands sync automatically** on startup and when the bot joins a server; `/sync` is only for when something looks missing
 - **Role-based access control** — Unit Leaders get extra commands scoped to their own unit
+- **Optional [web interface](#web-ui)** — manage events from the browser, signed in with Discord, running inside the same process
 
 ---
 
@@ -210,6 +213,8 @@ DB_PASSWORD=choose_a_secure_password
 ```
 
 > `DATABASE_URL` is constructed automatically by docker-compose from `DB_PASSWORD`. On Railway it is injected automatically — you do not set it manually in either case. The only time you fill it in yourself is [running the bot outside Docker](#local-development), which is why `.env.example` carries a commented example of it.
+
+The optional [web interface](#web-ui) adds `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `WEB_SECRET_KEY` and `WEB_BASE_URL`. Leave them empty and the bot behaves exactly as before — no web server is started at all.
 
 ---
 
@@ -714,6 +719,79 @@ No privileged intents are needed for this feature.
 
 ---
 
+## Web UI
+
+An optional browser interface for **events**: create them, edit them, cancel them, delete them and see who signed up — without touching a slash command. You sign in with your Discord account, and everything you do produces the same message, with the same buttons, in the same channel as `/event-create` would.
+
+It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` and `WEB_SECRET_KEY` unset, the bot starts exactly as it always did and opens no HTTP port. The startup log says which of the three is missing.
+
+### What it does
+
+| Page | What you get |
+|---|---|
+| Sign-in | **Continue with Discord** — OAuth2, `identify` scope only |
+| Server picker | Every server you and the bot are both in (skipped when there is only one) |
+| Events | Upcoming events with live sign-up counts, plus recently finished and cancelled ones |
+| Event | Full details, the attendee list per response, and RSVP buttons for yourself |
+| New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
+| Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
+| Delete | Confirmation page stating the sign-up count, then removes the event and its message |
+
+Who may do what is **read live from your Discord roles**, not from the login:
+
+- **Any member of the server** — view events, RSVP
+- **Unit Leader or Manage Server** — create events
+- **The organiser, or an admin** — edit, cancel and delete that event
+
+That is the same rule set the slash commands use; it is literally the same code. Roles are cached for a minute, so if you have just been given a role, the **“Changed your roles on Discord? Re-read them”** link at the bottom of the event list picks it up immediately.
+
+Times are entered and displayed in the **server timezone** (`/set-timezone`), the same as every time you type into a slash command.
+
+### Setting it up
+
+**1. Create the OAuth2 credentials.** In the [Discord Developer Portal](https://discord.com/developers/applications) → your application → **OAuth2**:
+
+- copy the **Client ID** and generate a **Client Secret**
+- under **Redirects**, add `https://your-domain/auth/callback` — it must match `WEB_BASE_URL` exactly, including `https://` and with no trailing slash
+
+**2. Generate a session key.**
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Changing this key later signs everybody out; nothing else is lost.
+
+**3. Set the variables** on Railway (service → **Variables**) or in `.env` for Docker:
+
+```
+DISCORD_CLIENT_ID=your_application_id
+DISCORD_CLIENT_SECRET=your_client_secret
+WEB_SECRET_KEY=the_random_string_from_step_2
+WEB_BASE_URL=https://orbat.example.com
+```
+
+**4. Expose it.**
+
+- **Railway** — service → **Settings → Networking → Generate Domain**. Railway injects `PORT` and the app listens on it; use that domain as `WEB_BASE_URL`.
+- **Docker** — port `8080` is published by `docker-compose.yml`; put it behind a reverse proxy that terminates TLS (Caddy or nginx), and point `WEB_BASE_URL` at the public name.
+
+Restart the bot. The log line `✅ Web UI listening on …` means it is up; `/healthz` answers `ok` once the bot is connected to Discord.
+
+### How it is wired
+
+The site runs **inside the bot process**, on the same event loop. That is why a page can post a message, register a persistent button and read a member's roles directly — there is no second service, no polling and no queue table, and one Railway service still runs everything.
+
+The session is a signed cookie, so there is no session table and a redeploy doesn't sign anyone out. It holds nothing but your user id, display name, avatar hash and a CSRF token; the Discord access token is used once to read your profile and then discarded. Every permission decision is made fresh from the bot's live view of the guild.
+
+### Limits
+
+- Events only — slots, the ORBAT board and game roles are still Discord-side
+- An event can't be moved to another channel after posting; cancel it and create a new one
+- Approving slot requests is unchanged and still happens in `#slot-approvals`
+
+---
+
 ## Local Development
 
 ```bash
@@ -725,3 +803,5 @@ python bot.py
 ```
 
 You will need a PostgreSQL instance running locally and `DATABASE_URL` set in your `.env` — `.env.example` has an entry for it, since this is the one setup where neither Railway nor docker-compose provides it. No manual command sync is needed — the bot syncs slash commands to all guilds automatically on startup.
+
+To work on the [web UI](#web-ui) locally, add `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` and `WEB_SECRET_KEY` to your `.env`, leave `WEB_BASE_URL` empty so the callback URL is taken from the request, and register `http://localhost:8080/auth/callback` as a redirect URI in the Developer Portal. `WEB_PORT` changes the port. The bot has to be in a server with you for anything to show up.
