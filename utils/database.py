@@ -601,6 +601,30 @@ async def update_event(event_id: int, title: str = None, description: str = None
         )
 
 
+# Optional event columns that may legitimately be emptied again. update_event()
+# uses COALESCE and so can only ever set a value, never remove one — this is its
+# counterpart, the same way set_event_mentions() is for the ping roles.
+_CLEARABLE_EVENT_FIELDS = frozenset({
+    'description', 'location', 'image_url', 'duration_minutes', 'reminder_minutes',
+})
+
+
+async def clear_event_fields(event_id: int, fields: list):
+    """Set the given optional columns back to NULL."""
+    unknown = [name for name in fields if name not in _CLEARABLE_EVENT_FIELDS]
+    if unknown:
+        raise ValueError(f"Not a clearable event field: {', '.join(unknown)}")
+    if not fields:
+        return
+    assignments = ', '.join(f'{name} = NULL' for name in fields)
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            f'UPDATE events SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+            event_id,
+        )
+
+
 async def set_event_mentions(event_id: int, role_ids: str = None):
     """Set the ping roles outright. update_event() uses COALESCE and so cannot
     clear them, which is what passing None here does."""

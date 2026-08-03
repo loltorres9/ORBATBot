@@ -6,6 +6,15 @@ services:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - GOOGLE_CREDENTIALS=${GOOGLE_CREDENTIALS}
       - DATABASE_URL=postgresql://orbatuser:${DB_PASSWORD}@db:5432/orbatbot
+      # Web UI — empty values simply leave it switched off
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID:-}
+      - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET:-}
+      - WEB_SECRET_KEY=${WEB_SECRET_KEY:-}
+      - WEB_BASE_URL=${WEB_BASE_URL:-}
+      - WEB_PORT=8080
+    # The site is only reachable once the three variables above are set.
+    ports:
+      - "${WEB_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy

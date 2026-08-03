@@ -22,6 +22,8 @@ class ORBATBot(commands.Bot):
             intents=intents,
             description='Arma 3 ORBAT Slot Management Bot',
         )
+        # The optional web UI. Stays None unless it is configured — see _start_web().
+        self.web = None
 
     async def setup_hook(self):
         import traceback
@@ -87,7 +89,53 @@ class ORBATBot(commands.Bot):
 
         self.reminder_task.start()
         print("✅ Reminder task started.")
+
+        await self._start_web()
         print("--- setup_hook end ---")
+
+    async def _start_web(self):
+        """Start the browser UI, if it is configured.
+
+        It shares this process and event loop, so a page can post a message or
+        register a view through `self` directly. Every failure path here is
+        non-fatal: the bot's own job must not depend on the website.
+        """
+        import traceback
+
+        try:
+            from web import WebServer, load_config
+        except Exception:
+            print("ℹ️ Web UI dependencies missing (pip install -r requirements.txt) — skipped.")
+            return
+
+        config = load_config()
+        if config.disabled:
+            print("ℹ️ Web UI switched off with WEB_ENABLED=0.")
+            return
+        if not config.ready:
+            print(
+                "ℹ️ Web UI not configured — set "
+                f"{', '.join(config.missing)} to enable it. Skipped."
+            )
+            return
+
+        server = WebServer(self, config)
+        try:
+            await server.start()
+        except Exception:
+            print("❌ Web UI failed to start:")
+            traceback.print_exc()
+            return
+
+        self.web = server
+        print(f"✅ Web UI listening on {config.host}:{config.port}"
+              + (f" ({config.base_url})" if config.base_url else ""))
+
+    async def close(self):
+        if self.web is not None:
+            await self.web.stop()
+            self.web = None
+        await super().close()
 
     @tasks.loop(minutes=1)
     async def reminder_task(self):

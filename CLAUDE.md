@@ -8,8 +8,8 @@ This file gives full context on the project. Read it before making any changes.
 
 A Discord bot for managing Arma 3 operation slot requests across multiple military simulation units. Members request slots; Unit Leaders and admins approve or deny via Discord buttons. The Google Sheet is updated automatically on approval.
 
-**Current state:** Fully operational bot deployed on Railway.
-**Next phase:** Web app (see bottom of this file) — Discord OAuth2 login, visual ORBAT, slot requests from the browser, no Google Sheets dependency.
+**Current state:** Fully operational bot deployed on Railway, plus an optional web UI (`web/`) with Discord OAuth2 login for managing events from a browser.
+**Next phase:** extend that web UI to slots — visual ORBAT, slot requests from the browser, no Google Sheets dependency. See [Web UI](#web-ui-web) at the bottom of this file.
 
 ---
 
@@ -25,6 +25,15 @@ cogs/
 utils/
   database.py           # All PostgreSQL queries (asyncpg)
   sheets.py             # Google Sheets read/write (gspread)
+web/                    # Optional browser UI — Discord OAuth2 login + event management
+  config.py             # Env-driven config; the feature is off until it is complete
+  server.py             # uvicorn driven from inside the bot's event loop
+  app.py                # FastAPI routes, session plumbing, template rendering
+  auth.py               # OAuth2 flow, signed-cookie sessions, CSRF, flash messages
+  guilds.py             # Signed-in user → discord.Member, and what they may do
+  service.py            # Create/edit/cancel/delete/RSVP, on top of cogs/events.py
+  helpers.py            # Guild-timezone formatting and datetime-local parsing
+  templates/ static/    # Jinja2 templates and one stylesheet — no build step
 requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
@@ -51,6 +60,11 @@ pure and Discord-free, so it is the obvious first thing to cover if that changes
 | `DB_PASSWORD` | PostgreSQL password (docker-compose only) |
 | `DATABASE_URL` | Full connection string — injected automatically by Railway; constructed by docker-compose; set by hand for local development |
 | `RAILWAY_API_TOKEN` | **Optional.** Account or team token that lets `/restart` trigger a clean deployment restart via the Railway GraphQL API. Without it `/restart` still works, by exiting non-zero so Railway's `ON_FAILURE` policy relaunches the container. Project tokens do **not** work — `_railway_restart()` authenticates with a `Bearer` header |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | **Optional.** OAuth2 credentials for the web UI. Missing → no web server is started |
+| `WEB_SECRET_KEY` | **Optional.** Signs the session, OAuth-state and flash cookies. Changing it signs everyone out |
+| `WEB_BASE_URL` | **Optional.** Public origin, no trailing slash. Must match the redirect URI registered in the Developer Portal; also decides whether cookies are marked `Secure`. Empty → derived from the request, which is only meant for local runs |
+| `WEB_HOST` / `WEB_PORT` | **Optional.** Listen address. `PORT` (injected by Railway) wins over `WEB_PORT` |
+| `WEB_ENABLED` | **Optional.** `0` keeps the site off even when everything else is set |
 
 Railway injects these at runtime; nothing sets them manually. `_railway_restart()` reads them to find the deployment to restart:
 
@@ -451,8 +465,9 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
    - one `ApprovalView` per `pending` request
    - one `EventRsvpView` per event from `get_live_events()`, each built with **that event's own responses** via `load_responses()` — a restored view carrying the default keys wouldn't match the message's `custom_id`s
 4. Start `reminder_task` (operations). `EventsCog.event_task` starts separately, from the cog's `__init__`
-5. `on_ready`: `copy_global_to` + guild sync for each guild (instant, vs up-to-1-hour global sync)
-6. `on_guild_join`: sync immediately when bot joins a new server
+5. `_start_web()` — starts the web UI when it is configured. Every failure here is non-fatal and only printed: missing dependencies, missing variables, `WEB_ENABLED=0` or a crash in `WebServer.start()` all leave the bot running normally. `close()` stops the server before the Discord connection goes down
+6. `on_ready`: `copy_global_to` + guild sync for each guild (instant, vs up-to-1-hour global sync)
+7. `on_guild_join`: sync immediately when bot joins a new server
 
 ---
 
@@ -568,48 +583,140 @@ If the next occurrence can't be posted (channel gone, `Forbidden`), the freshly 
 
 - **Time comparisons.** `event_time` is naive UTC. The event queries compare against `NOW() AT TIME ZONE 'UTC'`, not `CURRENT_TIMESTAMP` — the latter is a `timestamptz` and would be cast using the *session* timezone, which is only correct while the server runs in UTC. The older `operations` queries still use `CURRENT_TIMESTAMP`; prefer the new form for anything added.
 - **Per-user timezones come free for display.** All times render as Discord timestamps (`<t:…:F>`), which every client localises automatically. Only *input* is guild-timezone based, so a per-user input timezone is the only part still missing.
+- **`publish_event(bot, channel, event_id)` is the only place an event reaches Discord.** The slash command, the recurrence hand-over and the web UI all call it, so all three produce an identical message and all three register the persistent view. It deliberately does not catch `Forbidden` / `HTTPException` — each caller discards the event differently (the command explains it, the hand-over stops the series, the web form shows it on the page).
 - **Persistence** mirrors `ApprovalView`: `setup_hook()` calls `get_live_events()` and re-adds one `EventRsvpView` per open event. Events without a `message_id` are skipped.
 - `_format_attendees()` trims mention lists to Discord's 1024-char field limit and appends "…and N more", while the field *name* keeps the true total.
 - `_group_signups()` ignores unrecognised `response` values rather than raising, so a stale key can't break an embed.
 
 ---
 
-## Planned Web App (next phase)
+## Web UI (`web/`)
 
-### Goal
-A web interface that replaces/supplements the Discord bot for slot management:
-- No Google Sheets dependency — ORBAT structure stored directly in PostgreSQL
-- Discord OAuth2 login — verify server membership and roles
-- Visual ORBAT — click a slot to request it
-- Slot requests trigger Discord notifications (bot posts to `#slot-approvals`)
-- Approvals can stay in Discord (MVP) or also be web-based (full version)
-- ORBAT builder — create operations and slots in the web UI
+An optional browser interface for **events**. It is off until configured: `bot.py`'s
+`_start_web()` prints which of `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` /
+`WEB_SECRET_KEY` is missing and opens no listener. Missing dependencies,
+`WEB_ENABLED=0` and a crash in `WebServer.start()` are all handled the same way —
+**the bot's own job must never depend on the website**.
 
-### Agreed tech stack
-- **Backend:** FastAPI (Python, async — fits alongside existing code)
-- **Frontend:** HTMX for simplicity, or React for richer UI
-- **Auth:** Discord OAuth2 via `authlib`
-- **DB:** Same PostgreSQL, schema extended (drop `sheet_url`/`sheet_id` dependency)
-- **Real-time ORBAT updates:** Server-Sent Events (SSE)
-- **Deploy:** Railway (second service) or same Docker Compose
+### It runs inside the bot process
 
-### MVP scope
-1. Discord OAuth2 login — verify user is in the guild
-2. Read-only ORBAT view
-3. Click slot → request submitted → bot posts to `#slot-approvals`
-4. Approvals still happen in Discord
+`web/server.py` drives uvicorn programmatically on the bot's own event loop, so a
+request handler can call `channel.send()`, `bot.add_view()` and
+`guild.fetch_member()` directly. That is the whole reason the earlier plan's
+outbox/polling bridge isn't here: there is no second process to bridge to, one
+Railway service still runs everything, and a web-created event is posted and
+persistent-view-registered before the response is written.
 
-### Full version additions
-- Web-based ORBAT builder (create operation, add squads, add roles in UI)
-- Approve/deny from web as well as Discord
-- Operation history and archive page
-- Admin dashboard
+Two consequences to keep in mind:
 
-### Key DB changes needed for web
-- New table: `squads (id, operation_id, name, sort_order)`
-- New table: `slots (id, squad_id, role_name, sort_order, assigned_request_id)`
-- Remove Google Sheets columns from `operations` (or make optional for backwards compat)
-- Add `session` table or use JWT for web auth
+- `_BotOwnedServer` overrides `install_signal_handlers()` to a no-op. uvicorn
+  installs SIGINT/SIGTERM handlers in `serve()`, which would take the process
+  down out from under discord.py.
+- `ORBATBot.close()` stops the server first. A slow HTTP handler must not
+  outlive the Discord connection it is calling into.
 
-### Architecture note
-Web app and bot share the same PostgreSQL instance. Web app writes requests → bot detects via polling or DB trigger and posts to Discord. This keeps the two surfaces decoupled.
+### Auth and permissions
+
+OAuth2 with the **`identify` scope only**. The access token is used once to read
+the profile and then discarded — guild membership and roles come from the bot's
+own connection instead, so the site can't be tricked by a stale token and needs
+no `guilds.members.read` consent.
+
+**The session is a signed cookie** (`itsdangerous`), holding only user id, display
+name, avatar hash and a CSRF token. No session table, and a redeploy signs nobody
+out. Rotating `WEB_SECRET_KEY` invalidates every session, OAuth state and flash
+message at once.
+
+Every permission decision is re-made per request from a live `discord.Member`:
+
+| Action | Who | Same check as |
+|---|---|---|
+| View events, RSVP | any member of the guild | — |
+| Create an event | Unit Leader or admin | `_is_unit_leader_or_admin()` |
+| Edit / cancel / delete | organiser or admin | `_is_organiser()` |
+
+Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
+the slash commands cannot drift apart on access control.
+
+`resolve_member()` caches for 60 s because `Intents.default()` has no members
+intent, so `guild.get_member()` is usually empty and each check would otherwise
+cost a REST call. `POST /g/{id}/refresh` calls `forget_member()` so someone who
+was just given a role doesn't have to wait it out.
+
+### CSRF and redirects
+
+Cookies are `SameSite=Lax`, and every POST additionally carries the session's CSRF
+token as a hidden field, checked by `auth.check_csrf()`. The OAuth `state` is
+signed *and* mirrored into a short-lived cookie, so a callback this site didn't
+start is rejected. `safe_next()` only ever redirects to a path on this origin.
+
+### Routes
+
+```
+GET  /                                  login page, or the guild picker
+GET  /login  ·  GET /auth/callback  ·  POST /logout
+GET  /g/{guild}                         upcoming + recently closed events
+GET  /g/{guild}/events/new              create form      POST to create
+GET  /g/{guild}/events/{id}             detail + RSVP
+GET  /g/{guild}/events/{id}/edit        edit form        POST to save
+POST /g/{guild}/events/{id}/cancel      reason, optional stop_series
+GET  /g/{guild}/events/{id}/delete      confirmation     POST to delete
+POST /g/{guild}/events/{id}/rsvp        toggle, exactly like the buttons
+POST /g/{guild}/refresh                 drop the cached member
+GET  /healthz                           'ok' once the bot is ready
+```
+
+### Where the logic lives
+
+`web/service.py` owns no rules of its own — it translates form fields and calls
+into `cogs/events.py` (`publish_event`, `_parse_responses`, `_refresh_event_message`,
+`_spawn_next_occurrence`, `_attending`, the recurrence helpers) and
+`utils/database.py`. A `ValueError` raised in there is a message for the user and
+is rendered back on the form. **Anything added to the event model belongs in the
+cog, not here.**
+
+Two behaviours worth knowing before changing that file:
+
+- **The start time is only passed to `update_event()` when it actually moved.**
+  That call re-arms `reminder_fired` whenever it is given a time, and an
+  unchanged form submission must not make a reminder fire twice.
+- **Emptied fields are cleared through `database.clear_event_fields()`.**
+  `update_event()` uses `COALESCE` and so can only ever set a value — the same
+  reason `set_event_mentions()` and `set_event_recurrence()` exist. The
+  clearable columns are whitelisted in `_CLEARABLE_EVENT_FIELDS`.
+
+Times are entered and shown in the **guild timezone**: `web/helpers.py` parses
+`<input type="datetime-local">` through the cog's own `_parse_event_time()`, so
+"local time" means the same thing on the web as in a slash command. The Discord
+messages keep using `<t:…>` timestamps and localise themselves.
+
+### Front end
+
+Server-rendered Jinja2 plus one hand-written stylesheet. No build step, no CDN,
+no JavaScript — the page has to work from a fresh container with nothing but the
+bot's own dependencies installed.
+
+### Deliberately not covered yet
+
+- **Slots and the ORBAT board** — still Discord- and Sheets-only. This is the
+  natural next step: `squads` / `slots` tables, a visual ORBAT, and slot requests
+  that post to `#slot-approvals`.
+- **Approving slot requests** — still Discord-side.
+- **Moving an event to another channel** — the message would have to be deleted
+  and reposted, losing the sign-up history's continuity; cancel and recreate.
+- **Per-user input timezones** — display is already per-user via Discord
+  timestamps, but everything typed in is guild-timezone based.
+
+### Slots on the web — the shape it was planned in
+
+Kept from the original plan, still the intended direction:
+
+- New table `squads (id, operation_id, name, sort_order)`
+- New table `slots (id, squad_id, role_name, sort_order, assigned_request_id)`
+- Make the Google Sheets columns on `operations` optional rather than required,
+  so sheet-backed and DB-backed operations can coexist during the migration
+- Read-only visual ORBAT first, then click-a-slot-to-request (posting to
+  `#slot-approvals` as today), then approve/deny from the web, then an ORBAT
+  builder and an operation archive
+- Live updates were sketched as Server-Sent Events; running in-process makes that
+  straightforward, since the request handler already sees every change

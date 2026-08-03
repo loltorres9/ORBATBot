@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'New event' if mode == 'create' else 'Edit event' }} · {{ guild.name }}{% endblock %}
+{% block tzfoot %}{{ tz }}{% endblock %}
+
+{% set selected_roles = values.get('mention_ids') or [] %}
+
+{% block content %}
+<p class="crumbs">
+  <a href="/g/{{ guild.id }}">{{ guild.name }}</a> ›
+  {% if mode == 'edit' %}<a href="/g/{{ guild.id }}/events/{{ event.id }}">#{{ event.id }}</a> › Edit{% else %}New event{% endif %}
+</p>
+
+<h1>{{ 'New event' if mode == 'create' else 'Edit ' + event.title }}</h1>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+<form class="form" method="post"
+      action="{{ '/g/%s/events/new' % guild.id if mode == 'create' else '/g/%s/events/%s/edit' % (guild.id, event.id) }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <label class="field">
+    <span>Title</span>
+    <input name="title" required maxlength="200" value="{{ values.get('title', '') }}"
+           placeholder="Weekly Training">
+  </label>
+
+  <div class="row">
+    <label class="field">
+      <span>Start ({{ tz }})</span>
+      <input type="datetime-local" name="start_time" required value="{{ values.get('start_time', '') }}">
+    </label>
+    <label class="field">
+      <span>Duration (minutes)</span>
+      <input type="number" name="duration" min="1" value="{{ values.get('duration', '') }}"
+             placeholder="optional">
+    </label>
+  </div>
+
+  <label class="field">
+    <span>Description</span>
+    <textarea name="description" rows="4" placeholder="What the event is about">{{ values.get('description', '') }}</textarea>
+  </label>
+
+  <div class="row">
+    <label class="field">
+      <span>Location</span>
+      <input name="location" value="{{ values.get('location', '') }}"
+             placeholder="Voice channel or server name">
+    </label>
+    <label class="field">
+      <span>Reminder</span>
+      <select name="reminder">
+        {% for minutes, label in reminder_choices %}
+          <option value="{{ minutes }}"
+            {% if values.get('reminder')|string == minutes|string %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  {% if mode == 'create' %}
+    <label class="field">
+      <span>Post in</span>
+      <select name="channel_id" required>
+        <option value="">Pick a channel…</option>
+        {% for channel in channels %}
+          <option value="{{ channel.id }}"
+            {% if values.get('channel_id')|string == channel.id|string %}selected{% endif %}>#{{ channel.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  {% else %}
+    <p class="note">
+      Posted in <strong>#{{ (guild.get_channel(event.channel_id|int).name) if event.channel_id and guild.get_channel(event.channel_id|int) else 'unknown channel' }}</strong>.
+      Moving an event to another channel isn't possible — cancel it and create a new one.
+    </p>
+  {% endif %}
+
+  <fieldset class="field">
+    <legend>Ping roles</legend>
+    <p class="hint">Pinged when the event is posted and again with the reminder.</p>
+    <div class="checkgrid">
+      {% for role in roles %}
+        <label class="check">
+          <input type="checkbox" name="mention_ids" value="{{ role.id }}"
+                 {% if role.id|string in selected_roles %}checked{% endif %}>
+          <span>{{ role.name }}</span>
+        </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <div class="row">
+    <label class="field">
+      <span>Repeat</span>
+      <select name="repeat">
+        {% for value, label in repeat_choices %}
+          <option value="{{ value }}"
+            {% if (values.get('repeat') or 'none') == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>Repeat until</span>
+      <input type="datetime-local" name="repeat_until" value="{{ values.get('repeat_until', '') }}">
+    </label>
+  </div>
+
+  <label class="field">
+    <span>Sign-up buttons</span>
+    <input name="responses" value="{{ values.get('responses', '') }}"
+           placeholder="✅ Coming | ❓ Maybe | -❌ Can't make it">
+    <span class="hint">
+      Leave empty for the standard Accepted / Tentative / Declined. Separate options with
+      <code>|</code>, and prefix one with <code>-</code> to mark it as “not coming”.
+    </span>
+  </label>
+
+  <label class="field">
+    <span>Banner image URL</span>
+    <input name="image_url" value="{{ values.get('image_url', '') }}"
+           placeholder="https://… (direct link to an image)">
+  </label>
+
+  <div class="actions">
+    <button class="button primary" type="submit">
+      {{ 'Create and post' if mode == 'create' else 'Save changes' }}
+    </button>
+    <a class="button" href="{{ '/g/%s' % guild.id if mode == 'create' else '/g/%s/events/%s' % (guild.id, event.id) }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

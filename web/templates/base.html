@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ORBAT{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🗺️</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">🗺️ <span>ORBAT</span></a>
+    {% if session %}
+      <div class="user">
+        <img class="avatar" src="{{ avatar }}" alt="" width="28" height="28">
+        <span class="name">{{ session.name }}</span>
+        <form method="post" action="/logout">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="linkish" type="submit">Sign out</button>
+        </form>
+      </div>
+    {% endif %}
+  </header>
+
+  <main>
+    {% if flash %}
+      <div class="flash {{ flash.kind }}">{{ flash.text }}</div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="foot">
+    Managed by the ORBAT Discord bot · times shown in {% block tzfoot %}the server timezone{% endblock %}
+  </footer>
+</body>
+</html>
