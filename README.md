@@ -754,6 +754,8 @@ Times are entered and displayed in the **server timezone** (`/set-timezone`), th
 - copy the **Client ID** and generate a **Client Secret**
 - under **Redirects**, add `https://your-domain/auth/callback` — it must match `WEB_BASE_URL` exactly, including `https://` and with no trailing slash
 
+> **Already have a Discord OAuth2 app?** Reuse it. Take its existing client ID and secret, and just add `https://your-domain/auth/callback` as an *additional* redirect URI — Discord allows several per application and the existing ones keep working. Do **not** regenerate the client secret if that app is used elsewhere; that would break the other integration. It doesn't even have to be the bot's own application: membership and roles are read through the bot's connection, not through the user's token, so any application works — only the name on the consent screen changes. Using the bot's application is still the tidiest.
+
 **2. Generate a session key.**
 
 ```bash
