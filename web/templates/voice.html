@@ -137,5 +137,36 @@
       <button class="button primary" type="submit">Save</button>
     </div>
   </form>
+
+  <h2>Post the top 10 to Discord</h2>
+  <p class="hint">
+    Sends the leaderboard as a message, once, right now. Members are named rather
+    than mentioned, so nobody gets pinged.
+  </p>
+  <form class="form" method="post" action="/g/{{ guild.id }}/voice/post">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="row">
+      <label class="field">
+        <span>Channel</span>
+        <select name="channel_id" required>
+          <option value="">Pick a channel…</option>
+          {% for channel in post_channels %}
+            <option value="{{ channel.id }}">#{{ channel.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Period</span>
+        <select name="period">
+          {% for key, label in periods %}
+            <option value="{{ key }}" {% if key == period %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button class="button" type="submit">Post it now</button>
+    </div>
+  </form>
 {% endif %}
 {% endblock %}

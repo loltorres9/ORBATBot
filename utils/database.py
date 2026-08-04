@@ -201,6 +201,17 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Where each invite link was published, so a join can say "came in through
+        # the Steam group" instead of only naming a code.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS invite_labels (
+                guild_id TEXT NOT NULL,
+                code TEXT NOT NULL,
+                label TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, code)
+            )
+        ''')
         # Time spent in voice channels. One row per counted interval: a member's
         # visit is split whenever the rules stop applying (they end up alone, or
         # move to an excluded channel), so the sum is time that actually counted.
@@ -1194,3 +1205,38 @@ async def get_voice_channel_totals(guild_id: str, since=None, limit: int = 10) -
                 LIMIT $3''',
             guild_id, _naive(since), limit,
         )
+
+
+# ---------------------------------------------------------------------------
+# Invite labels
+# ---------------------------------------------------------------------------
+
+async def get_invite_labels(guild_id: str) -> dict:
+    """{invite code: label} for one guild."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            'SELECT code, label FROM invite_labels WHERE guild_id = $1', guild_id
+        )
+        return {row['code']: row['label'] for row in rows}
+
+
+async def save_invite_labels(guild_id: str, labels: dict, remove: list = None):
+    """Store the labels that were filled in and drop the ones that were emptied."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            for code, label in labels.items():
+                await db.execute(
+                    '''INSERT INTO invite_labels (guild_id, code, label)
+                       VALUES ($1, $2, $3)
+                       ON CONFLICT (guild_id, code) DO UPDATE SET
+                           label = EXCLUDED.label,
+                           updated_at = CURRENT_TIMESTAMP''',
+                    guild_id, code, label,
+                )
+            if remove:
+                await db.execute(
+                    'DELETE FROM invite_labels WHERE guild_id = $1 AND code = ANY($2::text[])',
+                    guild_id, list(remove),
+                )

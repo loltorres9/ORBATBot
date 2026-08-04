@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import discord
 
-from cogs.voicelog import format_duration, parse_excluded
+from cogs.voicelog import build_leaderboard_embed, format_duration, parse_excluded
 from utils import database
 from web.guilds import postable_channels
 
@@ -104,3 +104,23 @@ def read_settings_form(guild: discord.Guild, form) -> dict:
 
 def excluded_set(settings) -> set:
     return parse_excluded(settings['excluded_channels']) if settings else set()
+
+
+async def post_leaderboard(bot, guild: discord.Guild, channel_id: str, period: str,
+                           limit: int = 10) -> str:
+    """Post the current top *limit* into a channel."""
+    channel = None
+    if (channel_id or '').strip() and str(channel_id).isdigit():
+        channel = guild.get_channel(int(channel_id))
+    if channel is None or channel not in postable_channels(guild):
+        raise ValueError("I can't post in that channel — pick another one.")
+
+    period = clean_period(period)
+    rows = await database.get_voice_leaderboard(str(guild.id), period_start(period), limit=limit)
+    label = next((text for key, text in PERIODS if key == period), period)
+
+    try:
+        await channel.send(embed=build_leaderboard_embed(rows, label, limit))
+    except (discord.Forbidden, discord.HTTPException) as e:
+        raise ValueError(f"Discord wouldn't let me post there: {e}")
+    return f"Posted the top {limit} for “{label.lower()}” in #{channel.name}."

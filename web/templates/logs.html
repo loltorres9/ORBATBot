@@ -89,4 +89,57 @@
     <button class="button primary" type="submit">Save</button>
   </div>
 </form>
+
+<h2>Where each invite was published</h2>
+<p class="hint">
+  Give a link a label — <em>Steam</em>, <em>Website</em>, <em>Reddit</em> — and every join
+  through it says so, instead of only showing the code. Emptying a label removes it.
+</p>
+
+{% if invites or orphans %}
+  <form class="form" method="post" action="/g/{{ guild.id }}/logs/invites">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <table class="rolelist">
+      <tbody>
+        {% for invite in invites %}
+          <tr>
+            <td>
+              <input type="hidden" name="code" value="{{ invite.code }}">
+              <strong><a href="{{ invite.url }}" target="_blank" rel="noopener">{{ invite.code }}</a></strong>
+              <div class="muted">
+                {{ invite.uses }} use(s)
+                {% if invite.channel %} · #{{ invite.channel }}{% endif %}
+                {% if invite.inviter %} · by {{ invite.inviter }}{% endif %}
+              </div>
+            </td>
+            <td>
+              <input name="label_{{ invite.code }}" maxlength="60" value="{{ invite.label }}"
+                     placeholder="Where is this link published?">
+            </td>
+          </tr>
+        {% endfor %}
+        {% for orphan in orphans %}
+          <tr>
+            <td>
+              <input type="hidden" name="code" value="{{ orphan.code }}">
+              <strong>{{ orphan.code }}</strong>
+              <div class="muted">expired or deleted — kept for old joins</div>
+            </td>
+            <td>
+              <input name="label_{{ orphan.code }}" maxlength="60" value="{{ orphan.label }}">
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="actions">
+      <button class="button primary" type="submit">Save labels</button>
+    </div>
+  </form>
+{% else %}
+  <p class="empty">
+    {% if can_read_invites %}This server has no invite links right now.
+    {% else %}I can't read the invite list without Manage Server.{% endif %}
+  </p>
+{% endif %}
 {% endblock %}

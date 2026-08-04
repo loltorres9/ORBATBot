@@ -789,7 +789,7 @@ Restart the bot. The log line `✅ Web UI listening on …` means it is up; `/he
 
 The site is called **TFP BOT**. Set `WEB_BRAND` to rename it — that string is the header, the browser tab title and the footer.
 
-For the logo, commit an image to **`web/static/logo.png`** (`.webp`, `.svg`, `.jpg` also work). It is picked up on the next start and appears next to the name in the header, large on the sign-in page, and as the browser-tab icon. Square images look best; anything else is fitted rather than squashed. With no such file, the name shows on its own and the tab falls back to a 🛡️ emoji — nothing breaks.
+For the logo, commit an image to **`web/static/logo.png`** (`.webp`, `.svg`, `.jpg` also work). It is picked up on the next start and appears next to the name in the header, large on the sign-in page, as the browser-tab icon, and — when `WEB_BASE_URL` is set — as the preview image when the site's link is pasted into Discord or Slack. Square images look best; anything else is fitted rather than squashed. With no such file, the name shows on its own and the tab falls back to a 🛡️ emoji — nothing breaks.
 
 ### How it is wired
 
@@ -815,7 +815,7 @@ Discord's limits are checked when you save, not when you post: an over-long titl
 
 **📋 Member log** posts an announcement when someone joins, leaves, is kicked, banned or unbanned. Pick a channel, tick which events you want, save.
 
-- **Joins** show the account's age (a fresh account is worth a second look), the member count, and **which invite link was used** — including who created that link.
+- **Joins** show the account's age (a fresh account is worth a second look), the member count, and **which invite link was used** — including who created that link and, if you've labelled it, **where that link was published**.
 - **Leaves** show how long the member was around and which roles they had.
 - **Kicks** are told apart from voluntary leaves through the audit log, and name the moderator and reason. Bans and unbans do the same.
 
@@ -824,6 +824,8 @@ Three prerequisites, and the page tells you which are missing:
 1. **Joins and leaves need Discord's privileged Server Members Intent.** Tick it under your application → **Bot → Privileged Gateway Intents** in the Developer Portal, then set `MEMBER_EVENTS=1` in the bot's variables and redeploy. **In that order** — asking for the intent before it is granted stops the bot from starting at all, which is why it is off by default. Bans and unbans work without it.
 2. **View Audit Log**, or a kick can't be told from someone leaving and bans won't name the moderator.
 3. **Manage Server**, or the invite list can't be read and joins won't say which link was used.
+
+**Label your invite links** at the bottom of the same page: the invite list is shown with its use counts, and next to each one a free-text field — *Steam*, *Website*, *Reddit*, whatever you use it for. A join through that link then reads `rnPAfscGbE · Steam` instead of just the code, so nobody has to look it up in a spreadsheet. Labels for links that have since expired are kept and stay editable, because old joins still refer to them.
 
 Invite attribution works by comparing each invite's use counter before and after a join. Two people joining in the same second can't be told apart that way, and a member added by another bot has no invite at all — those simply show no link.
 
@@ -836,6 +838,8 @@ Invite attribution works by comparing each invite's use counter before and after
 What counts is deliberately narrow by default: time is only counted while **at least two people share a channel**, and the AFK channel is skipped. Counting pauses the moment somebody is left alone and resumes when somebody joins them, so what you measure is time actually spent together rather than time connected. Both rules can be switched off, and individual voice channels can be excluded.
 
 Optionally, a finished visit is announced in a channel of your choice — with a minimum length, so quick drop-ins don't fill it up. Leave the channel unset to keep the statistics without any messages.
+
+**Posting the leaderboard.** Under the settings there's a *Post the top 10 to Discord* form: pick a channel and a period, press the button, and the current top ten goes out as a message. Members are named rather than mentioned, so nobody gets pinged.
 
 Two details worth knowing about the numbers:
 
