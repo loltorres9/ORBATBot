@@ -17,6 +17,16 @@ load_dotenv()
 class ORBATBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
+        # Join and leave events are privileged. Requesting the intent while
+        # "Server Members Intent" is unticked in the Developer Portal makes login
+        # fail outright, which would take the whole bot down — so it is opt-in:
+        # tick it there first, then set MEMBER_EVENTS=1. Bans and unbans are not
+        # privileged and are logged either way.
+        self.member_events = (os.getenv('MEMBER_EVENTS') or '').strip().lower() in (
+            '1', 'true', 'yes', 'on'
+        )
+        if self.member_events:
+            intents.members = True
         super().__init__(
             command_prefix='!',
             intents=intents,
@@ -58,6 +68,16 @@ class ORBATBot(commands.Bot):
             print("✅ Loaded cogs.events")
         except Exception:
             print("❌ Failed to load cogs.events:")
+            traceback.print_exc()
+
+        try:
+            await self.load_extension('cogs.memberlog')
+            print("✅ Loaded cogs.memberlog"
+                  + ("" if self.member_events else
+                     " (joins/leaves off — set MEMBER_EVENTS=1 once the "
+                     "Server Members Intent is enabled in the Developer Portal)"))
+        except Exception:
+            print("❌ Failed to load cogs.memberlog:")
             traceback.print_exc()
 
         registered = [c.name for c in self.tree.get_commands()]

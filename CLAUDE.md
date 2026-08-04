@@ -22,9 +22,11 @@ cogs/
   admin.py              # All admin/unit-leader commands
   gameroles.py          # Self-assignable game roles (Minecraft, DCS, …) + panel
   events.py             # Standalone events with RSVP buttons + reminder loop
+  memberlog.py          # Join/leave/kick/ban announcements + invite attribution
 utils/
   database.py           # All PostgreSQL queries (asyncpg)
   sheets.py             # Google Sheets read/write (gspread)
+  embeds.py             # Builder-made rich messages → discord.Embed, post and edit
 web/                    # Optional browser UI — Discord OAuth2 login + event management
   config.py             # Env-driven config; the feature is off until it is complete
   server.py             # uvicorn driven from inside the bot's event loop
@@ -33,6 +35,7 @@ web/                    # Optional browser UI — Discord OAuth2 login + event m
   guilds.py             # Signed-in user → discord.Member, and what they may do
   service.py            # Create/edit/cancel/delete/RSVP, on top of cogs/events.py
   roles.py              # Game roles, on top of cogs/gameroles.py
+  embeds.py             # Embed builder forms, on top of utils/embeds.py
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates and one stylesheet — no build step
 requirements.txt
@@ -67,6 +70,7 @@ pure and Discord-free, so it is the obvious first thing to cover if that changes
 | `WEB_HOST` / `WEB_PORT` | **Optional.** Listen address. `PORT` (injected by Railway) wins over `WEB_PORT` |
 | `WEB_ENABLED` | **Optional.** `0` keeps the site off even when everything else is set |
 | `WEB_BRAND` | **Optional.** Site name in the header, tab title and footer. Defaults to `TFP BOT` |
+| `MEMBER_EVENTS` | **Optional.** `1` requests the privileged members intent, which `cogs/memberlog.py` needs for joins and leaves. **Only set it once "Server Members Intent" is ticked in the Developer Portal** — requesting an ungranted privileged intent makes login fail, taking the whole bot down. Bans and unbans need no intent |
 
 Railway injects these at runtime; nothing sets them manually. `_railway_restart()` reads them to find the deployment to restart:
 
@@ -209,6 +213,46 @@ Custom sign-up options for one event. **No rows means the event uses `DEFAULT_RE
 | `sort_order` | INTEGER | Button and embed-field order |
 
 `UNIQUE (event_id, key)`. The default keys are deliberately `accepted` / `tentative` / `declined` so existing `event_signups` rows keep resolving.
+
+### `embeds`
+Rich messages built in the web UI — see [Embeds](#embeds-utilsembedspy--webembedspy).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `guild_id` | TEXT | |
+| `name` | TEXT | Internal label; only used to find it again in the list |
+| `channel_id` / `message_id` | TEXT | Where it was posted. `message_id` NULL = still a draft |
+| `content` | TEXT | Plain text above the embed — the only part where a mention pings |
+| `title` / `description` / `url` | TEXT | `url` makes the title a link |
+| `color` | TEXT | `#rrggbb`, normalised on save |
+| `author_name` / `author_icon_url` | TEXT | |
+| `thumbnail_url` / `image_url` | TEXT | |
+| `footer_text` / `footer_icon_url` | TEXT | |
+| `show_timestamp` | INTEGER | 0/1 — stamps the message with the time it was posted |
+| `created_by` / `created_by_name` | TEXT | |
+| `created_at` / `updated_at` | TIMESTAMP | |
+
+### `embed_fields`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `embed_id` | INTEGER | FK → `embeds.id` **ON DELETE CASCADE** |
+| `name` / `value` | TEXT | Heading and body of one field |
+| `inline` | INTEGER | 0/1 — up to three inline fields sit side by side |
+| `sort_order` | INTEGER | |
+
+### `log_settings`
+One row per guild, written by the web UI. No row, or a NULL `channel_id`, means
+nothing is announced — see [Member log](#member-log-cogsmemberlogpy).
+
+| Column | Type | Notes |
+|---|---|---|
+| `guild_id` | TEXT PK | |
+| `channel_id` | TEXT | Where announcements go. NULL = logging off |
+| `log_join` / `log_leave` / `log_kick` / `log_ban` / `log_unban` | INTEGER | 0/1 per event type |
+| `track_invites` | INTEGER | 0/1 — whether to work out which invite a join used |
+| `updated_at` | TIMESTAMP | |
 
 ---
 
@@ -637,6 +681,7 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Create an event | Unit Leader or admin | `_is_unit_leader_or_admin()` |
 | Edit / cancel / delete | organiser or admin | `_is_organiser()` |
 | Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
+| Build and post embeds, configure the member log | admin | `is_admin()` — `manage_guild` or `administrator` |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
 the slash commands cannot drift apart on access control.
@@ -670,6 +715,13 @@ POST /g/{guild}/roles                   set your game roles to what is ticked
 POST /g/{guild}/roles/add               admin — register/create a game role
 POST /g/{guild}/roles/remove            admin — unregister, optionally delete
 POST /g/{guild}/roles/panel             admin — post the self-assign panel
+GET  /g/{guild}/embeds                  admin — saved embeds
+GET  /g/{guild}/embeds/new              builder          POST to save a draft
+GET  /g/{guild}/embeds/{id}             preview, send, delete
+GET  /g/{guild}/embeds/{id}/edit        builder          POST to save
+POST /g/{guild}/embeds/{id}/send        post as a new message
+POST /g/{guild}/embeds/{id}/delete      optionally deletes the Discord message
+GET  /g/{guild}/logs                    admin — member log settings, POST to save
 POST /g/{guild}/refresh                 drop the cached member
 GET  /healthz                           'ok' once the bot is ready
 ```
@@ -753,3 +805,82 @@ Kept from the original plan, still the intended direction:
   builder and an operation archive
 - Live updates were sketched as Server-Sent Events; running in-process makes that
   straightforward, since the request handler already sees every change
+
+---
+
+## Embeds (`utils/embeds.py` + `web/embeds.py`)
+
+Rich messages built in the browser — the server-info and rules posts that would
+otherwise be written by hand. There are no slash commands for these: composing an
+embed in a Discord modal is unpleasant, and the web form already exists.
+
+**A stored embed is a description, not a message.** `embeds` holds the columns and
+`embed_fields` the fields; `build_embed()` turns a row into a `discord.Embed`.
+`message_id` is NULL until it is posted, which is the whole point of the split:
+
+- `post()` sends a new message and records where it landed.
+- `edit_posted()` updates that message. Saving an edit in the web UI calls it, so
+  a pinned server-info post is updated **in place** instead of being reposted.
+- A message deleted in Discord makes `edit_posted()` clear `message_id`, turning
+  the embed back into a draft rather than failing the same way forever.
+
+**Discord's limits are enforced on save, not on send** (`validate()`). A rejected
+send would otherwise leave a stored embed that can never be posted, and the person
+who wrote it is no longer looking at the form by then. The same function refuses an
+embed with no title, description, image or fields, which Discord rejects outright.
+
+`clean_color()` normalises to `#rrggbb` on input; `parse_color()` is deliberately
+forgiving on read, since a stored value can only have come from `clean_color()`.
+
+The builder offers `MAX_FIELDS = 10` fixed field slots. Discord allows 25 — the
+limit here is the form, which has no JavaScript to add rows with.
+
+---
+
+## Member log (`cogs/memberlog.py`)
+
+Announces joins, leaves, kicks, bans and unbans in a channel chosen per guild
+(`log_settings`). Nothing is posted until a channel is set; each event type has its
+own flag.
+
+### The intent is opt-in, and that is deliberate
+
+`on_member_join` and `on_member_remove` are **privileged**. Requesting an intent
+that isn't ticked in the Developer Portal makes `bot.start()` raise
+`PrivilegedIntentsRequired` — the bot would not come up at all. So `bot.py` only
+sets `intents.members` when `MEMBER_EVENTS` is truthy, and the cog loads either
+way: bans and unbans are not privileged and work without it.
+
+**Never turn the intent on unconditionally.** A deploy that lands before the portal
+switch is flipped would take the whole bot down, slots and all.
+
+### Telling a kick from a leave
+
+`on_member_remove` fires for a voluntary leave, a kick and a ban alike. The audit
+log is the only way to tell them apart:
+
+- The listener waits `AUDIT_DELAY` seconds first, because the audit entry appears a
+  moment after the event.
+- A **ban** entry means `on_member_ban` will report it, so this path stays silent —
+  otherwise every ban is logged twice. Checking the audit log for both actions makes
+  it independent of which gateway event arrives first.
+- `AUDIT_WINDOW` guards against an old kick of the same user being mistaken for
+  this leave. Anything older is treated as unrelated.
+
+Without **View Audit Log** every kick reads as a plain leave and bans have no
+moderator — deliberately not an error, just less detail.
+
+### Invite attribution
+
+`_invites` caches each guild's invite use counts; a join re-reads them and the
+code whose counter went up is the one that was used. `_invite_lock` serialises
+that, or two joins seconds apart would each credit the other's increment. Two
+joins in the *same instant* still can't be told apart — the counter is corrected
+either way, only that one attribution may be wrong.
+
+Reading invites needs **Manage Server**. Without it, and for members added by
+another bot, no link is shown. A guild with `VANITY_URL` falls back to
+`vanity_invite()` when no counter moved.
+
+Every listener body is wrapped in a `try`/`except` that prints and moves on: a
+failure to *log* an event must never propagate into the gateway handler.

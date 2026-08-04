@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block title %}{{ record.name }} · Embeds{% endblock %}
+
+{% block content %}
+<p class="crumbs">
+  <a href="/g/{{ guild.id }}">{{ guild.name }}</a> ›
+  <a href="/g/{{ guild.id }}/embeds">Embeds</a> › {{ record.name }}
+</p>
+
+<div class="pagehead">
+  <div>
+    <h1>{{ record.name }}</h1>
+    <p class="muted">
+      {% if record.message_id %}
+        Posted in {{ '#' + posted_in.name if posted_in else 'a channel I can no longer see' }}
+      {% else %}
+        Draft — not posted yet
+      {% endif %}
+      {% if record.created_by_name %} · built by {{ record.created_by_name }}{% endif %}
+    </p>
+  </div>
+  <a class="button" href="/g/{{ guild.id }}/embeds/{{ record.id }}/edit">Edit</a>
+</div>
+
+<h2>Preview</h2>
+{% if record.content %}<p class="epcontent">{{ record.content }}</p>{% endif %}
+{% include '_embed_preview.html' %}
+
+<h2>{{ 'Post again' if record.message_id else 'Post it' }}</h2>
+<p class="hint">
+  {% if record.message_id %}
+    Editing above already updates the message that is live. Posting again sends a
+    <em>new</em> message and stops tracking the old one — use it to move the embed
+    to another channel.
+  {% else %}
+    Sends the embed as a new message. Afterwards, saving an edit updates that
+    message in place.
+  {% endif %}
+</p>
+<form class="form" method="post" action="/g/{{ guild.id }}/embeds/{{ record.id }}/send">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="field">
+    <span>Channel</span>
+    <select name="channel_id" required>
+      <option value="">Pick a channel…</option>
+      {% for channel in channels %}
+        <option value="{{ channel.id }}"
+          {% if record.channel_id and record.channel_id|int == channel.id %}selected{% endif %}>#{{ channel.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="actions">
+    <button class="button primary" type="submit">
+      {{ 'Post as a new message' if record.message_id else 'Post to Discord' }}
+    </button>
+  </div>
+</form>
+
+<h2>Delete</h2>
+<form class="form" method="post" action="/g/{{ guild.id }}/embeds/{{ record.id }}/delete">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if record.message_id %}
+    <label class="check">
+      <input type="checkbox" name="delete_message" value="1">
+      <span>Also delete the message in Discord</span>
+    </label>
+  {% endif %}
+  <div class="actions">
+    <button class="button danger" type="submit">Delete this embed</button>
+    <span class="hint">Removes it from this list. It can't be undone.</span>
+  </div>
+</form>
+{% endblock %}

@@ -737,13 +737,15 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
+| Embeds | Build rich messages, post them, and edit the posted message in place |
+| Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
 
 Who may do what is **read live from your Discord roles**, not from the login:
 
 - **Any member of the server** — view events, RSVP, pick their own game roles
 - **Unit Leader or Manage Server** — create events
 - **The organiser, or an admin** — edit, cancel and delete that event
-- **Manage Server** — add and remove game roles, post the self-assign panel
+- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, configure the member log
 
 That is the same rule set the slash commands use; it is literally the same code. Roles are cached for a minute, so if you have just been given a role, the **“Changed your roles on Discord? Re-read them”** link at the bottom of the event list picks it up immediately.
 
@@ -800,9 +802,33 @@ The **🎮 Game roles** tab does everything the slash commands do. Members get o
 
 Every rule the commands enforce applies unchanged: roles with permissions, `@everyone`, integration-managed roles, the unit roles and `Unit Leader` are all refused, the cap is 25, and the panel message refreshes itself after every change. Roles submitted that aren't registered game roles are ignored, so the form can't be used to hand yourself something else. If the bot is missing **Manage Roles**, the page says so and the controls are disabled rather than failing on submit.
 
+### Embeds
+
+**📝 Embeds** is a builder for the rich messages you'd otherwise write by hand — server info, rules, announcements. Title, description, colour, up to ten fields (optionally side by side), author line, thumbnail, image, footer, timestamp, and plain text above the embed for pings. A preview shows roughly what Discord will make of it.
+
+Each embed is saved with a name and starts as a draft. Posting it records which message it became, and **saving an edit afterwards updates that message in place** — no delete-and-repost, so pinned server info stays pinned. Posting again sends a new message and stops tracking the old one, which is how you move an embed to another channel. Deleting offers to remove the Discord message with it.
+
+Discord's limits are checked when you save, not when you post: an over-long title or a 6000-character total is refused on the form rather than becoming a saved embed that can never be sent. Image and icon fields must be full `https://` URLs.
+
+### Member log
+
+**📋 Member log** posts an announcement when someone joins, leaves, is kicked, banned or unbanned. Pick a channel, tick which events you want, save.
+
+- **Joins** show the account's age (a fresh account is worth a second look), the member count, and **which invite link was used** — including who created that link.
+- **Leaves** show how long the member was around and which roles they had.
+- **Kicks** are told apart from voluntary leaves through the audit log, and name the moderator and reason. Bans and unbans do the same.
+
+Three prerequisites, and the page tells you which are missing:
+
+1. **Joins and leaves need Discord's privileged Server Members Intent.** Tick it under your application → **Bot → Privileged Gateway Intents** in the Developer Portal, then set `MEMBER_EVENTS=1` in the bot's variables and redeploy. **In that order** — asking for the intent before it is granted stops the bot from starting at all, which is why it is off by default. Bans and unbans work without it.
+2. **View Audit Log**, or a kick can't be told from someone leaving and bans won't name the moderator.
+3. **Manage Server**, or the invite list can't be read and joins won't say which link was used.
+
+Invite attribution works by comparing each invite's use counter before and after a join. Two people joining in the same second can't be told apart that way, and a member added by another bot has no invite at all — those simply show no link.
+
 ### Limits
 
-- Events and game roles — slots and the ORBAT board are still Discord-side
+- Events, game roles, embeds and the member log — slots and the ORBAT board are still Discord-side
 - An event can't be moved to another channel after posting; cancel it and create a new one
 - Approving slot requests is unchanged and still happens in `#slot-approvals`
 

@@ -1,0 +1,43 @@
+{# A rough likeness of how Discord will render the embed. #}
+<div class="embedpreview" style="border-left-color: {{ record.color or '#5865F2' }}">
+  {% if record.author_name %}
+    <div class="epauthor">
+      {% if record.author_icon_url %}<img src="{{ record.author_icon_url }}" alt="">{% endif %}
+      <span>{{ record.author_name }}</span>
+    </div>
+  {% endif %}
+
+  {% if record.title %}
+    <div class="eptitle">{{ record.title }}</div>
+  {% endif %}
+
+  {% if record.description %}
+    <div class="epdesc">{{ record.description }}</div>
+  {% endif %}
+
+  {% if fields %}
+    <div class="epfields">
+      {% for field in fields %}
+        <div class="epfield {{ 'inline' if field.inline else '' }}">
+          <div class="epfieldname">{{ field.name }}</div>
+          <div class="epfieldvalue">{{ field.value }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if record.image_url %}
+    <img class="epimage" src="{{ record.image_url }}" alt="">
+  {% endif %}
+
+  {% if record.thumbnail_url %}
+    <img class="epthumb" src="{{ record.thumbnail_url }}" alt="">
+  {% endif %}
+
+  {% if record.footer_text or record.show_timestamp %}
+    <div class="epfooter">
+      {% if record.footer_icon_url %}<img src="{{ record.footer_icon_url }}" alt="">{% endif %}
+      <span>{{ record.footer_text or '' }}{% if record.footer_text and record.show_timestamp %} · {% endif %}{% if record.show_timestamp %}posting time{% endif %}</span>
+    </div>
+  {% endif %}
+</div>

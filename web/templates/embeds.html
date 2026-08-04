@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Embeds{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+  <a class="button primary" href="/g/{{ guild.id }}/embeds/new">+ New embed</a>
+</div>
+
+{% with active = 'embeds' %}{% include '_nav.html' %}{% endwith %}
+
+<h2>Embeds</h2>
+<p class="hint">
+  Rich messages the bot posts on your behalf — server info, rules, announcements.
+  Edit one here and the message already in the channel is updated in place.
+</p>
+
+{% if embeds %}
+  <ul class="eventlist">
+    {% for item in embeds %}
+      <li class="event">
+        <a class="eventmain" href="/g/{{ guild.id }}/embeds/{{ item.id }}">
+          <span class="title">{{ item.name }}</span>
+          <span class="meta">
+            #{{ item.id }}
+            {% if item.title %} · {{ item.title }}{% endif %}
+            {% if item.created_by_name %} · by {{ item.created_by_name }}{% endif %}
+          </span>
+        </a>
+        {% if item.message_id %}
+          {% set channel = guild.get_channel(item.channel_id|int) %}
+          <span class="chip">posted in {{ '#' + channel.name if channel else 'a lost channel' }}</span>
+        {% else %}
+          <span class="chip">draft</span>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="empty">
+    No embeds yet. <a href="/g/{{ guild.id }}/embeds/new">Build the first one.</a>
+  </p>
+{% endif %}
+{% endblock %}
