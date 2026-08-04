@@ -736,12 +736,14 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
+| Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 
 Who may do what is **read live from your Discord roles**, not from the login:
 
-- **Any member of the server** — view events, RSVP
+- **Any member of the server** — view events, RSVP, pick their own game roles
 - **Unit Leader or Manage Server** — create events
 - **The organiser, or an admin** — edit, cancel and delete that event
+- **Manage Server** — add and remove game roles, post the self-assign panel
 
 That is the same rule set the slash commands use; it is literally the same code. Roles are cached for a minute, so if you have just been given a role, the **“Changed your roles on Discord? Re-read them”** link at the bottom of the event list picks it up immediately.
 
@@ -792,9 +794,15 @@ The site runs **inside the bot process**, on the same event loop. That is why a 
 
 The session is a signed cookie, so there is no session table and a redeploy doesn't sign anyone out. It holds nothing but your user id, display name, avatar hash and a CSRF token; the Discord access token is used once to read your profile and then discarded. Every permission decision is made fresh from the bot's live view of the guild.
 
+### Game roles in the browser
+
+The **🎮 Game roles** tab does everything the slash commands do. Members get one page with every game role, the ones they already have ticked; saving sets their roles to exactly what is ticked, and unticking removes. Admins additionally get an add form (name, emoji, description — an existing role with that exact name is reused, never duplicated), a remove button per role with an optional *delete the Discord role too*, and a channel picker for the self-assign panel.
+
+Every rule the commands enforce applies unchanged: roles with permissions, `@everyone`, integration-managed roles, the unit roles and `Unit Leader` are all refused, the cap is 25, and the panel message refreshes itself after every change. Roles submitted that aren't registered game roles are ignored, so the form can't be used to hand yourself something else. If the bot is missing **Manage Roles**, the page says so and the controls are disabled rather than failing on submit.
+
 ### Limits
 
-- Events only — slots, the ORBAT board and game roles are still Discord-side
+- Events and game roles — slots and the ORBAT board are still Discord-side
 - An event can't be moved to another channel after posting; cancel it and create a new one
 - Approving slot requests is unchanged and still happens in `#slot-approvals`
 

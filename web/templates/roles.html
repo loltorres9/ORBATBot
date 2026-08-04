@@ -1,0 +1,143 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Game roles{% endblock %}
+{% block tzfoot %}{{ tz }}{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'roles' %}{% include '_nav.html' %}{% endwith %}
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if not can_assign %}
+  <div class="flash warn">
+    I don't have the <strong>Manage Roles</strong> permission on this server, so I can't
+    hand these roles out. A server admin needs to grant it — and my own role has to sit
+    above the game roles in Server Settings → Roles.
+  </div>
+{% endif %}
+
+<h2>Your games</h2>
+<p class="hint">
+  These roles grant no permissions. They exist so anyone can @mention everyone who plays
+  a given game. Tick what you play — your roles are set to exactly what you leave ticked.
+</p>
+
+{% if entries %}
+  <form class="form" method="post" action="/g/{{ guild.id }}/roles">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="rolegrid">
+      {% for entry in entries %}
+        <label class="rolecard {{ 'held' if entry.held else '' }}">
+          <input type="checkbox" name="role_ids" value="{{ entry.role.id }}"
+                 {% if entry.held %}checked{% endif %}
+                 {% if not can_assign %}disabled{% endif %}>
+          <span class="rolebody">
+            <strong>{% if entry.row.emoji %}{{ entry.row.emoji }} {% endif %}{{ entry.row.name }}</strong>
+            {% if entry.row.description %}<span class="muted">{{ entry.row.description }}</span>{% endif %}
+          </span>
+        </label>
+      {% endfor %}
+    </div>
+    <div class="actions">
+      <button class="button primary" type="submit" {% if not can_assign %}disabled{% endif %}>
+        Save my roles
+      </button>
+      <span class="hint">Unticking a role removes it.</span>
+    </div>
+  </form>
+{% else %}
+  <p class="empty">
+    No game roles yet.
+    {% if is_admin %}Add the first one below.{% else %}A server admin can add some.{% endif %}
+  </p>
+{% endif %}
+
+{% if is_admin %}
+  <h2>Manage game roles <span class="chip">admin</span></h2>
+
+  <form class="form" method="post" action="/g/{{ guild.id }}/roles/add">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="row">
+      <label class="field">
+        <span>Name</span>
+        <input name="name" required maxlength="100" placeholder="Minecraft">
+        <span class="hint">An existing role with this exact name is reused, not duplicated.</span>
+      </label>
+      <label class="field">
+        <span>Emoji</span>
+        <input name="emoji" maxlength="32" placeholder="⛏️">
+      </label>
+    </div>
+    <label class="field">
+      <span>Description</span>
+      <input name="description" maxlength="100" placeholder="Vanilla and modded">
+    </label>
+    <div class="actions">
+      <button class="button primary" type="submit">Add game role</button>
+      <span class="hint">{{ entries|length }} of {{ max_roles }} used.</span>
+    </div>
+  </form>
+
+  {% if entries %}
+    <table class="rolelist">
+      <tbody>
+        {% for entry in entries %}
+          <tr>
+            <td>
+              <strong>{% if entry.row.emoji %}{{ entry.row.emoji }} {% endif %}{{ entry.row.name }}</strong>
+              {% if entry.row.description %}<div class="muted">{{ entry.row.description }}</div>{% endif %}
+              {% if not entry.role.mentionable %}
+                <div class="muted">Not mentionable — nobody can ping it.</div>
+              {% endif %}
+            </td>
+            <td class="rowactions">
+              <form method="post" action="/g/{{ guild.id }}/roles/remove">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="role_id" value="{{ entry.role.id }}">
+                <label class="check">
+                  <input type="checkbox" name="delete_role" value="1">
+                  <span>delete the Discord role too</span>
+                </label>
+                <button class="button danger" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">
+      Removing only stops the role being self-assignable — members who have it keep it,
+      unless you tick the box.
+    </p>
+  {% endif %}
+
+  <h2>Self-assign panel</h2>
+  <p class="hint">
+    The panel is a Discord message listing every game role, with a button members press to
+    pick theirs. It updates itself whenever a role is added or removed.
+    {% if panel_in %}It currently sits in <strong>{{ panel_in }}</strong> — posting again
+    moves it.{% endif %}
+  </p>
+  <form class="form" method="post" action="/g/{{ guild.id }}/roles/panel">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">
+      <span>Post in</span>
+      <select name="channel_id" required>
+        <option value="">Pick a channel…</option>
+        {% for channel in channels %}
+          <option value="{{ channel.id }}">#{{ channel.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="actions">
+      <button class="button" type="submit">{{ 'Move the panel' if panel_in else 'Post the panel' }}</button>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

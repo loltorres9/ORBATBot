@@ -32,6 +32,7 @@ web/                    # Optional browser UI — Discord OAuth2 login + event m
   auth.py               # OAuth2 flow, signed-cookie sessions, CSRF, flash messages
   guilds.py             # Signed-in user → discord.Member, and what they may do
   service.py            # Create/edit/cancel/delete/RSVP, on top of cogs/events.py
+  roles.py              # Game roles, on top of cogs/gameroles.py
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates and one stylesheet — no build step
 requirements.txt
@@ -632,9 +633,10 @@ Every permission decision is re-made per request from a live `discord.Member`:
 
 | Action | Who | Same check as |
 |---|---|---|
-| View events, RSVP | any member of the guild | — |
+| View events, RSVP, pick own game roles | any member of the guild | — |
 | Create an event | Unit Leader or admin | `_is_unit_leader_or_admin()` |
 | Edit / cancel / delete | organiser or admin | `_is_organiser()` |
+| Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
 the slash commands cannot drift apart on access control.
@@ -663,6 +665,11 @@ GET  /g/{guild}/events/{id}/edit        edit form        POST to save
 POST /g/{guild}/events/{id}/cancel      reason, optional stop_series
 GET  /g/{guild}/events/{id}/delete      confirmation     POST to delete
 POST /g/{guild}/events/{id}/rsvp        toggle, exactly like the buttons
+GET  /g/{guild}/roles                   game roles: pick your own, admins manage
+POST /g/{guild}/roles                   set your game roles to what is ticked
+POST /g/{guild}/roles/add               admin — register/create a game role
+POST /g/{guild}/roles/remove            admin — unregister, optionally delete
+POST /g/{guild}/roles/panel             admin — post the self-assign panel
 POST /g/{guild}/refresh                 drop the cached member
 GET  /healthz                           'ok' once the bot is ready
 ```
@@ -685,6 +692,23 @@ Two behaviours worth knowing before changing that file:
   `update_event()` uses `COALESCE` and so can only ever set a value — the same
   reason `set_event_mentions()` and `set_event_recurrence()` exist. The
   clearable columns are whitelisted in `_CLEARABLE_EVENT_FIELDS`.
+
+`web/roles.py` does the same for game roles, on top of `cogs/gameroles.py`
+(`_resolve_game_roles`, `_role_rejection`, `_parse_emoji`, `_apply_role_changes`,
+`_update_game_role_panel`, `_build_panel_embed`). Three things there are worth
+knowing:
+
+- **`_apply_role_changes()` takes a `discord.Member`, not an `Interaction`** —
+  that is why the web can reuse it. Changing it back would fork the one place
+  that hands out a game role.
+- **Submitted role ids are intersected with the registered game roles** before
+  anything is added or removed, so a hand-edited form can't grant an arbitrary
+  role. This is the security boundary of that page.
+- **`forget_member()` runs after a self-assign**, otherwise the 60 s member cache
+  would render the page from the roles the member held *before* the change.
+
+`_plain()` strips `**` and backticks off the cog's messages: they are written for
+a Discord message and would otherwise show their markdown literally on a page.
 
 Times are entered and shown in the **guild timezone**: `web/helpers.py` parses
 `<input type="datetime-local">` through the cog's own `_parse_event_time()`, so
