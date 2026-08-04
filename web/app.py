@@ -14,7 +14,8 @@ from fastapi.templating import Jinja2Templates
 
 from cogs.events import _RECURRENCE_LABELS, _recurrence_text
 from utils import database
-from web import auth, roles as roles_service, service
+from utils import embeds as embedlib
+from web import auth, embeds as embed_service, roles as roles_service, service
 from web.auth import Forbidden, NotAuthenticated
 from web.config import LOGO_NAMES, WebConfig
 from web.guilds import (
@@ -468,6 +469,149 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         except ValueError as e:
             return await roles_page(request, guild_id, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/roles", 'ok', note)
+
+    # -- embeds -------------------------------------------------------------
+
+    async def embed_context(request: Request, guild_id: str, embed_id: int) -> dict:
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        record = await database.get_embed(embed_id)
+        if record is None or record['guild_id'] != str(context['guild'].id):
+            raise Forbidden("No such embed on this server.")
+        context['record'] = record
+        context['fields'] = await database.get_embed_fields(embed_id)
+        return context
+
+    def embed_form(request: Request, context: dict, mode: str, values: dict,
+                   error: str = None, status: int = 200):
+        return render(request, 'embed_form.html', {
+            **context,
+            'mode': mode,
+            'values': values,
+            'channels': postable_channels(context['guild']),
+            'slots': range(embed_service.FIELD_SLOTS),
+            'error': error,
+        }, status=status)
+
+    @app.get('/g/{guild_id}/embeds', response_class=HTMLResponse)
+    async def embed_list(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        return render(request, 'embeds.html', {
+            **context, 'embeds': await database.get_guild_embeds(str(guild_id)),
+        })
+
+    @app.get('/g/{guild_id}/embeds/new', response_class=HTMLResponse)
+    async def new_embed_form(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        return embed_form(request, context, 'create', {'color': embedlib.DEFAULT_COLOR})
+
+    @app.post('/g/{guild_id}/embeds/new')
+    async def create_embed(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = form_values(await request.form())
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            embed_id = await embed_service.create(context['guild'], context['member'], form)
+        except ValueError as e:
+            return embed_form(request, context, 'create', form, str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/embeds/{embed_id}", 'ok',
+                        "Saved. Pick a channel below to post it.")
+
+    @app.get('/g/{guild_id}/embeds/{embed_id}', response_class=HTMLResponse)
+    async def embed_detail(request: Request, guild_id: str, embed_id: int):
+        context = await embed_context(request, guild_id, embed_id)
+        return render(request, 'embed_detail.html', {
+            **context,
+            'channels': postable_channels(context['guild']),
+            'posted_in': context['guild'].get_channel(int(context['record']['channel_id']))
+                         if context['record']['channel_id'] else None,
+        })
+
+    @app.get('/g/{guild_id}/embeds/{embed_id}/edit', response_class=HTMLResponse)
+    async def edit_embed_form(request: Request, guild_id: str, embed_id: int):
+        context = await embed_context(request, guild_id, embed_id)
+        return embed_form(request, context, 'edit',
+                          embed_service.form_values(context['record'], context['fields']))
+
+    @app.post('/g/{guild_id}/embeds/{embed_id}/edit')
+    async def edit_embed(request: Request, guild_id: str, embed_id: int):
+        context = await embed_context(request, guild_id, embed_id)
+        form = form_values(await request.form())
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            notes = await embed_service.save(bot, context['record'], form)
+        except ValueError as e:
+            return embed_form(request, context, 'edit', form, str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/embeds/{embed_id}", 'ok',
+                        ' '.join(['Saved.'] + notes))
+
+    @app.post('/g/{guild_id}/embeds/{embed_id}/send')
+    async def send_embed(request: Request, guild_id: str, embed_id: int):
+        context = await embed_context(request, guild_id, embed_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            notes = await embed_service.send(
+                bot, context['guild'], context['record'], form.get('channel_id')
+            )
+        except ValueError as e:
+            return redirect(request, f"/g/{guild_id}/embeds/{embed_id}", 'warn', str(e))
+        return redirect(request, f"/g/{guild_id}/embeds/{embed_id}", 'ok', ' '.join(notes))
+
+    @app.post('/g/{guild_id}/embeds/{embed_id}/delete')
+    async def delete_embed(request: Request, guild_id: str, embed_id: int):
+        context = await embed_context(request, guild_id, embed_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        notes = await embed_service.delete(bot, context['record'], bool(form.get('delete_message')))
+        return redirect(request, f"/g/{guild_id}/embeds", 'ok',
+                        ' '.join(['Embed deleted.'] + notes))
+
+    # -- member logging -----------------------------------------------------
+
+    @app.get('/g/{guild_id}/logs', response_class=HTMLResponse)
+    async def log_settings(request: Request, guild_id: str, saved: bool = False):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        guild = context['guild']
+        perms = guild.me.guild_permissions if guild.me else None
+        return render(request, 'logs.html', {
+            **context,
+            'settings': await database.get_log_settings(str(guild_id)),
+            'channels': postable_channels(guild),
+            'member_events': bool(bot.intents.members),
+            'can_read_invites': bool(perms and perms.manage_guild),
+            'can_read_audit': bool(perms and perms.view_audit_log),
+        })
+
+    @app.post('/g/{guild_id}/logs')
+    async def save_log_settings(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        channel_id = (form.get('channel_id') or '').strip()
+        if channel_id and channel_id not in [str(c.id) for c in postable_channels(context['guild'])]:
+            return redirect(request, f"/g/{guild_id}/logs", 'warn',
+                            "I can't post in that channel — pick another one.")
+
+        await database.save_log_settings(str(guild_id), {
+            'channel_id': channel_id or None,
+            **{f'log_{kind}': 1 if form.get(f'log_{kind}') else 0
+               for kind in ('join', 'leave', 'kick', 'ban', 'unban')},
+            'track_invites': 1 if form.get('track_invites') else 0,
+        })
+        return redirect(request, f"/g/{guild_id}/logs", 'ok',
+                        'Logging settings saved.' if channel_id else
+                        'Logging is off — no channel is selected.')
 
     @app.post('/g/{guild_id}/refresh')
     async def refresh_permissions(request: Request, guild_id: str):

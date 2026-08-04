@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'New embed' if mode == 'create' else 'Edit ' + values.get('name', 'embed') }} · {{ guild.name }}{% endblock %}
+
+{% block content %}
+<p class="crumbs">
+  <a href="/g/{{ guild.id }}">{{ guild.name }}</a> ›
+  <a href="/g/{{ guild.id }}/embeds">Embeds</a> ›
+  {% if mode == 'edit' %}<a href="/g/{{ guild.id }}/embeds/{{ record.id }}">{{ record.name }}</a> › Edit{% else %}New{% endif %}
+</p>
+
+<h1>{{ 'New embed' if mode == 'create' else 'Edit embed' }}</h1>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if mode == 'edit' and record.message_id %}
+  <p class="note">This embed is live in Discord — saving updates that message in place.</p>
+{% endif %}
+
+<form class="form" method="post"
+      action="{{ '/g/%s/embeds/new' % guild.id if mode == 'create' else '/g/%s/embeds/%s/edit' % (guild.id, record.id) }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <div class="row">
+    <label class="field">
+      <span>Name</span>
+      <input name="name" required maxlength="100" value="{{ values.get('name', '') }}"
+             placeholder="Server information">
+      <span class="hint">Only used to find it again in this list.</span>
+    </label>
+    <label class="field">
+      <span>Colour</span>
+      <input name="color" value="{{ values.get('color', '#5865F2') }}" placeholder="#5865F2">
+      <span class="hint">The stripe down the left side. Hex, e.g. #f1c40f.</span>
+    </label>
+  </div>
+
+  <label class="field">
+    <span>Message above the embed</span>
+    <input name="content" value="{{ values.get('content', '') }}"
+           placeholder="Optional — plain text, and the only place a @mention pings">
+  </label>
+
+  <div class="row">
+    <label class="field">
+      <span>Title</span>
+      <input name="title" value="{{ values.get('title', '') }}" placeholder="Server Information and links">
+    </label>
+    <label class="field">
+      <span>Title link</span>
+      <input name="url" value="{{ values.get('url', '') }}" placeholder="https://…">
+    </label>
+  </div>
+
+  <label class="field">
+    <span>Description</span>
+    <textarea name="description" rows="5"
+              placeholder="Markdown works here — **bold**, links, line breaks">{{ values.get('description', '') }}</textarea>
+  </label>
+
+  <fieldset class="field">
+    <legend>Fields</legend>
+    <p class="hint">
+      Each field is a heading with text under it, like the blocks in the example.
+      Leave a row empty to skip it. Ticking <em>inline</em> puts up to three side by side.
+    </p>
+    {% for index in slots %}
+      <div class="fieldrow">
+        <input name="field_name_{{ index }}" placeholder="Heading {{ index + 1 }}"
+               value="{{ values.get('field_name_' ~ index, '') }}">
+        <textarea name="field_value_{{ index }}" rows="2"
+                  placeholder="Text">{{ values.get('field_value_' ~ index, '') }}</textarea>
+        <label class="check">
+          <input type="checkbox" name="field_inline_{{ index }}" value="1"
+                 {% if values.get('field_inline_' ~ index) %}checked{% endif %}>
+          <span>inline</span>
+        </label>
+      </div>
+    {% endfor %}
+  </fieldset>
+
+  <div class="row">
+    <label class="field">
+      <span>Author line</span>
+      <input name="author_name" value="{{ values.get('author_name', '') }}"
+             placeholder="Small line above the title">
+    </label>
+    <label class="field">
+      <span>Author icon URL</span>
+      <input name="author_icon_url" value="{{ values.get('author_icon_url', '') }}" placeholder="https://…">
+    </label>
+  </div>
+
+  <div class="row">
+    <label class="field">
+      <span>Thumbnail URL</span>
+      <input name="thumbnail_url" value="{{ values.get('thumbnail_url', '') }}"
+             placeholder="Small image, top right">
+    </label>
+    <label class="field">
+      <span>Image URL</span>
+      <input name="image_url" value="{{ values.get('image_url', '') }}"
+             placeholder="Large image, at the bottom">
+    </label>
+  </div>
+
+  <div class="row">
+    <label class="field">
+      <span>Footer</span>
+      <input name="footer_text" value="{{ values.get('footer_text', '') }}">
+    </label>
+    <label class="field">
+      <span>Footer icon URL</span>
+      <input name="footer_icon_url" value="{{ values.get('footer_icon_url', '') }}" placeholder="https://…">
+    </label>
+  </div>
+
+  <label class="check">
+    <input type="checkbox" name="show_timestamp" value="1"
+           {% if values.get('show_timestamp') %}checked{% endif %}>
+    <span>Show a timestamp in the footer</span>
+  </label>
+
+  <div class="actions">
+    <button class="button primary" type="submit">
+      {{ 'Save draft' if mode == 'create' else 'Save' }}
+    </button>
+    <a class="button" href="{{ '/g/%s/embeds' % guild.id if mode == 'create' else '/g/%s/embeds/%s' % (guild.id, record.id) }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

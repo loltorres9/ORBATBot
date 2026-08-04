@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Member log{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'logs' %}{% include '_nav.html' %}{% endwith %}
+
+<h2>Member log</h2>
+<p class="hint">
+  Posts a message when someone joins, leaves, is kicked, banned or unbanned.
+  Pick the channel and tick what you want announced.
+</p>
+
+{% if not member_events %}
+  <div class="flash warn">
+    <strong>Joins and leaves are switched off.</strong> They need Discord's privileged
+    <em>Server Members Intent</em>: tick it under your application → Bot → Privileged Gateway
+    Intents in the Developer Portal, then set <code>MEMBER_EVENTS=1</code> in the bot's
+    variables and redeploy — in that order, because asking for the intent before it is
+    granted stops the bot from starting at all. Bans and unbans work without it.
+  </div>
+{% endif %}
+
+{% if not can_read_audit %}
+  <div class="flash warn">
+    I don't have <strong>View Audit Log</strong> here, so I can't tell a kick apart from
+    someone leaving on their own, and bans won't say who issued them.
+  </div>
+{% endif %}
+
+{% if not can_read_invites %}
+  <div class="flash warn">
+    I don't have <strong>Manage Server</strong> here, so I can't read the invite list and
+    joins won't say which link was used.
+  </div>
+{% endif %}
+
+<form class="form" method="post" action="/g/{{ guild.id }}/logs">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <label class="field">
+    <span>Log channel</span>
+    <select name="channel_id">
+      <option value="">Off — don't log anything</option>
+      {% for channel in channels %}
+        <option value="{{ channel.id }}"
+          {% if settings and settings.channel_id and settings.channel_id|int == channel.id %}selected{% endif %}>#{{ channel.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <fieldset class="field">
+    <legend>What to announce</legend>
+    <div class="checkgrid">
+      {% for key, label, hint in [
+           ('join', 'Joins', 'with account age and the invite used'),
+           ('leave', 'Leaves', 'when someone goes on their own'),
+           ('kick', 'Kicks', 'with the moderator and reason'),
+           ('ban', 'Bans', 'with the moderator and reason'),
+           ('unban', 'Unbans', '')
+         ] %}
+        <label class="check">
+          <input type="checkbox" name="log_{{ key }}" value="1"
+                 {% if not settings or settings['log_' ~ key] %}checked{% endif %}>
+          <span>{{ label }}{% if hint %} <span class="muted">— {{ hint }}</span>{% endif %}</span>
+        </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <label class="check">
+    <input type="checkbox" name="track_invites" value="1"
+           {% if not settings or settings.track_invites %}checked{% endif %}>
+    <span>Work out which invite link each member joined with</span>
+  </label>
+  <p class="hint">
+    Done by comparing each invite's use counter before and after a join. Two people
+    joining in the same second can't be told apart that way, and a member added by
+    another bot has no invite at all — those simply show no link.
+  </p>
+
+  <div class="actions">
+    <button class="button primary" type="submit">Save</button>
+  </div>
+</form>
+{% endblock %}
