@@ -94,15 +94,19 @@ def _select_option(row, role: discord.Role, is_default: bool) -> discord.SelectO
     return option
 
 
-async def _apply_role_changes(interaction: discord.Interaction, to_add: list,
+async def _apply_role_changes(member: discord.Member, to_add: list,
                               to_remove: list) -> Optional[str]:
-    """Apply role changes to the interacting member. Returns an error message
-    to show them, or None if it worked."""
+    """Apply role changes to *member*. Returns an error message to show them, or
+    None if it worked.
+
+    Takes the member rather than an Interaction so the web UI can call it too —
+    there is one implementation of "hand out a game role", not two.
+    """
     try:
         if to_add:
-            await interaction.user.add_roles(*to_add, reason='Self-assigned game role')
+            await member.add_roles(*to_add, reason='Self-assigned game role')
         if to_remove:
-            await interaction.user.remove_roles(*to_remove, reason='Self-removed game role')
+            await member.remove_roles(*to_remove, reason='Self-removed game role')
     except discord.Forbidden:
         return (
             "❌ Discord wouldn't let me change your roles. My role has to sit "
@@ -296,7 +300,7 @@ class GameRoleSelectView(discord.ui.View):
             )
             return
 
-        error = await _apply_role_changes(interaction, to_add, to_remove)
+        error = await _apply_role_changes(interaction.user, to_add, to_remove)
         await interaction.response.edit_message(
             content=error or _change_summary(to_add, to_remove), view=None
         )
@@ -335,7 +339,7 @@ class GameRoleRemoveView(discord.ui.View):
             )
             return
 
-        error = await _apply_role_changes(interaction, [], to_remove)
+        error = await _apply_role_changes(interaction.user, [], to_remove)
         await interaction.response.edit_message(
             content=error or _change_summary([], to_remove), view=None
         )

@@ -13,6 +13,8 @@
   {% endif %}
 </div>
 
+{% with active = 'events' %}{% include '_nav.html' %}{% endwith %}
+
 <h2>Upcoming</h2>
 {% if upcoming %}
   <ul class="eventlist">

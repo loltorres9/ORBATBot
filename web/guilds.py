@@ -72,6 +72,13 @@ async def user_guilds(bot: commands.Bot, user_id: str) -> list:
     return found
 
 
+def is_admin(member: discord.Member) -> bool:
+    """Server admin — the same bar `@app_commands.default_permissions(manage_guild=True)`
+    puts on the game-role management commands."""
+    perms = member.guild_permissions
+    return perms.manage_guild or perms.administrator
+
+
 def can_create_events(member: discord.Member) -> bool:
     return _is_unit_leader_or_admin(member)
 

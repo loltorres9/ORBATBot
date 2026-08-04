@@ -56,10 +56,19 @@ main {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-decoration: none;
 }
+
+/* Logos are square-ish but not guaranteed to be — contain keeps any aspect
+   ratio intact instead of squashing it into the box. */
+.brandlogo, .herologo { object-fit: contain; }
+.brandlogo { width: 32px; height: 32px; }
+.herologo { width: 96px; height: 96px; margin-bottom: 10px; }
 
 .user { display: flex; align-items: center; gap: 10px; }
 .avatar { border-radius: 50%; }
@@ -227,6 +236,74 @@ h3 { font-size: 15px; margin: 0 0 8px; }
 .status.cancelled { color: var(--err); border-color: var(--err); }
 .status.completed { color: var(--muted); }
 
+/* -- tabs ---------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 18px 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  padding: 8px 14px;
+  text-decoration: none;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* -- game roles ---------------------------------------------------------- */
+
+.rolegrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+.rolecard {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.rolecard:hover { border-color: var(--muted); }
+.rolecard.held { border-color: var(--accent); }
+.rolecard input { width: auto; margin-top: 3px; }
+.rolebody { display: grid; gap: 2px; font-size: 14px; min-width: 0; }
+
+.rolelist { width: 100%; border-collapse: collapse; margin-top: 8px; }
+
+.rolelist td {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  vertical-align: top;
+  font-size: 14px;
+}
+
+.rowactions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.rowactions form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.rowactions .check { font-size: 13px; color: var(--muted); }
+
 /* -- facts / columns ----------------------------------------------------- */
 
 .facts {
@@ -262,7 +339,9 @@ h3 { font-size: 15px; margin: 0 0 8px; }
 .form { display: grid; gap: 16px; margin-top: 18px; max-width: 720px; }
 .cancelform { margin-top: 24px; }
 
-.field { display: grid; gap: 6px; border: 0; padding: 0; margin: 0; }
+/* align-content keeps each row at its natural height — without it, a field
+   sitting next to a taller one stretches its input to match. */
+.field { display: grid; gap: 6px; align-content: start; border: 0; padding: 0; margin: 0; }
 .field > span, .field > legend { font-size: 14px; color: var(--muted); }
 
 input[type='text'], input:not([type]), input[type='number'],

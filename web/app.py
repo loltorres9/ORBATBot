@@ -14,13 +14,14 @@ from fastapi.templating import Jinja2Templates
 
 from cogs.events import _RECURRENCE_LABELS, _recurrence_text
 from utils import database
-from web import auth, service
+from web import auth, roles as roles_service, service
 from web.auth import Forbidden, NotAuthenticated
-from web.config import WebConfig
+from web.config import LOGO_NAMES, WebConfig
 from web.guilds import (
     can_create_events,
     can_manage_event,
     forget_member,
+    is_admin,
     mentionable_roles,
     postable_channels,
     resolve_member,
@@ -31,12 +32,27 @@ from web.helpers import fmt_date, fmt_dt, fmt_input, message_link, relative
 _HERE = Path(__file__).parent
 
 
+def _logo_url() -> str:
+    """The site logo, if one was dropped into web/static — '' when there is none.
+
+    The file's modification time rides along as a query string so replacing the
+    logo isn't hidden behind a cached copy in someone's browser.
+    """
+    for name in LOGO_NAMES:
+        path = _HERE / 'static' / name
+        if path.exists():
+            return f"/static/{name}?v={int(path.stat().st_mtime)}"
+    return ''
+
+
 def create_app(bot, config: WebConfig) -> FastAPI:
     app = FastAPI(title='ORBAT', docs_url=None, redoc_url=None, openapi_url=None)
     app.mount('/static', StaticFiles(directory=_HERE / 'static'), name='static')
 
     templates = Jinja2Templates(directory=str(_HERE / 'templates'))
     templates.env.globals.update(
+        brand=config.brand,
+        logo_url=_logo_url(),
         fmt_dt=fmt_dt,
         fmt_date=fmt_date,
         fmt_input=fmt_input,
@@ -103,6 +119,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'member': member,
             'tz': await database.get_guild_timezone(str(guild.id)),
             'may_create': can_create_events(member),
+            'is_admin': is_admin(member),
         }
 
     async def event_context(request: Request, guild_id: str, event_id: int) -> dict:
@@ -365,6 +382,92 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         except ValueError as e:
             return redirect(request, f"/g/{guild_id}/events/{event_id}", 'warn', str(e))
         return redirect(request, f"/g/{guild_id}/events/{event_id}", 'ok', note)
+
+    # -- game roles ---------------------------------------------------------
+
+    async def roles_page(request: Request, guild_id: str, context: dict,
+                         error: str = None, status: int = 200):
+        guild = context['guild']
+        return render(request, 'roles.html', {
+            **context,
+            'entries': await roles_service.role_entries(guild, context['member']),
+            'panel_in': await roles_service.panel_location(guild),
+            'channels': postable_channels(guild) if context['is_admin'] else [],
+            'can_assign': roles_service.can_assign(guild),
+            'max_roles': roles_service.MAX_GAME_ROLES,
+            'error': error,
+        }, status=status)
+
+    def require_admin(context: dict):
+        if not context['is_admin']:
+            raise Forbidden("Only a server admin can manage the game roles themselves.")
+
+    @app.get('/g/{guild_id}/roles', response_class=HTMLResponse)
+    async def game_roles(request: Request, guild_id: str):
+        return await roles_page(request, guild_id, await guild_context(request, guild_id))
+
+    @app.post('/g/{guild_id}/roles')
+    async def save_game_roles(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            note = await roles_service.set_member_roles(
+                context['guild'], context['member'], form.getlist('role_ids')
+            )
+        except ValueError as e:
+            return await roles_page(request, guild_id, context, error=str(e), status=400)
+
+        # The member object is cached; drop it so the page that follows shows the
+        # roles as they now are rather than as they were up to a minute ago.
+        forget_member(guild_id, context['session']['id'])
+        return redirect(request, f"/g/{guild_id}/roles", 'ok', note)
+
+    @app.post('/g/{guild_id}/roles/add')
+    async def add_game_role(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            notes = await roles_service.add_role(
+                bot, context['guild'], context['member'],
+                form.get('name'), form.get('emoji'), form.get('description'),
+            )
+        except ValueError as e:
+            return await roles_page(request, guild_id, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/roles", 'ok', ' '.join(notes))
+
+    @app.post('/g/{guild_id}/roles/remove')
+    async def remove_game_role(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            notes = await roles_service.remove_role(
+                bot, context['guild'], context['member'],
+                form.get('role_id'), bool(form.get('delete_role')),
+            )
+        except ValueError as e:
+            return await roles_page(request, guild_id, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/roles", 'ok', ' '.join(notes))
+
+    @app.post('/g/{guild_id}/roles/panel')
+    async def post_game_role_panel(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            note = await roles_service.post_panel(bot, context['guild'], form.get('channel_id'))
+        except ValueError as e:
+            return await roles_page(request, guild_id, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/roles", 'ok', note)
 
     @app.post('/g/{guild_id}/refresh')
     async def refresh_permissions(request: Request, guild_id: str):

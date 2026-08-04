@@ -3,13 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}ORBAT{% endblock %}</title>
+  <title>{% block title %}{{ brand }}{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🗺️</text></svg>">
+  {% if logo_url %}
+    <link rel="icon" href="{{ logo_url }}">
+  {% else %}
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🛡️</text></svg>">
+  {% endif %}
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">🗺️ <span>ORBAT</span></a>
+    <a class="brand" href="/">
+      {% if logo_url %}<img class="brandlogo" src="{{ logo_url }}" alt="" width="32" height="32">{% endif %}
+      <span>{{ brand }}</span>
+    </a>
     {% if session %}
       <div class="user">
         <img class="avatar" src="{{ avatar }}" alt="" width="28" height="28">
@@ -30,7 +37,7 @@
   </main>
 
   <footer class="foot">
-    Managed by the ORBAT Discord bot · times shown in {% block tzfoot %}the server timezone{% endblock %}
+    Managed by {{ brand }} on Discord · times shown in {% block tzfoot %}the server timezone{% endblock %}
   </footer>
 </body>
 </html>

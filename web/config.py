@@ -18,6 +18,14 @@ OAUTH_SCOPES = 'identify'
 
 _FALSEY = ('0', 'false', 'no', 'off')
 
+# Shown in the top-left corner, in the browser tab and in the footer. Override
+# with WEB_BRAND to rename the site without touching the templates.
+DEFAULT_BRAND = 'TFP BOT'
+
+# A logo dropped into web/static under one of these names is picked up
+# automatically — in the header next to the name, and as the favicon.
+LOGO_NAMES = ('logo.png', 'logo.webp', 'logo.svg', 'logo.jpg', 'logo.jpeg')
+
 
 @dataclass
 class WebConfig:
@@ -25,6 +33,7 @@ class WebConfig:
     client_secret: str = ''
     secret_key: str = ''
     base_url: str = ''
+    brand: str = DEFAULT_BRAND
     host: str = '0.0.0.0'
     port: int = 8080
     disabled: bool = False
@@ -68,6 +77,7 @@ def load_config() -> WebConfig:
         client_secret=(os.getenv('DISCORD_CLIENT_SECRET') or '').strip(),
         secret_key=(os.getenv('WEB_SECRET_KEY') or '').strip(),
         base_url=(os.getenv('WEB_BASE_URL') or '').strip().rstrip('/'),
+        brand=(os.getenv('WEB_BRAND') or '').strip() or DEFAULT_BRAND,
         host=(os.getenv('WEB_HOST') or '0.0.0.0').strip(),
         # Railway injects PORT; 8080 is only the local default.
         port=int(os.getenv('PORT') or os.getenv('WEB_PORT') or 8080),
