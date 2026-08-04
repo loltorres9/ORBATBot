@@ -56,10 +56,19 @@ main {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-decoration: none;
 }
+
+/* Logos are square-ish but not guaranteed to be — contain keeps any aspect
+   ratio intact instead of squashing it into the box. */
+.brandlogo, .herologo { object-fit: contain; }
+.brandlogo { width: 32px; height: 32px; }
+.herologo { width: 96px; height: 96px; margin-bottom: 10px; }
 
 .user { display: flex; align-items: center; gap: 10px; }
 .avatar { border-radius: 50%; }

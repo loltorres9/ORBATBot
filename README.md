@@ -780,6 +780,12 @@ WEB_BASE_URL=https://orbat.example.com
 
 Restart the bot. The log line `✅ Web UI listening on …` means it is up; `/healthz` answers `ok` once the bot is connected to Discord.
 
+### Name and logo
+
+The site is called **TFP BOT**. Set `WEB_BRAND` to rename it — that string is the header, the browser tab title and the footer.
+
+For the logo, commit an image to **`web/static/logo.png`** (`.webp`, `.svg`, `.jpg` also work). It is picked up on the next start and appears next to the name in the header, large on the sign-in page, and as the browser-tab icon. Square images look best; anything else is fitted rather than squashed. With no such file, the name shows on its own and the tab falls back to a 🛡️ emoji — nothing breaks.
+
 ### How it is wired
 
 The site runs **inside the bot process**, on the same event loop. That is why a page can post a message, register a persistent button and read a member's roles directly — there is no second service, no polling and no queue table, and one Railway service still runs everything.

@@ -65,6 +65,7 @@ pure and Discord-free, so it is the obvious first thing to cover if that changes
 | `WEB_BASE_URL` | **Optional.** Public origin, no trailing slash. Must match the redirect URI registered in the Developer Portal; also decides whether cookies are marked `Secure`. Empty → derived from the request, which is only meant for local runs |
 | `WEB_HOST` / `WEB_PORT` | **Optional.** Listen address. `PORT` (injected by Railway) wins over `WEB_PORT` |
 | `WEB_ENABLED` | **Optional.** `0` keeps the site off even when everything else is set |
+| `WEB_BRAND` | **Optional.** Site name in the header, tab title and footer. Defaults to `TFP BOT` |
 
 Railway injects these at runtime; nothing sets them manually. `_railway_restart()` reads them to find the deployment to restart:
 
@@ -695,6 +696,14 @@ messages keep using `<t:…>` timestamps and localise themselves.
 Server-rendered Jinja2 plus one hand-written stylesheet. No build step, no CDN,
 no JavaScript — the page has to work from a fresh container with nothing but the
 bot's own dependencies installed.
+
+**Branding is data, not markup.** The name comes from `config.brand` (`WEB_BRAND`,
+default `TFP BOT`) and the logo from `_logo_url()`, which looks for
+`web/static/logo.*` at startup and returns `''` when there is none — every
+template guards on that, so a deployment without a logo file renders the name
+alone instead of a broken image. The URL carries the file's mtime so a replaced
+logo isn't served from a browser cache. Both are Jinja globals; they don't vary
+per request.
 
 ### Deliberately not covered yet
 

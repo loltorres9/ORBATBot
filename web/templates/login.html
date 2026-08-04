@@ -1,8 +1,9 @@
 {% extends 'base.html' %}
-{% block title %}Sign in · ORBAT{% endblock %}
+{% block title %}Sign in · {{ brand }}{% endblock %}
 
 {% block content %}
 <section class="hero">
+  {% if logo_url %}<img class="herologo" src="{{ logo_url }}" alt="">{% endif %}
   <h1>Operation &amp; event management</h1>
   <p class="lead">
     Create and manage the events your unit runs on Discord — from the browser.

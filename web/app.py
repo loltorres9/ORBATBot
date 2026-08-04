@@ -16,7 +16,7 @@ from cogs.events import _RECURRENCE_LABELS, _recurrence_text
 from utils import database
 from web import auth, service
 from web.auth import Forbidden, NotAuthenticated
-from web.config import WebConfig
+from web.config import LOGO_NAMES, WebConfig
 from web.guilds import (
     can_create_events,
     can_manage_event,
@@ -31,12 +31,27 @@ from web.helpers import fmt_date, fmt_dt, fmt_input, message_link, relative
 _HERE = Path(__file__).parent
 
 
+def _logo_url() -> str:
+    """The site logo, if one was dropped into web/static — '' when there is none.
+
+    The file's modification time rides along as a query string so replacing the
+    logo isn't hidden behind a cached copy in someone's browser.
+    """
+    for name in LOGO_NAMES:
+        path = _HERE / 'static' / name
+        if path.exists():
+            return f"/static/{name}?v={int(path.stat().st_mtime)}"
+    return ''
+
+
 def create_app(bot, config: WebConfig) -> FastAPI:
     app = FastAPI(title='ORBAT', docs_url=None, redoc_url=None, openapi_url=None)
     app.mount('/static', StaticFiles(directory=_HERE / 'static'), name='static')
 
     templates = Jinja2Templates(directory=str(_HERE / 'templates'))
     templates.env.globals.update(
+        brand=config.brand,
+        logo_url=_logo_url(),
         fmt_dt=fmt_dt,
         fmt_date=fmt_date,
         fmt_input=fmt_input,
