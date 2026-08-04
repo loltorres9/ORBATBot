@@ -91,8 +91,8 @@ class MemberLogCog(commands.Cog):
             return
         self._invites[guild.id] = await self._snapshot_invites(guild)
 
-    async def _used_invite(self, guild: discord.Guild):
-        """Which invite a join came through, as (code, inviter) — best effort.
+    async def _used_invite(self, guild: discord.Guild) -> tuple:
+        """Which invite a join came through, as (code, inviter, kind) — best effort.
 
         Works by diffing use counts against the cached snapshot. Two people
         joining in the same instant can't be told apart this way; the counter is
@@ -100,21 +100,21 @@ class MemberLogCog(commands.Cog):
         """
         settings = await database.get_log_settings(str(guild.id))
         if settings and not settings['track_invites']:
-            return None, None
+            return None, None, None
 
         async with self._invite_lock:
             before = self._invites.get(guild.id, {})
             try:
                 invites = await guild.invites()
             except (discord.Forbidden, discord.HTTPException):
-                return None, None
+                return None, None, None
 
             after = {invite.code: (invite.uses or 0) for invite in invites}
             self._invites[guild.id] = after
 
             for invite in invites:
                 if (invite.uses or 0) > before.get(invite.code, 0):
-                    return invite.code, invite.inviter
+                    return invite.code, invite.inviter, 'invite'
 
         # No counter moved: either a vanity URL, or the member was added by a
         # bot, or the snapshot was stale.
@@ -122,10 +122,10 @@ class MemberLogCog(commands.Cog):
             try:
                 vanity = await guild.vanity_invite()
                 if vanity is not None:
-                    return f"{vanity.code} (vanity)", None
+                    return vanity.code, None, 'vanity'
             except (discord.Forbidden, discord.HTTPException):
                 pass
-        return None, None
+        return None, None, None
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -169,7 +169,7 @@ class MemberLogCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         try:
-            code, inviter = await self._used_invite(member.guild)
+            code, inviter, kind = await self._used_invite(member.guild)
             embed = discord.Embed(
                 title='📥 Member joined',
                 description=_user_line(member),
@@ -178,8 +178,17 @@ class MemberLogCog(commands.Cog):
             )
             embed.add_field(name='Account created', value=_stamp(member.created_at), inline=False)
             if code:
-                invited_by = f" · invited by {inviter.mention}" if inviter else ''
-                embed.add_field(name='Invite used', value=f"`{code}`{invited_by}", inline=False)
+                # The label says where that link was published — the whole point
+                # of keeping it, so nobody has to look the code up in a spreadsheet.
+                labels = await database.get_invite_labels(str(member.guild.id))
+                parts = [f"`{code}`"]
+                if labels.get(code):
+                    parts.append(f"**{labels[code]}**")
+                elif kind == 'vanity':
+                    parts.append('vanity URL')
+                if inviter:
+                    parts.append(f"created by {inviter.mention}")
+                embed.add_field(name='Invite used', value=' · '.join(parts), inline=False)
             embed.set_footer(text=f"{member.guild.member_count} members")
             if member.display_avatar:
                 embed.set_thumbnail(url=member.display_avatar.url)

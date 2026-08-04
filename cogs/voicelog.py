@@ -45,6 +45,32 @@ def parse_excluded(raw: str) -> set:
     return {part.strip() for part in (raw or '').split(',') if part.strip()}
 
 
+# Ranks 1-3 get a medal; the rest are numbered.
+MEDALS = ('🥇', '🥈', '🥉')
+
+
+def build_leaderboard_embed(rows: list, period_label: str, limit: int = 10) -> discord.Embed:
+    """The leaderboard as a Discord message.
+
+    Members are named rather than mentioned: a leaderboard that pings ten people
+    every time it is posted would be worse than useless.
+    """
+    lines = []
+    for index, row in enumerate(rows[:limit], start=1):
+        rank = MEDALS[index - 1] if index <= len(MEDALS) else f"`{index}.`"
+        name = row['member_name'] or row['member_id']
+        lines.append(f"{rank} **{name}** — {format_duration(row['total_seconds'])}")
+
+    embed = discord.Embed(
+        title=f"🔊 Voice time — top {min(limit, len(rows)) or limit}",
+        description='\n'.join(lines) or 'Nobody has spent countable time in voice yet.',
+        color=discord.Color.blurple(),
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.set_footer(text=period_label)
+    return embed
+
+
 class VoiceLogCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot

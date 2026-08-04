@@ -37,7 +37,8 @@ web/                    # Optional browser UI — Discord OAuth2 login + event m
   service.py            # Create/edit/cancel/delete/RSVP, on top of cogs/events.py
   roles.py              # Game roles, on top of cogs/gameroles.py
   embeds.py             # Embed builder forms, on top of utils/embeds.py
-  voice.py              # Voice leaderboard shaping and the settings form
+  voice.py              # Voice leaderboard shaping, the settings form and posting
+  invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates and one stylesheet — no build step
 requirements.txt
@@ -255,6 +256,18 @@ nothing is announced — see [Member log](#member-log-cogsmemberlogpy).
 | `log_join` / `log_leave` / `log_kick` / `log_ban` / `log_unban` | INTEGER | 0/1 per event type |
 | `track_invites` | INTEGER | 0/1 — whether to work out which invite a join used |
 | `updated_at` | TIMESTAMP | |
+
+### `invite_labels`
+Where each invite link was published, so a join can name the source.
+
+| Column | Type | Notes |
+|---|---|---|
+| `guild_id` / `code` | TEXT | Composite primary key |
+| `label` | TEXT | Free text — *Steam*, *Website*, *Reddit* |
+| `updated_at` | TIMESTAMP | |
+
+Rows outlive the invite: a code that has expired keeps its label, because old
+join messages still refer to it.
 
 ### `voice_sessions`
 One row per **counted interval**, not per visit — see [Voice time](#voice-time-cogsvoicelogpy).
@@ -753,6 +766,8 @@ POST /g/{guild}/embeds/{id}/delete      optionally deletes the Discord message
 GET  /g/{guild}/logs                    admin — member log settings, POST to save
 GET  /g/{guild}/voice                   voice leaderboard; admins also get the settings
 POST /g/{guild}/voice                   admin — save the voice settings
+POST /g/{guild}/voice/post              admin — post the top 10 into a channel
+POST /g/{guild}/logs/invites            admin — label the invite links
 POST /g/{guild}/refresh                 drop the cached member
 GET  /healthz                           'ok' once the bot is ready
 ```
@@ -911,7 +926,13 @@ either way, only that one attribution may be wrong.
 
 Reading invites needs **Manage Server**. Without it, and for members added by
 another bot, no link is shown. A guild with `VANITY_URL` falls back to
-`vanity_invite()` when no counter moved.
+`vanity_invite()` when no counter moved — `_used_invite()` returns
+`(code, inviter, kind)` so the vanity case can be labelled as such rather than
+looked up like an ordinary code.
+
+**`invite_labels` is what makes the code useful.** The join message shows the
+label next to the code, which is the whole point: the alternative is keeping a
+spreadsheet of which link was posted where and consulting it by hand.
 
 Every listener body is wrapped in a `try`/`except` that prints and moves on: a
 failure to *log* an event must never propagate into the gateway handler.
@@ -966,6 +987,10 @@ runs on every reconnect, so it is written to be idempotent.
 - The leaderboard query counts open intervals too, via
   `COALESCE(heartbeat_at, started_at)`, so somebody currently in voice appears
   within one heartbeat rather than only after they leave.
+- **`build_leaderboard_embed()` lives in the cog**, not in `web/`, so the manual
+  post from the web page and any future scheduled post produce the same message.
+  It names members instead of mentioning them — a leaderboard that pings ten
+  people every time it is posted would be worse than useless.
 - `member_name` and `channel_name` are stored per row on purpose: a leaderboard
   should not need a REST call per row, and a deleted channel should still show up
   in the history under its old name.

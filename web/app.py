@@ -18,6 +18,7 @@ from utils import embeds as embedlib
 from web import (
     auth,
     embeds as embed_service,
+    invites as invite_service,
     roles as roles_service,
     service,
     voice as voice_service,
@@ -60,6 +61,9 @@ def create_app(bot, config: WebConfig) -> FastAPI:
     templates.env.globals.update(
         brand=config.brand,
         logo_url=_logo_url(),
+        # Absolute origin, needed for the link-preview image: og:image is fetched
+        # by other sites, so a relative path is useless there.
+        site_url=config.base_url,
         fmt_dt=fmt_dt,
         fmt_date=fmt_date,
         fmt_input=fmt_input,
@@ -628,6 +632,21 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                         'Voice tracking is on.' if values['enabled']
                         else 'Voice tracking is off — nothing is recorded.')
 
+    @app.post('/g/{guild_id}/voice/post')
+    async def post_voice_leaderboard(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            note = await voice_service.post_leaderboard(
+                bot, context['guild'], form.get('channel_id'), form.get('period'),
+            )
+        except ValueError as e:
+            return redirect(request, f"/g/{guild_id}/voice", 'warn', str(e))
+        return redirect(request, f"/g/{guild_id}/voice", 'ok', note)
+
     # -- member logging -----------------------------------------------------
 
     @app.get('/g/{guild_id}/logs', response_class=HTMLResponse)
@@ -641,8 +660,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'settings': await database.get_log_settings(str(guild_id)),
             'channels': postable_channels(guild),
             'member_events': bool(bot.intents.members),
-            'can_read_invites': bool(perms and perms.manage_guild),
             'can_read_audit': bool(perms and perms.view_audit_log),
+            **await invite_service.overview(guild),
         })
 
     @app.post('/g/{guild_id}/logs')
@@ -666,6 +685,18 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         return redirect(request, f"/g/{guild_id}/logs", 'ok',
                         'Logging settings saved.' if channel_id else
                         'Logging is off — no channel is selected.')
+
+    @app.post('/g/{guild_id}/logs/invites')
+    async def save_invite_labels(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        labels, remove = invite_service.read_form(form)
+        await database.save_invite_labels(str(guild_id), labels, remove)
+        return redirect(request, f"/g/{guild_id}/logs", 'ok',
+                        f"Saved {len(labels)} invite label(s).")
 
     @app.post('/g/{guild_id}/refresh')
     async def refresh_permissions(request: Request, guild_id: str):

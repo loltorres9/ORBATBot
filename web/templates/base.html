@@ -7,8 +7,20 @@
   <link rel="stylesheet" href="/static/style.css">
   {% if logo_url %}
     <link rel="icon" href="{{ logo_url }}">
+    <link rel="apple-touch-icon" href="{{ logo_url }}">
   {% else %}
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🛡️</text></svg>">
+  {% endif %}
+
+  {# Link preview — what Discord, Slack and the like show when the URL is pasted. #}
+  <meta property="og:site_name" content="{{ brand }}">
+  <meta property="og:title" content="{% block ogtitle %}{{ brand }}{% endblock %}">
+  <meta property="og:description" content="Operation and event management for the unit.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#5865f2">
+  {% if logo_url and site_url %}
+    <meta property="og:image" content="{{ site_url }}{{ logo_url }}">
+    <meta name="twitter:card" content="summary">
   {% endif %}
 </head>
 <body>
