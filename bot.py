@@ -42,6 +42,17 @@ class ORBATBot(commands.Bot):
         await database.init_db()
         print("✅ Database initialised.")
 
+        # Voice intervals left open by a crash are closed at their last
+        # heartbeat before anything new is recorded, so a restart can't leave a
+        # session that looks like it has been running for days.
+        try:
+            dangling = await database.close_dangling_voice_sessions()
+            if dangling:
+                print(f"✅ Closed {dangling} voice session(s) left open by a restart.")
+        except Exception:
+            print("❌ Failed to close dangling voice sessions:")
+            traceback.print_exc()
+
         try:
             await self.load_extension('cogs.slots')
             print("✅ Loaded cogs.slots")
@@ -68,6 +79,13 @@ class ORBATBot(commands.Bot):
             print("✅ Loaded cogs.events")
         except Exception:
             print("❌ Failed to load cogs.events:")
+            traceback.print_exc()
+
+        try:
+            await self.load_extension('cogs.voicelog')
+            print("✅ Loaded cogs.voicelog")
+        except Exception:
+            print("❌ Failed to load cogs.voicelog:")
             traceback.print_exc()
 
         try:
@@ -152,6 +170,14 @@ class ORBATBot(commands.Bot):
               + (f" ({config.base_url})" if config.base_url else ""))
 
     async def close(self):
+        # Record the time of everyone still in voice before the connection goes
+        # down — a redeploy is the common case and must not lose it.
+        cog = self.get_cog('VoiceLogCog')
+        if cog is not None:
+            try:
+                await cog.flush_open_sessions()
+            except Exception:
+                pass
         if self.web is not None:
             await self.web.stop()
             self.web = None

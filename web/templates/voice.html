@@ -1,0 +1,141 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Voice time{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'voice' %}{% include '_nav.html' %}{% endwith %}
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if not settings or not settings.enabled %}
+  <div class="flash warn">
+    Voice tracking is <strong>off</strong>, so nothing is being recorded.
+    {% if is_admin %}Switch it on below.{% else %}A server admin can switch it on.{% endif %}
+  </div>
+{% endif %}
+
+<div class="pagehead">
+  <h2>Leaderboard</h2>
+  <nav class="periods">
+    {% for key, label in periods %}
+      <a class="tab {{ 'active' if period == key else '' }}"
+         href="/g/{{ guild.id }}/voice?period={{ key }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+</div>
+
+<p class="hint">
+  Your own time in this window: <strong>{{ my_duration }}</strong>
+  {% if my_sessions %}across {{ my_sessions }} session(s){% endif %}.
+</p>
+
+{% if leaderboard %}
+  <ol class="ranks">
+    {% for row in leaderboard %}
+      <li class="rank {{ 'me' if row.is_me else '' }}">
+        <span class="rankbar" style="width: {{ row.share }}%"></span>
+        <span class="ranknum">{{ row.rank }}</span>
+        <span class="rankname">{{ row.name }}</span>
+        <span class="ranktime">{{ row.duration }}</span>
+      </li>
+    {% endfor %}
+  </ol>
+{% else %}
+  <p class="empty">
+    Nothing recorded in this window yet. Counting starts when at least two people
+    share a voice channel.
+  </p>
+{% endif %}
+
+{% if channels %}
+  <h2>Busiest channels</h2>
+  <ul class="eventlist quiet">
+    {% for row in channels %}
+      <li class="event">
+        <span class="title">🔊 {{ row.name }}</span>
+        <span class="chip">{{ row.duration }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+
+{% if is_admin %}
+  <h2>Settings <span class="chip">admin</span></h2>
+  <form class="form" method="post" action="/g/{{ guild.id }}/voice">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+
+    <label class="check">
+      <input type="checkbox" name="enabled" value="1"
+             {% if settings and settings.enabled %}checked{% endif %}>
+      <span><strong>Record time spent in voice channels</strong></span>
+    </label>
+    <p class="hint">
+      This is a continuous record of when your members are in voice. Worth saying so
+      on the server rather than letting people discover it.
+    </p>
+
+    <div class="row">
+      <label class="field">
+        <span>Announce finished sessions in</span>
+        <select name="channel_id">
+          <option value="">Don't announce — statistics only</option>
+          {% for channel in post_channels %}
+            <option value="{{ channel.id }}"
+              {% if settings and settings.channel_id and settings.channel_id|int == channel.id %}selected{% endif %}>#{{ channel.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Only announce sessions longer than</span>
+        <input type="number" name="min_log_minutes" min="0" max="1440"
+               value="{{ settings.min_log_minutes if settings else 5 }}">
+        <span class="hint">Minutes. Keeps quick drop-ins out of the channel.</span>
+      </label>
+    </div>
+
+    <fieldset class="field">
+      <legend>What counts</legend>
+      <label class="check">
+        <input type="checkbox" name="count_solo" value="1"
+               {% if settings and settings.count_solo %}checked{% endif %}>
+        <span>Count time spent alone in a channel</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="count_afk" value="1"
+               {% if settings and settings.count_afk %}checked{% endif %}>
+        <span>Count time in the AFK channel{% if afk_channel %} (🔊 {{ afk_channel.name }}){% endif %}</span>
+      </label>
+      <p class="hint">
+        Both off by default, so what you measure is time actually spent together.
+        Counting pauses the moment somebody is left alone and resumes when
+        somebody joins them.
+      </p>
+    </fieldset>
+
+    {% if voice_channels %}
+      <fieldset class="field">
+        <legend>Ignore these channels</legend>
+        <div class="checkgrid">
+          {% for channel in voice_channels %}
+            <label class="check">
+              <input type="checkbox" name="excluded_channels" value="{{ channel.id }}"
+                     {% if channel.id|string in excluded %}checked{% endif %}>
+              <span>🔊 {{ channel.name }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </fieldset>
+    {% endif %}
+
+    <div class="actions">
+      <button class="button primary" type="submit">Save</button>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

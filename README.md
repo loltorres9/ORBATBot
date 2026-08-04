@@ -739,13 +739,14 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
 | Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
+| Voice time | Leaderboard of time spent in voice channels; admins configure what counts |
 
 Who may do what is **read live from your Discord roles**, not from the login:
 
-- **Any member of the server** — view events, RSVP, pick their own game roles
+- **Any member of the server** — view events, RSVP, pick their own game roles, see the voice leaderboard
 - **Unit Leader or Manage Server** — create events
 - **The organiser, or an admin** — edit, cancel and delete that event
-- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, configure the member log
+- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, configure the member log and voice tracking
 
 That is the same rule set the slash commands use; it is literally the same code. Roles are cached for a minute, so if you have just been given a role, the **“Changed your roles on Discord? Re-read them”** link at the bottom of the event list picks it up immediately.
 
@@ -826,9 +827,26 @@ Three prerequisites, and the page tells you which are missing:
 
 Invite attribution works by comparing each invite's use counter before and after a join. Two people joining in the same second can't be told apart that way, and a member added by another bot has no invite at all — those simply show no link.
 
+### Voice time
+
+**🔊 Voice time** records how long members spend in voice channels and shows a leaderboard for the last 7, 30 or 90 days, or all time, plus which channels see the most use. Every member can see it; only admins can change the settings.
+
+**It is off until an admin switches it on.** Nothing is recorded before that.
+
+What counts is deliberately narrow by default: time is only counted while **at least two people share a channel**, and the AFK channel is skipped. Counting pauses the moment somebody is left alone and resumes when somebody joins them, so what you measure is time actually spent together rather than time connected. Both rules can be switched off, and individual voice channels can be excluded.
+
+Optionally, a finished visit is announced in a channel of your choice — with a minimum length, so quick drop-ins don't fill it up. Leave the channel unset to keep the statistics without any messages.
+
+Two details worth knowing about the numbers:
+
+- **A redeploy doesn't lose time.** Open sessions are closed cleanly when the bot shuts down, so a normal restart records everything up to that moment.
+- **A hard crash costs at most five minutes.** Open sessions carry a heartbeat that is refreshed every five minutes; on the next start, anything left open is closed at its last heartbeat. The time is never rounded up — an interval with no heartbeat counts zero.
+
+Voice state updates need no privileged intent and no extra permission, so unlike the member log this works the moment you switch it on.
+
 ### Limits
 
-- Events, game roles, embeds and the member log — slots and the ORBAT board are still Discord-side
+- Events, game roles, embeds, the member log and voice time — slots and the ORBAT board are still Discord-side
 - An event can't be moved to another channel after posting; cancel it and create a new one
 - Approving slot requests is unchanged and still happens in `#slot-approvals`
 

@@ -9,7 +9,7 @@ This file gives full context on the project. Read it before making any changes.
 A Discord bot for managing Arma 3 operation slot requests across multiple military simulation units. Members request slots; Unit Leaders and admins approve or deny via Discord buttons. The Google Sheet is updated automatically on approval.
 
 **Current state:** Fully operational bot deployed on Railway, plus an optional web UI (`web/`) with Discord OAuth2 login for managing events from a browser.
-**Next phase:** extend that web UI to slots — visual ORBAT, slot requests from the browser, no Google Sheets dependency. See [Web UI](#web-ui-web) at the bottom of this file.
+**Next phase:** the web UI now covers events, game roles, embeds, the member log and voice time. Slots and the ORBAT board are deliberately still Discord- and Sheets-only — see [Web UI](#web-ui-web) at the bottom of this file.
 
 ---
 
@@ -23,6 +23,7 @@ cogs/
   gameroles.py          # Self-assignable game roles (Minecraft, DCS, …) + panel
   events.py             # Standalone events with RSVP buttons + reminder loop
   memberlog.py          # Join/leave/kick/ban announcements + invite attribution
+  voicelog.py           # Time spent in voice channels, counted in intervals
 utils/
   database.py           # All PostgreSQL queries (asyncpg)
   sheets.py             # Google Sheets read/write (gspread)
@@ -36,6 +37,7 @@ web/                    # Optional browser UI — Discord OAuth2 login + event m
   service.py            # Create/edit/cancel/delete/RSVP, on top of cogs/events.py
   roles.py              # Game roles, on top of cogs/gameroles.py
   embeds.py             # Embed builder forms, on top of utils/embeds.py
+  voice.py              # Voice leaderboard shaping and the settings form
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates and one stylesheet — no build step
 requirements.txt
@@ -252,6 +254,32 @@ nothing is announced — see [Member log](#member-log-cogsmemberlogpy).
 | `channel_id` | TEXT | Where announcements go. NULL = logging off |
 | `log_join` / `log_leave` / `log_kick` / `log_ban` / `log_unban` | INTEGER | 0/1 per event type |
 | `track_invites` | INTEGER | 0/1 — whether to work out which invite a join used |
+| `updated_at` | TIMESTAMP | |
+
+### `voice_sessions`
+One row per **counted interval**, not per visit — see [Voice time](#voice-time-cogsvoicelogpy).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `guild_id` / `member_id` / `channel_id` | TEXT | |
+| `member_name` / `channel_name` | TEXT | Copied at the time, so a rename or a deleted channel doesn't erase history |
+| `started_at` | TIMESTAMP | Naive UTC |
+| `heartbeat_at` | TIMESTAMP | Refreshed every 5 min while open; bounds what a crash can lose |
+| `ended_at` | TIMESTAMP | NULL = still running |
+| `seconds` | INTEGER | Filled when the interval closes |
+
+Indexes on `(guild_id, started_at)` and a partial one on the open rows.
+
+### `voice_settings`
+| Column | Type | Notes |
+|---|---|---|
+| `guild_id` | TEXT PK | |
+| `enabled` | INTEGER | 0/1 — **off by default**, nothing is recorded until an admin turns it on |
+| `channel_id` | TEXT | Where finished visits are announced. NULL = statistics only |
+| `min_log_minutes` | INTEGER | Visits shorter than this are not announced |
+| `count_afk` / `count_solo` | INTEGER | 0/1 — both off by default |
+| `excluded_channels` | TEXT | Comma-separated voice channel ids |
 | `updated_at` | TIMESTAMP | |
 
 ---
@@ -681,7 +709,8 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Create an event | Unit Leader or admin | `_is_unit_leader_or_admin()` |
 | Edit / cancel / delete | organiser or admin | `_is_organiser()` |
 | Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
-| Build and post embeds, configure the member log | admin | `is_admin()` — `manage_guild` or `administrator` |
+| Build and post embeds, configure the member log and voice tracking | admin | `is_admin()` — `manage_guild` or `administrator` |
+| See the voice leaderboard | any member of the guild | — |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
 the slash commands cannot drift apart on access control.
@@ -722,6 +751,8 @@ GET  /g/{guild}/embeds/{id}/edit        builder          POST to save
 POST /g/{guild}/embeds/{id}/send        post as a new message
 POST /g/{guild}/embeds/{id}/delete      optionally deletes the Discord message
 GET  /g/{guild}/logs                    admin — member log settings, POST to save
+GET  /g/{guild}/voice                   voice leaderboard; admins also get the settings
+POST /g/{guild}/voice                   admin — save the voice settings
 POST /g/{guild}/refresh                 drop the cached member
 GET  /healthz                           'ok' once the bot is ready
 ```
@@ -884,3 +915,57 @@ another bot, no link is shown. A guild with `VANITY_URL` falls back to
 
 Every listener body is wrapped in a `try`/`except` that prints and moves on: a
 failure to *log* an event must never propagate into the gateway handler.
+
+---
+
+## Voice time (`cogs/voicelog.py`)
+
+Records how long members spend in voice channels. **Off per guild until an admin
+switches it on** (`voice_settings.enabled`), and no privileged intent or extra
+permission is involved — `Intents.default()` already carries voice states.
+
+### A visit is not a session
+
+A *visit* is one stay in one channel, held in memory. It is split into **counted
+intervals**, and only intervals become rows:
+
+- Counting **pauses** when the rules stop applying — the member is left alone
+  (unless `count_solo`), the channel is the AFK channel (unless `count_afk`), or
+  the channel is excluded.
+- It **resumes** when they apply again, as a new row.
+
+So `SUM(seconds)` is time that actually counted, not time connected. `_sync_channel()`
+is what enforces this: after every voice event it re-evaluates *everyone* in the
+affected channels, because one person arriving or leaving changes whether everybody
+else is "alone".
+
+**Mute, deafen and stream toggles fire `on_voice_state_update` with the channel
+unchanged** and are ignored — following them would shred every visit into fragments.
+
+### Restarts and crashes
+
+Two mechanisms, and both matter:
+
+- `ORBATBot.close()` calls `flush_open_sessions()` **before** the Discord
+  connection goes down, so a redeploy — the common case — records everything.
+- Open rows carry `heartbeat_at`, refreshed every `HEARTBEAT_SECONDS`. On the next
+  start, `close_dangling_voice_sessions()` closes anything still open **at its last
+  heartbeat**, so a hard crash costs at most one heartbeat. An interval with no
+  heartbeat counts zero — the time is never rounded up.
+
+`on_ready` re-scans every voice channel and picks up whoever is already in one. It
+runs on every reconnect, so it is written to be idempotent.
+
+### Notes for future changes
+
+- **The settings are cached for `SETTINGS_TTL` seconds**, because they are read on
+  every voice event. `forget_settings()` drops that, and the web route calls it
+  after a save so a change applies immediately.
+- **`_lock` serialises the whole event path.** Two people leaving a channel at once
+  would otherwise both compute "is anyone still here" from the same stale view.
+- The leaderboard query counts open intervals too, via
+  `COALESCE(heartbeat_at, started_at)`, so somebody currently in voice appears
+  within one heartbeat rather than only after they leave.
+- `member_name` and `channel_name` are stored per row on purpose: a leaderboard
+  should not need a REST call per row, and a deleted channel should still show up
+  in the history under its old name.

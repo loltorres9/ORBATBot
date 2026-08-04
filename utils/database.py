@@ -201,6 +201,43 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Time spent in voice channels. One row per counted interval: a member's
+        # visit is split whenever the rules stop applying (they end up alone, or
+        # move to an excluded channel), so the sum is time that actually counted.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS voice_sessions (
+                id SERIAL PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                member_id TEXT NOT NULL,
+                member_name TEXT,
+                channel_id TEXT NOT NULL,
+                channel_name TEXT,
+                started_at TIMESTAMP NOT NULL,
+                heartbeat_at TIMESTAMP,
+                ended_at TIMESTAMP,
+                seconds INTEGER
+            )
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_voice_guild_started
+                ON voice_sessions (guild_id, started_at)
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_voice_open
+                ON voice_sessions (guild_id) WHERE ended_at IS NULL
+        ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS voice_settings (
+                guild_id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                channel_id TEXT,
+                min_log_minutes INTEGER NOT NULL DEFAULT 5,
+                count_afk INTEGER NOT NULL DEFAULT 0,
+                count_solo INTEGER NOT NULL DEFAULT 0,
+                excluded_channels TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         # Recurrence, added after the events tables shipped
         await db.execute('''
             ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence TEXT
@@ -1001,4 +1038,159 @@ async def save_log_settings(guild_id: str, values: dict):
                 ON CONFLICT (guild_id) DO UPDATE SET
                     {updates}, updated_at = CURRENT_TIMESTAMP''',
             guild_id, *[values[name] for name in columns],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Voice time
+#
+# `seconds` is filled when an interval closes. `heartbeat_at` is refreshed while
+# one is open, so a hard crash costs at most one heartbeat of unrecorded time
+# instead of the whole session — and so a live total can include the interval
+# somebody is in right now.
+# ---------------------------------------------------------------------------
+
+# The elapsed time of one row, closed or still running.
+_VOICE_SECONDS = """
+    COALESCE(seconds, GREATEST(0, EXTRACT(EPOCH FROM
+        (COALESCE(heartbeat_at, started_at) - started_at))))
+"""
+
+
+async def get_voice_settings(guild_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow('SELECT * FROM voice_settings WHERE guild_id = $1', guild_id)
+
+
+_VOICE_SETTING_COLUMNS = (
+    'enabled', 'channel_id', 'min_log_minutes', 'count_afk', 'count_solo',
+    'excluded_channels',
+)
+
+
+async def save_voice_settings(guild_id: str, values: dict):
+    columns = [name for name in _VOICE_SETTING_COLUMNS if name in values]
+    if not columns:
+        return
+    updates = ', '.join(f'{name} = EXCLUDED.{name}' for name in columns)
+    placeholders = ', '.join(f'${i}' for i in range(2, 2 + len(columns)))
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            f'''INSERT INTO voice_settings (guild_id, {', '.join(columns)})
+                VALUES ($1, {placeholders})
+                ON CONFLICT (guild_id) DO UPDATE SET
+                    {updates}, updated_at = CURRENT_TIMESTAMP''',
+            guild_id, *[values[name] for name in columns],
+        )
+
+
+async def start_voice_session(guild_id: str, member_id: str, member_name: str,
+                              channel_id: str, channel_name: str, started_at) -> int:
+    started_at = _naive(started_at)
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            '''INSERT INTO voice_sessions
+               (guild_id, member_id, member_name, channel_id, channel_name,
+                started_at, heartbeat_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $6)
+               RETURNING id''',
+            guild_id, member_id, member_name, channel_id, channel_name, started_at,
+        )
+        return row['id']
+
+
+async def end_voice_session(session_id: int, ended_at) -> int:
+    """Close one interval and return how many seconds it lasted."""
+    ended_at = _naive(ended_at)
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            '''UPDATE voice_sessions
+               SET ended_at = $2, heartbeat_at = $2,
+                   seconds = GREATEST(0, EXTRACT(EPOCH FROM ($2 - started_at))::int)
+               WHERE id = $1 AND ended_at IS NULL
+               RETURNING seconds''',
+            session_id, ended_at,
+        )
+        return row['seconds'] if row else 0
+
+
+async def heartbeat_voice_sessions(session_ids: list, moment) -> None:
+    if not session_ids:
+        return
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            'UPDATE voice_sessions SET heartbeat_at = $2 WHERE id = ANY($1::int[])',
+            list(session_ids), _naive(moment),
+        )
+
+
+async def close_dangling_voice_sessions() -> int:
+    """Close intervals left open by a crash, at their last heartbeat.
+
+    Never invents time: without a heartbeat the interval closes at its start and
+    counts zero.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute(
+            '''UPDATE voice_sessions
+               SET ended_at = COALESCE(heartbeat_at, started_at),
+                   seconds = GREATEST(0, EXTRACT(EPOCH FROM
+                       (COALESCE(heartbeat_at, started_at) - started_at))::int)
+               WHERE ended_at IS NULL'''
+        )
+        return int(result.split()[-1])
+
+
+async def get_voice_leaderboard(guild_id: str, since=None, limit: int = 25) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            f'''SELECT member_id,
+                       MAX(member_name) AS member_name,
+                       SUM({_VOICE_SECONDS})::bigint AS total_seconds,
+                       COUNT(*) AS sessions,
+                       MAX(COALESCE(ended_at, heartbeat_at)) AS last_seen
+                FROM voice_sessions
+                WHERE guild_id = $1 AND ($2::timestamp IS NULL OR started_at >= $2)
+                GROUP BY member_id
+                HAVING SUM({_VOICE_SECONDS}) > 0
+                ORDER BY total_seconds DESC
+                LIMIT $3''',
+            guild_id, _naive(since), limit,
+        )
+
+
+async def get_voice_member_total(guild_id: str, member_id: str, since=None):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow(
+            f'''SELECT SUM({_VOICE_SECONDS})::bigint AS total_seconds,
+                       COUNT(*) AS sessions
+                FROM voice_sessions
+                WHERE guild_id = $1 AND member_id = $2
+                  AND ($3::timestamp IS NULL OR started_at >= $3)''',
+            guild_id, member_id, _naive(since),
+        )
+
+
+async def get_voice_channel_totals(guild_id: str, since=None, limit: int = 10) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            f'''SELECT channel_id,
+                       MAX(channel_name) AS channel_name,
+                       SUM({_VOICE_SECONDS})::bigint AS total_seconds
+                FROM voice_sessions
+                WHERE guild_id = $1 AND ($2::timestamp IS NULL OR started_at >= $2)
+                GROUP BY channel_id
+                HAVING SUM({_VOICE_SECONDS}) > 0
+                ORDER BY total_seconds DESC
+                LIMIT $3''',
+            guild_id, _naive(since), limit,
         )

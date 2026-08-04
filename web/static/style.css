@@ -304,6 +304,38 @@ h3 { font-size: 15px; margin: 0 0 8px; }
 
 .rowactions .check { font-size: 13px; color: var(--muted); }
 
+/* -- voice leaderboard --------------------------------------------------- */
+
+.periods { display: flex; gap: 4px; flex-wrap: wrap; border: 0; }
+
+.ranks { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.rank {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* The bar sits behind the text rather than next to it, so long names never
+   squeeze it out of the row. */
+.rankbar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  opacity: 0.14;
+}
+
+.rank.me { border-color: var(--accent); }
+.ranknum { position: relative; width: 2ch; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rankname { position: relative; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ranktime { position: relative; font-variant-numeric: tabular-nums; font-weight: 600; }
+
 /* -- embed builder ------------------------------------------------------- */
 
 .epcontent { white-space: pre-wrap; margin: 0 0 8px; }
