@@ -839,7 +839,9 @@ What counts is deliberately narrow by default: time is only counted while **at l
 
 Optionally, a finished visit is announced in a channel of your choice — with a minimum length, so quick drop-ins don't fill it up. Leave the channel unset to keep the statistics without any messages.
 
-**Posting the leaderboard.** Under the settings there's a *Post the top 10 to Discord* form: pick a channel and a period, press the button, and the current top ten goes out as a message. Members are named rather than mentioned, so nobody gets pinged.
+**A daily board.** Switch on *Keep a daily top-10 message up to date*, pick a channel, a period and an hour: the bot posts one message and **edits that same message once a day**, so you can pin it and it always shows current standings. It never posts twice in a day, and if the bot was down at the chosen hour it catches up as soon as it is back rather than skipping. Moving it to another channel posts a fresh message there.
+
+**Posting once.** Separately, *Post the top 10 once* sends the leaderboard as a one-off message for a period you choose. Either way members are named rather than mentioned, so nobody gets pinged.
 
 Two details worth knowing about the numbers:
 

@@ -5,40 +5,34 @@ The rules themselves — what counts, when counting pauses — live in
 validates the settings form.
 """
 
-from datetime import datetime, timedelta, timezone
-
 import discord
 
-from cogs.voicelog import build_leaderboard_embed, format_duration, parse_excluded
+# The periods and the embed live in the cog: the daily board there needs the
+# same definitions, and web/ is the layer that may depend on cogs, not the
+# other way round.
+from cogs.voicelog import (
+    DEFAULT_PERIOD,
+    PERIODS,
+    build_leaderboard_embed,
+    clean_period,
+    format_duration,
+    parse_excluded,
+    period_label,
+    period_start,
+)
 from utils import database
 from web.guilds import postable_channels
 
-# The windows offered above the leaderboard.
-PERIODS = (
-    ('7', 'Last 7 days'),
-    ('30', 'Last 30 days'),
-    ('90', 'Last 90 days'),
-    ('all', 'All time'),
-)
-DEFAULT_PERIOD = '7'
-
 MAX_LOG_MINUTES = 1440
+MAX_BOARD_HOUR = 23
 
-
-def period_start(period: str):
-    """Naive UTC cut-off for a period key, or None for all time."""
-    if period == 'all':
-        return None
-    try:
-        days = int(period)
-    except (TypeError, ValueError):
-        days = int(DEFAULT_PERIOD)
-    return (datetime.now(timezone.utc) - timedelta(days=days)).replace(tzinfo=None)
-
-
-def clean_period(raw: str) -> str:
-    keys = [key for key, _ in PERIODS]
-    return raw if raw in keys else DEFAULT_PERIOD
+# PERIODS and the period helpers are re-exported so the routes and templates can
+# use them without reaching into the cog themselves.
+__all__ = [
+    'PERIODS', 'DEFAULT_PERIOD', 'MAX_LOG_MINUTES', 'MAX_BOARD_HOUR',
+    'clean_period', 'period_start', 'overview', 'read_settings_form',
+    'excluded_set', 'post_leaderboard',
+]
 
 
 async def overview(guild: discord.Guild, member: discord.Member, period: str) -> dict:
@@ -92,7 +86,25 @@ def read_settings_form(guild: discord.Guild, form) -> dict:
     voice_ids = {str(c.id) for c in guild.voice_channels}
     excluded = [value for value in form.getlist('excluded_channels') if value in voice_ids]
 
+    board_channel = (form.get('board_channel_id') or '').strip()
+    if board_channel and board_channel not in [str(c.id) for c in postable_channels(guild)]:
+        raise ValueError("I can't post the daily board in that channel — pick another one.")
+    board_enabled = 1 if form.get('board_enabled') else 0
+    if board_enabled and not board_channel:
+        raise ValueError("Pick a channel for the daily board, or switch it off.")
+
+    try:
+        board_hour = int((form.get('board_hour') or 0))
+    except ValueError:
+        raise ValueError("That isn't a time of day I recognise.")
+    if not 0 <= board_hour <= MAX_BOARD_HOUR:
+        raise ValueError("The board's time of day has to be a whole hour, 0 to 23.")
+
     return {
+        'board_enabled': board_enabled,
+        'board_channel_id': board_channel or None,
+        'board_period': clean_period(form.get('board_period')),
+        'board_hour': board_hour,
         'enabled': 1 if form.get('enabled') else 0,
         'channel_id': channel_id or None,
         'min_log_minutes': minutes,
@@ -117,7 +129,7 @@ async def post_leaderboard(bot, guild: discord.Guild, channel_id: str, period: s
 
     period = clean_period(period)
     rows = await database.get_voice_leaderboard(str(guild.id), period_start(period), limit=limit)
-    label = next((text for key, text in PERIODS if key == period), period)
+    label = period_label(period)
 
     try:
         await channel.send(embed=build_leaderboard_embed(rows, label, limit))
