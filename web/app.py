@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from cogs.events import _RECURRENCE_LABELS, _recurrence_text
+from cogs.voicelog import refresh_leaderboard_board as refresh_board
 from utils import database
 from utils import embeds as embedlib
 from web import (
@@ -600,6 +601,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'post_channels': postable_channels(guild) if context['is_admin'] else [],
             'voice_channels': guild.voice_channels if context['is_admin'] else [],
             'afk_channel': guild.afk_channel,
+            'board_channel': (guild.get_channel(int(settings['board_channel_id']))
+                              if settings and settings['board_channel_id'] else None),
             'error': error,
         }, status=status)
 
@@ -621,6 +624,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             return await voice_page(request, context, voice_service.DEFAULT_PERIOD,
                                     error=str(e), status=400)
 
+        previous = await database.get_voice_settings(str(guild_id))
         await database.save_voice_settings(str(guild_id), values)
         # The cog caches the settings for a few seconds; drop that so a change
         # here takes effect on the very next voice event.
@@ -628,9 +632,22 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         if cog is not None:
             cog.forget_settings(str(guild_id))
 
-        return redirect(request, f"/g/{guild_id}/voice", 'ok',
-                        'Voice tracking is on.' if values['enabled']
-                        else 'Voice tracking is off — nothing is recorded.')
+        notes = ['Voice tracking is on.' if values['enabled']
+                 else 'Voice tracking is off — nothing is recorded.']
+
+        moved = previous and previous['board_channel_id'] != values['board_channel_id']
+        if moved:
+            # The old message stays where it was; the next refresh posts a new
+            # one in the new channel rather than trying to edit across channels.
+            await database.set_voice_board_state(str(guild_id), None)
+
+        if values['board_enabled']:
+            try:
+                what = await refresh_board(bot, context['guild'])
+                notes.append(f"Daily board {what}.")
+            except ValueError as e:
+                notes.append(f"The daily board couldn't be updated: {e}")
+        return redirect(request, f"/g/{guild_id}/voice", 'ok', ' '.join(notes))
 
     @app.post('/g/{guild_id}/voice/post')
     async def post_voice_leaderboard(request: Request, guild_id: str):

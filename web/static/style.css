@@ -304,6 +304,9 @@ h3 { font-size: 15px; margin: 0 0 8px; }
 
 .rowactions .check { font-size: 13px; color: var(--muted); }
 
+/* A section heading inside a form, for grouping fields without a new <form>. */
+.form h3 { margin: 10px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+
 /* -- voice leaderboard --------------------------------------------------- */
 
 .periods { display: flex; gap: 4px; flex-wrap: wrap; border: 0; }

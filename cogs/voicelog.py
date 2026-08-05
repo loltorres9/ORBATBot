@@ -11,6 +11,8 @@ carries them, and no extra server permission is needed.
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 from discord.ext import commands, tasks
@@ -25,6 +27,47 @@ HEARTBEAT_SECONDS = 300
 # The settings are read on every voice event; a short cache keeps that off the
 # database without making a change on the web page take noticeably long to apply.
 SETTINGS_TTL = 30
+
+# How often the daily board is considered. It only acts once per local day, so
+# this is just how late the refresh can be.
+BOARD_CHECK_MINUTES = 10
+
+# The windows the leaderboard can cover. They live here rather than in web/
+# because the daily board in this cog needs them too.
+PERIODS = (
+    ('1', 'Last 24 hours'),
+    ('7', 'Last 7 days'),
+    ('30', 'Last 30 days'),
+    ('90', 'Last 90 days'),
+    ('all', 'All time'),
+)
+DEFAULT_PERIOD = '7'
+
+
+def clean_period(raw: str) -> str:
+    return raw if raw in [key for key, _ in PERIODS] else DEFAULT_PERIOD
+
+
+def period_label(period: str) -> str:
+    return next((text for key, text in PERIODS if key == period), period)
+
+
+def period_start(period: str):
+    """Naive UTC cut-off for a period key, or None for all time."""
+    if period == 'all':
+        return None
+    try:
+        days = int(period)
+    except (TypeError, ValueError):
+        days = int(DEFAULT_PERIOD)
+    return (datetime.now(timezone.utc) - timedelta(days=days)).replace(tzinfo=None)
+
+
+def _zone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or 'UTC')
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo('UTC')
 
 
 def format_duration(seconds) -> str:
@@ -71,6 +114,59 @@ def build_leaderboard_embed(rows: list, period_label: str, limit: int = 10) -> d
     return embed
 
 
+async def refresh_leaderboard_board(bot, guild, settings=None, limit: int = 10) -> str:
+    """Post or update the self-updating top-10 message.
+
+    The message is **edited** rather than reposted, so the board keeps its place
+    in the channel and can be pinned. If it was deleted, the stored id is cleared
+    and a fresh one is posted.
+    """
+    settings = settings or await database.get_voice_settings(str(guild.id))
+    if not settings or not settings['board_channel_id']:
+        raise ValueError("No channel is set for the daily board.")
+
+    channel = guild.get_channel(int(settings['board_channel_id']))
+    if channel is None or not channel.permissions_for(guild.me).send_messages:
+        raise ValueError("I can't post in the channel set for the daily board.")
+
+    period = clean_period(settings['board_period'])
+    rows = await database.get_voice_leaderboard(
+        str(guild.id), period_start(period), limit=limit
+    )
+    tz_name = await database.get_guild_timezone(str(guild.id))
+    local = discord.utils.utcnow().astimezone(_zone(tz_name))
+    embed = build_leaderboard_embed(
+        rows,
+        f"{period_label(period)} · updated daily at "
+        f"{settings['board_hour']:02d}:00 {local.tzname()}",
+        limit,
+    )
+
+    message_id = settings['board_message_id']
+    if message_id:
+        try:
+            message = await channel.fetch_message(int(message_id))
+            await message.edit(embed=embed)
+            await database.set_voice_board_state(
+                str(guild.id), str(message.id), local.date()
+            )
+            return 'updated'
+        except discord.NotFound:
+            message_id = None
+        except (discord.Forbidden, discord.HTTPException) as e:
+            raise ValueError(f"Discord wouldn't let me update the board: {e}")
+
+    try:
+        message = await channel.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException) as e:
+        raise ValueError(f"Discord wouldn't let me post the board: {e}")
+
+    await database.set_voice_board_state(
+        str(guild.id), str(message.id), local.date(), str(channel.id)
+    )
+    return 'posted'
+
+
 class VoiceLogCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -81,9 +177,11 @@ class VoiceLogCog(commands.Cog):
         self._lock = asyncio.Lock()
         self._settings_cache: dict = {}
         self.heartbeat.start()
+        self.daily_board.start()
 
     def cog_unload(self):
         self.heartbeat.cancel()
+        self.daily_board.cancel()
 
     # -- settings -----------------------------------------------------------
 
@@ -250,6 +348,46 @@ class VoiceLogCog(commands.Cog):
 
     @heartbeat.before_loop
     async def _before_heartbeat(self):
+        await self.bot.wait_until_ready()
+
+    # -- daily board --------------------------------------------------------
+
+    @tasks.loop(minutes=BOARD_CHECK_MINUTES)
+    async def daily_board(self):
+        """Refresh each guild's leaderboard message once per local day.
+
+        Driven by "has today's refresh happened yet" rather than by firing at an
+        exact minute, so a restart or an outage across the chosen hour still
+        produces one refresh — late, but not skipped.
+        """
+        try:
+            boards = await database.get_voice_boards()
+        except Exception as e:
+            print(f"❌ voicelog daily_board could not load boards: {e}")
+            return
+
+        for settings in boards:
+            try:
+                await self._maybe_refresh_board(settings)
+            except Exception as e:
+                print(f"❌ voicelog board for guild {settings['guild_id']} failed: {e}")
+
+    async def _maybe_refresh_board(self, settings):
+        guild = self.bot.get_guild(int(settings['guild_id']))
+        if guild is None:
+            return
+
+        tz_name = await database.get_guild_timezone(str(guild.id))
+        local = discord.utils.utcnow().astimezone(_zone(tz_name))
+        if local.hour < (settings['board_hour'] or 0):
+            return
+        if settings['board_updated_on'] == local.date():
+            return
+
+        await refresh_leaderboard_board(self.bot, guild, settings)
+
+    @daily_board.before_loop
+    async def _before_board(self):
         await self.bot.wait_until_ready()
 
     # -- shutdown -----------------------------------------------------------

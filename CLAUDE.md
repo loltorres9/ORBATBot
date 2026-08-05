@@ -289,6 +289,11 @@ Indexes on `(guild_id, started_at)` and a partial one on the open rows.
 |---|---|---|
 | `guild_id` | TEXT PK | |
 | `enabled` | INTEGER | 0/1 — **off by default**, nothing is recorded until an admin turns it on |
+| `board_enabled` | INTEGER | 0/1 — the self-updating top-10 message |
+| `board_channel_id` / `board_message_id` | TEXT | Where the board is and which message it is |
+| `board_period` | TEXT | Which window it shows — a key from `PERIODS` |
+| `board_hour` | INTEGER | Local hour it refreshes at |
+| `board_updated_on` | DATE | The local day it last refreshed — what makes it once-a-day |
 | `channel_id` | TEXT | Where finished visits are announced. NULL = statistics only |
 | `min_log_minutes` | INTEGER | Visits shorter than this are not announced |
 | `count_afk` / `count_solo` | INTEGER | 0/1 — both off by default |
@@ -987,8 +992,18 @@ runs on every reconnect, so it is written to be idempotent.
 - The leaderboard query counts open intervals too, via
   `COALESCE(heartbeat_at, started_at)`, so somebody currently in voice appears
   within one heartbeat rather than only after they leave.
-- **`build_leaderboard_embed()` lives in the cog**, not in `web/`, so the manual
-  post from the web page and any future scheduled post produce the same message.
+- **`build_leaderboard_embed()` and the `PERIODS` helpers live in the cog**, not in
+  `web/`: the daily board needs them too, and `web/` may depend on `cogs/` but not
+  the other way round. `web/voice.py` re-exports them, which is what its `__all__`
+  is for.
+- **The daily board is driven by "has today's refresh happened", not by firing at
+  a minute.** `board_updated_on` holds the local day it last ran, so a restart or
+  an outage across the chosen hour still produces one refresh — late, but never
+  skipped and never doubled. `daily_board` therefore only has to run often enough
+  to bound the lateness (`BOARD_CHECK_MINUTES`).
+- **The board message is edited, not reposted**, so it keeps its place and can be
+  pinned. A `NotFound` clears `board_message_id` and the next refresh posts a
+  fresh one.
   It names members instead of mentioning them — a leaderboard that pings ten
   people every time it is posted would be worse than useless.
 - `member_name` and `channel_name` are stored per row on purpose: a leaderboard

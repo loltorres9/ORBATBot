@@ -133,15 +133,70 @@
       </fieldset>
     {% endif %}
 
+    <h3>Daily top-10 board</h3>
+    <p class="hint">
+      One message that <strong>updates itself once a day</strong> instead of a new post
+      every time — pin it and it always shows the current standings. It is edited in
+      place, so it keeps its position in the channel.
+      {% if settings and settings.board_message_id and board_channel %}
+        It currently lives in <strong>#{{ board_channel.name }}</strong>{% if settings.board_updated_on %},
+        last refreshed {{ settings.board_updated_on }}{% endif %}.
+      {% endif %}
+    </p>
+
+    <label class="check">
+      <input type="checkbox" name="board_enabled" value="1"
+             {% if settings and settings.board_enabled %}checked{% endif %}>
+      <span><strong>Keep a daily top-10 message up to date</strong></span>
+    </label>
+
+    <div class="row">
+      <label class="field">
+        <span>Channel</span>
+        <select name="board_channel_id">
+          <option value="">Pick a channel…</option>
+          {% for channel in post_channels %}
+            <option value="{{ channel.id }}"
+              {% if settings and settings.board_channel_id and settings.board_channel_id|int == channel.id %}selected{% endif %}>#{{ channel.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Period shown</span>
+        <select name="board_period">
+          {% for key, label in periods %}
+            <option value="{{ key }}"
+              {% if settings and settings.board_period == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <label class="field">
+      <span>Refresh at (server time, {{ tz }})</span>
+      <select name="board_hour">
+        {% for hour in range(24) %}
+          <option value="{{ hour }}"
+            {% if (settings.board_hour if settings else 9) == hour %}selected{% endif %}>{{ '%02d:00'|format(hour) }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint">
+        Missed because the bot was down? It catches up as soon as it is back —
+        once per day, never twice.
+      </span>
+    </label>
+
     <div class="actions">
-      <button class="button primary" type="submit">Save</button>
+      <button class="button primary" type="submit">Save settings</button>
+      <span class="hint">Saving with the board on refreshes it straight away.</span>
     </div>
   </form>
 
-  <h2>Post the top 10 to Discord</h2>
+  <h2>Post the top 10 once</h2>
   <p class="hint">
-    Sends the leaderboard as a message, once, right now. Members are named rather
-    than mentioned, so nobody gets pinged.
+    Sends the leaderboard as a separate message, once, right now — independent of
+    the daily board above. Members are named rather than mentioned, so nobody gets
+    pinged.
   </p>
   <form class="form" method="post" action="/g/{{ guild.id }}/voice/post">
     <input type="hidden" name="csrf" value="{{ csrf }}">

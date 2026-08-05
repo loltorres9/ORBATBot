@@ -249,6 +249,18 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # The self-updating top-10 board, added after voice tracking shipped.
+        for column, definition in (
+            ('board_enabled', 'INTEGER NOT NULL DEFAULT 0'),
+            ('board_channel_id', 'TEXT'),
+            ('board_message_id', 'TEXT'),
+            ('board_period', "TEXT NOT NULL DEFAULT '7'"),
+            ('board_hour', 'INTEGER NOT NULL DEFAULT 9'),
+            ('board_updated_on', 'DATE'),
+        ):
+            await db.execute(
+                f'ALTER TABLE voice_settings ADD COLUMN IF NOT EXISTS {column} {definition}'
+            )
         # Recurrence, added after the events tables shipped
         await db.execute('''
             ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence TEXT
@@ -1076,7 +1088,8 @@ async def get_voice_settings(guild_id: str):
 
 _VOICE_SETTING_COLUMNS = (
     'enabled', 'channel_id', 'min_log_minutes', 'count_afk', 'count_solo',
-    'excluded_channels',
+    'excluded_channels', 'board_enabled', 'board_channel_id', 'board_period',
+    'board_hour',
 )
 
 
@@ -1240,3 +1253,33 @@ async def save_invite_labels(guild_id: str, labels: dict, remove: list = None):
                     'DELETE FROM invite_labels WHERE guild_id = $1 AND code = ANY($2::text[])',
                     guild_id, list(remove),
                 )
+
+
+async def get_voice_boards() -> list:
+    """Every guild whose self-updating leaderboard is switched on."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            """SELECT * FROM voice_settings
+               WHERE board_enabled = 1 AND board_channel_id IS NOT NULL"""
+        )
+
+
+async def set_voice_board_state(guild_id: str, message_id: str = None,
+                                updated_on=None, channel_id: str = None):
+    """Remember which message the board is, and which local day it last showed.
+
+    Passing message_id=None clears it, which is how a deleted message makes the
+    next refresh post a fresh one.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            """UPDATE voice_settings
+               SET board_message_id = $2,
+                   board_channel_id = COALESCE($4, board_channel_id),
+                   board_updated_on = COALESCE($3, board_updated_on),
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE guild_id = $1""",
+            guild_id, message_id, updated_on, channel_id,
+        )
