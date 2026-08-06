@@ -156,15 +156,6 @@ async def delete(bot: commands.Bot, record, delete_message: bool) -> list:
     return notes
 
 
-async def preview(record, fields: list) -> dict:
-    """What the templates need to draw the embed the way Discord will show it."""
-    return {
-        'record': record,
-        'fields': fields,
-        'color': record['color'] or embedlib.DEFAULT_COLOR,
-    }
-
-
 def form_values(record, fields: list) -> dict:
     """Prefill the builder form from a stored embed."""
     values = {name: record[name] or '' for name in (

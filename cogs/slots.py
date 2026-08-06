@@ -170,11 +170,6 @@ def _can_action_request(approver: discord.Member, unit_role: Optional[str]) -> b
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # Shared slot submission logic
 # ---------------------------------------------------------------------------
 
@@ -771,10 +766,6 @@ class ApprovalView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
-
-# ---------------------------------------------------------------------------
-# Live ORBAT view — slot select menus + fallback button, rebuilt on each update
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Persistent "Request a Slot" button attached to the ORBAT embed

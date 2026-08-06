@@ -6,12 +6,20 @@ services:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - GOOGLE_CREDENTIALS=${GOOGLE_CREDENTIALS}
       - DATABASE_URL=postgresql://orbatuser:${DB_PASSWORD}@db:5432/orbatbot
+      # Join/leave announcements. Only set this to 1 once the privileged
+      # "Server Members Intent" is ticked in the Developer Portal — requesting an
+      # ungranted intent stops the bot from starting at all.
+      - MEMBER_EVENTS=${MEMBER_EVENTS:-0}
       # Web UI — empty values simply leave it switched off
       - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID:-}
       - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET:-}
       - WEB_SECRET_KEY=${WEB_SECRET_KEY:-}
       - WEB_BASE_URL=${WEB_BASE_URL:-}
+      - WEB_BRAND=${WEB_BRAND:-}
+      - WEB_ENABLED=${WEB_ENABLED:-1}
       - WEB_PORT=8080
+      # Lets /restart go through the Railway API; harmless and unused elsewhere.
+      - RAILWAY_API_TOKEN=${RAILWAY_API_TOKEN:-}
     # The site is only reachable once the three variables above are set.
     ports:
       - "${WEB_PORT:-8080}:8080"

@@ -97,10 +97,10 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 | `name` | TEXT | Operation name (from sheet) |
 | `sheet_url` | TEXT | Full Google Sheets URL |
 | `sheet_id` | TEXT | Extracted sheet ID |
-| `squad_col` | INTEGER | Column index of squad header |
-| `role_col` | INTEGER | Column index of role header |
-| `status_col` | INTEGER | Column index of status header |
-| `assigned_col` | INTEGER | Column index of assigned-to header |
+| `squad_col` | INTEGER | **Always NULL** — see [Google Sheets Integration](#google-sheets-integration-utilssheetspy) |
+| `role_col` | INTEGER | **Always NULL** |
+| `status_col` | INTEGER | **Always NULL** |
+| `assigned_col` | INTEGER | **Always NULL** |
 | `is_active` | INTEGER | 1 = active, 0 = archived. Only one active per guild |
 | `event_time` | TIMESTAMP | Naive UTC. NULL if not set |
 | `reminder_minutes` | INTEGER | Default 30 |
@@ -407,6 +407,11 @@ Cancels current slot (pending or approved — if approved, clears the sheet cell
 **`/leave-operation`**
 Shows a confirmation button. On confirm: cancels the request, clears sheet if approved, DMs the member.
 
+**`/post-orbat [channel]`** (Admin — `default_permissions(manage_guild=True)`)
+Posts a fresh ORBAT embed to the specified channel (defaults to current). Saves
+message ID to DB. **It lives in `slots.py`, not `admin.py`**, next to
+`_build_orbat_embed()` and `OrbatRequestButton` — the only admin command that does.
+
 ### Admin/Unit Leader commands (`cogs/admin.py`)
 
 **`/setup-slots <sheet_url> [event_time] [reminder_minutes]`**
@@ -424,9 +429,6 @@ Dropdown of active (pending + approved) slots. On select: clears sheet cell (app
 
 **`/clear-requests`**
 Cancels all pending requests for the active operation.
-
-**`/post-orbat [channel]`**
-Posts a fresh ORBAT embed to the specified channel (defaults to current). Saves message ID to DB.
 
 **`/set-timezone <tz>`**
 Stores IANA timezone in `guild_settings`. Used when parsing all event time inputs.
@@ -496,21 +498,36 @@ Nothing is lost either way: state lives in PostgreSQL and every view is re-regis
 
 ## Google Sheets Integration (`utils/sheets.py`)
 
-Two sheet formats supported:
+**One format is implemented: the ORBAT-style sheet**, where slots are cell values
+rather than rows under column headers. There is no header detection anywhere in
+this module — a sheet without `<Insert Name>` markers makes `load_slots()` raise
+"No available slots found", whatever its columns are called.
 
-**Tabular format** — columns with recognisable headers:
-- Squad/Unit: header contains squad, unit, element, group, platoon, team, section, callsign
-- Role/Position: header contains role, position, slot, job, rank, billet
-- Status (optional): row hidden if not Available/Open/Free/blank
-- Assigned To (optional): row hidden if has a value
+- Only `sheet1` is read; the operation name is the **spreadsheet title**
+- A **slot entry** is a cell starting with `1.` or `1-` (`_SLOT_PREFIX`; a digit
+  after the hyphen means `1-1 Rangers`, a squad id, not a slot)
+- A **squad header** is the nearest non-slot cell above in the same column
+  (`_is_squad_header()` rejects radio frequencies, `Slots:`-style headings,
+  sentences and anything under 3 characters)
+- **Available:** the assignment cell contains `<Insert Name>`
+- **Filled:** `[TAG] Name`, `[] Name`, `Role — Name`, or a plain name in a cell
+  to the right
+- **On assign:** `<Insert Name>` → the member's name, `[]` → `[UNIT_TAG]`, cell bolded
+- **On clear:** restored to `[] <Insert Name>` (strips the unit tag, unbolds)
 
-**ORBAT-style format** — slots as cell values:
-- Available: cell contains `<Insert Name>`
-- Filled: `[TAG] Name` or `[] Name`
-- On assign: writes `[UNIT_TAG] MemberName`
-- On clear: restores to `[] <Insert Name>` (strips unit tag)
+**Split cells:** when a slot entry is found, up to 4 columns to the right in the
+same row are searched for the assignment cell, stopping at the next slot entry so
+one squad's column can't steal the neighbouring one's cell.
 
-`load_slots()` returns available slots only. `load_all_slots()` returns everything (used for ORBAT display). Both run in a thread executor (blocking gspread calls).
+`load_slots()` returns available slots only. `load_all_slots()` returns everything
+plus `assigned_to` and `col_idx` (used for the ORBAT display and its two-column
+layout). Both run in a thread executor — gspread blocks.
+
+**`squad_col` / `role_col` / `status_col` / `assigned_col` on `operations` are
+always NULL.** `load_slots()` returns them as `None` because per-cell updates make
+them meaningless here; they are the vestige of a tabular reader that no longer
+exists. Nothing reads them back. Re-add header detection before giving them
+meaning again.
 
 ---
 
@@ -523,6 +540,11 @@ Built by `_build_orbat_embed()` in `slots.py`:
 - Slot indicators: 🟢 open, 🟡 pending, 🔴 filled
 - Max 25 embed fields (Discord limit); capped at 8 rows in two-column layout
 - Updated by `_update_orbat()` — fetches stored message ID, re-reads sheet, edits message
+
+**A squad named `Reservists` is displayed but left out of every count.** The
+header line counts the slots people are expected to fill, and a reserve bench
+would otherwise make the operation look permanently under-strength. The match is
+case-insensitive on the exact squad name.
 
 ---
 
@@ -538,20 +560,29 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
 ## Deployment
 
 ### Railway (production)
-- Bot service: `python bot.py` (via Procfile)
+- Bot service: `python -u bot.py` (`railway.json` `startCommand`; the `Procfile`
+  declares the same as a `worker` process)
 - PostgreSQL service: `DATABASE_URL` injected automatically
 - Auto-deploys on push to `main` — the single deployment branch. There is no
   `master`; an earlier one was folded into `main` and deleted, so never
   recreate it or target a PR at it.
 
 ### Docker (self-hosted)
-- `docker-compose.yml`: bot + postgres:16 containers
+- `docker-compose.yml`: bot + postgres:16-alpine containers
 - Named volume `postgres_data` persists DB across restarts
 - `.env` file: `DISCORD_TOKEN`, `GOOGLE_CREDENTIALS`, `DB_PASSWORD`
+- **Every optional variable has to be listed in the compose `environment:` block
+  to reach the container.** A variable that only exists in `.env` is read by
+  compose for interpolation, not passed through — so anything added to
+  `.env.example` needs a line here too, or it silently does nothing under Docker.
 
 ### Startup sequence
-1. `init_db()` — creates/migrates schema
-2. Load `cogs.slots`, `cogs.admin`, `cogs.gameroles`, and `cogs.events`. Each is wrapped in its own `try`, so one cog failing to import doesn't take the others down
+1. `init_db()`, then `close_dangling_voice_sessions()` — schema first, then voice
+   intervals left open by a crash are closed at their last heartbeat before
+   anything new is recorded
+2. Load `cogs.slots`, `cogs.admin`, `cogs.gameroles`, `cogs.events`, `cogs.voicelog`
+   and `cogs.memberlog`. Each is wrapped in its own `try`, so one cog failing to
+   import doesn't take the others down
 3. Re-register persistent views:
    - `OrbatRequestButton` and `GameRolePanelView` — one global instance each
    - one `ApprovalView` per `pending` request
@@ -571,10 +602,10 @@ Staged build toward Apollo parity. Done: sign-ups, reminders, editing, cancellin
 
 ### Commands
 
-**`/event-create <title> <start_time> [description] [duration] [location] [channel] [mention] [reminder] [image_url]`** (Admin or Unit Leader)
+**`/event-create <title> <start_time> [description] [duration] [location] [channel] [mention] [reminder] [image_url] [repeat] [repeat_until] [responses]`** (Admin or Unit Leader)
 Parses `start_time` with `_parse_event_time()` from `admin.py` in the guild's timezone, rejects times in the past, posts the event and registers its view. If the send fails (`Forbidden`, or `HTTPException` from a bad `image_url`) the row is set to `cancelled` so it can't linger as a phantom event.
 
-**`/event-edit <event> [title] [start_time] [description] [duration] [location] [reminder]`** (organiser or admin)
+**`/event-edit <event> [title] [start_time] [description] [duration] [location] [reminder] [repeat] [repeat_until] [responses] [mention]`** (organiser or admin)
 Only the passed fields change — `update_event()` uses `COALESCE`, so omitted fields keep their value. Changing the time resets `reminder_fired` to 0 so the reminder fires again for the new time.
 
 **`/event-cancel <event> [reason] [stop_series]`** (organiser or admin)
