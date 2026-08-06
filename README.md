@@ -49,6 +49,7 @@ Operation slot requests, approvals and the live ORBAT board, driven from a Googl
 - Members are DMed on submission, approval and denial
 - Operation reminders DM every approved member and ping `#orbat` before the start
 - Availability is re-validated at selection time, so two people can't take the same slot
+- A squad called **Reservists** is shown on the ORBAT but left out of the open / pending / filled counts, so a reserve bench doesn't make the operation look under-strength
 
 ### 📅 Events
 
@@ -158,23 +159,36 @@ The unit roles and `Unit Leader` can never be turned into game roles — the bot
 
 ## Sheet Format
 
-Your Google Sheet needs at minimum **two columns** with recognisable headers:
+The bot reads **ORBAT-style sheets**, where each slot is a cell rather than a row
+under column headers. It reads the **first tab only**, and the operation name is
+the spreadsheet's title.
 
-| Squad / Unit | Role / Position | Status    | Assigned To |
-|--------------|-----------------|-----------|-------------|
-| Squad 1      | Squad Lead      | Available |             |
-| Squad 1      | Rifleman (AR)   | Available |             |
-| Squad 1      | Medic           | Available |             |
-| Squad 2      | Squad Lead      | Available |             |
+|   | A                              | B |
+|---|--------------------------------|---|
+| 1 | **1-1 Alpha**                  |   |
+| 2 | 1. Squad Leader                | `[] <Insert Name>` |
+| 3 | 2. Rifleman (AR)               | `[TFP] Panzer` |
+| 4 | 3. Medic - `[] <Insert Name>`  |   |
 
-- **Squad / Unit** — the group name (header must contain: squad, unit, element, group, platoon, team, section, or callsign)
-- **Role / Position** — the slot name (header must contain: role, position, slot, job, rank, or billet)
-- **Status** *(optional)* — rows where this is not `Available`, `Open`, `Free`, or blank are hidden from the menu
-- **Assigned To** *(optional)* — rows with a value here are treated as already taken
+- **Squad headers** — any cell that isn't a slot line, e.g. `1-1 Alpha` or
+  `Command`. Every slot below it in the same column belongs to it, until the next
+  header. Radio-frequency cells (`152 CHN : 1`), headings ending in `:`, and
+  sentences are skipped, so they don't become squads by accident.
+- **Slot lines** start with a number and a `.` or `-`, e.g. `1. Squad Leader`.
+  (`1-1 Alpha` is *not* a slot — a digit after the hyphen means it's a squad id.)
+- **Available slots** contain **`<Insert Name>`** — that exact text is what the bot
+  looks for. It can be in the same cell as the role, or in a cell up to four
+  columns to its right.
+- **Filled slots** are `[TAG] Name`, `[] Name`, `Role — Name`, or just a name in
+  the cell to the right.
+- **On approval** the bot writes `[UNIT] MemberName` in bold; **on clearing** it
+  restores `[] <Insert Name>` and removes the unit tag and the bold.
 
-The bot also supports **ORBAT-style sheets** where slots appear as cell values (e.g. `1. Squad Lead`). Available slots contain `<Insert Name>`; filled slots use formats like `[TAG] Name` or `[] Name`. When a slot is cleared the unit tag is removed and the cell is restored to `[] <Insert Name>`.
-
-> You don't have to rename your columns exactly — the bot looks for keywords anywhere in the header cell.
+> There is no header-row/column layout — a sheet of `Squad | Role | Status`
+> columns is not read. If `/setup-slots` says *"No available slots found"*, the
+> sheet has no `<Insert Name>` cells; that exact text is what marks a slot as open.
+> `/debug-slots` shows every slot the bot found, with its cell reference.
+>
 > Share the sheet with your service account email before running `/setup-slots`.
 
 ---
@@ -831,7 +845,7 @@ Invite attribution works by comparing each invite's use counter before and after
 
 ### Voice time
 
-**🔊 Voice time** records how long members spend in voice channels and shows a leaderboard for the last 7, 30 or 90 days, or all time, plus which channels see the most use. Every member can see it; only admins can change the settings.
+**🔊 Voice time** records how long members spend in voice channels and shows a leaderboard for the last 24 hours, 7, 30 or 90 days, or all time, plus which channels see the most use. Every member can see it; only admins can change the settings.
 
 **It is off until an admin switches it on.** Nothing is recorded before that.
 

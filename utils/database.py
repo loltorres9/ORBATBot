@@ -414,15 +414,6 @@ async def clear_pending_requests(operation_id: int) -> int:
         return int(result.split()[-1])
 
 
-async def get_approved_requests(operation_id: int) -> list:
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        return await db.fetch(
-            "SELECT * FROM requests WHERE operation_id = $1 AND status = 'approved'",
-            operation_id,
-        )
-
-
 async def get_active_requests(operation_id: int) -> list:
     """Return all pending and approved requests for an operation."""
     pool = await get_pool()
