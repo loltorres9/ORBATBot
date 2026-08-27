@@ -98,6 +98,13 @@ class ORBATBot(commands.Bot):
             print("❌ Failed to load cogs.memberlog:")
             traceback.print_exc()
 
+        try:
+            await self.load_extension('cogs.purge')
+            print("✅ Loaded cogs.purge")
+        except Exception:
+            print("❌ Failed to load cogs.purge:")
+            traceback.print_exc()
+
         registered = [c.name for c in self.tree.get_commands()]
         print(f"Commands registered in tree: {registered}")
 
