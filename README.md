@@ -102,6 +102,7 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 | `/restart` | Admin | Restart the bot container on Railway |
 | `/debug-slots [squad]` | Admin | Show the raw slot data the bot reads from the sheet, for diagnosing missing slots |
 | `/archive-old-approvals` | Admin | One-time migration of pre-existing approved messages into `#approval-archive` |
+| `/purge [amount] [since]` | Manage Messages | Delete messages in the channel it is run in — the last *N*, everything since a date or an age, or both |
 
 ### Across the whole bot
 
@@ -148,6 +149,7 @@ Editing and cancelling go by **who created the event**, not by rank — one Unit
 | Command | Members | Unit Leaders | Admins |
 |---|---|---|---|
 | `/set-timezone`, `/sync`, `/restart`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
+| `/purge` | ❌ | ❌ | ✅ (anyone with **Manage Messages** in the channel) |
 
 **Unit roles:** `2nd USC`, `CNTO`, `PXG`, `TFP`, `SKUA`
 
@@ -448,6 +450,32 @@ Shows which sheet is currently loaded and links to it.
 ```
 
 Force-syncs slash commands with Discord and refreshes the live ORBAT embed. Only needed if commands appear missing after a deployment.
+
+```
+/purge amount: 50
+/purge since: 2h
+/purge since: 25/06/2025
+/purge amount: 100 since: 7d
+```
+
+Deletes messages **in the channel the command is run in**. Give it a count, a
+point in time, or both — with both, the count is a cap on the window.
+
+- `amount` — the newest 1–1000 messages
+- `since` — an age (`30m`, `2h`, `7d`, `1w`), a date (`25/06/2025`), or a date and time (`25/06/2025 19:00`), read in the server's configured timezone
+
+Nothing is deleted until you confirm: the bot first shows how many messages
+match, the time span they cover, and whether any of them are pinned. **Deleted
+messages cannot be recovered.**
+
+Discord only allows bulk deletion of messages younger than **14 days**. Anything
+older has to be removed one at a time, which is slow, so at most 200 of those go
+per run — the reply says how many were left over, and running `/purge` again
+continues where it stopped.
+
+Needs **Manage Messages** in that channel, both for you and for the bot. Every
+run is logged with the requesting user, and the bulk deletions carry your name
+in the server's audit log.
 
 ```
 /restart
