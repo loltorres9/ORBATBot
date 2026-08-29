@@ -1,0 +1,4 @@
+pypdf>=4.0
+
+# Optional: Dateien aus dem Explorer ins Fenster ziehen
+# tkinterdnd2>=0.4
