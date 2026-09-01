@@ -7,8 +7,11 @@ helpers, the way `web/service.py` does for events. A `ValueError` raised here is
 a message meant for the user and is shown on the form.
 """
 
+import asyncio
+from datetime import datetime, timezone
+
 from cogs.slots import UNIT_ROLES
-from utils import database, orbat
+from utils import database, orbat, sheets
 
 MAX_NAME = 120
 MAX_DESCRIPTION = 300
@@ -177,3 +180,66 @@ async def stored_board(orbat_id: int):
     if not squads:
         return None
     return orbat.build_board(squads, await database.get_orbat_nets(orbat_id))
+
+
+# ---------------------------------------------------------------------------
+# Exporting to a Google Sheet
+# ---------------------------------------------------------------------------
+
+# Writing a whole ORBAT is more work than the single-cell updates the rest of
+# `utils/sheets.py` does, so it gets more room than their 30 s.
+EXPORT_TIMEOUT = 60
+
+
+async def export(guild, record, sheet_url: str, with_bookings: bool) -> str:
+    """Write this ORBAT into a new tab of the given sheet, and name the tab.
+
+    One-way, always: a new tab is created and no existing one is touched, so an
+    export can never overwrite the sheet another operation is running on.
+    """
+    sheet_url = (sheet_url or '').strip()
+    if not sheet_url:
+        raise ValueError('Paste the Google Sheets URL to export into.')
+
+    operation = None
+    if with_bookings:
+        operation = await database.get_active_operation(str(guild.id))
+        if not operation or operation['orbat_id'] != record['id']:
+            raise ValueError(
+                'The active operation is not running on this ORBAT, so there are '
+                'no bookings to export. Untick the box to export the empty roster.'
+            )
+
+    squads = await database.get_orbat_structure(
+        record['id'], operation_id=operation['id'] if operation else None
+    )
+    if not squads:
+        raise ValueError('This ORBAT has no squads yet.')
+    if not with_bookings:
+        # Without an operation `get_orbat_structure()` reports a booking from any
+        # operation at all; an empty roster is what "no bookings" has to mean.
+        for squad in squads:
+            for slot in squad['slots']:
+                slot['booking'] = None
+
+    nets = await database.get_orbat_nets(record['id'])
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')
+    title = f"{record['name']} {stamp}"
+
+    loop = asyncio.get_event_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(
+                None, sheets.export_orbat, sheet_url, title, squads, nets
+            ),
+            timeout=EXPORT_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise ValueError(f'Google did not answer within {EXPORT_TIMEOUT} seconds.')
+    except ValueError:
+        raise                       # already a message for the user
+    except Exception as e:
+        raise ValueError(
+            f'Could not write to that sheet — check the link, and that it is '
+            f'shared with the service account as an editor. ({e})'
+        )

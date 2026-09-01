@@ -192,6 +192,26 @@ A leading number ("1. Rifleman") is stripped.</pre>
   <button class="button" type="submit">Copy</button>
 </form>
 
+<h2 style="margin-top:32px">Export to a Google Sheet</h2>
+<p class="hint">Writes this roster into a <strong>new tab</strong> of the sheet you
+  name — an existing tab is never touched, and nothing is read back. The sheet has
+  to be shared with the bot's service account as an editor.</p>
+<form class="form" method="post" action="/g/{{ guild.id }}/orbats/{{ record.id }}/export">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="field">
+    <span>Google Sheets URL</span>
+    <input name="sheet_url" required
+           placeholder="https://docs.google.com/spreadsheets/d/…/edit">
+  </label>
+  <label class="check">
+    <input type="checkbox" name="with_bookings" value="1">
+    <span>Include who is booked in — only if the active operation runs on this ORBAT</span>
+  </label>
+  <div class="actions">
+    <button class="button" type="submit">Export</button>
+  </div>
+</form>
+
 <h2 style="margin-top:28px">Delete</h2>
 <form class="inlineform" method="post" action="/g/{{ guild.id }}/orbats/{{ record.id }}/delete"
       onsubmit="return confirm('Delete “{{ record.name }}” and all of its squads and slots?')">

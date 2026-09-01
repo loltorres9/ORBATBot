@@ -358,3 +358,98 @@ def assign_slot(sheet_id: str, row: int, col: int, member_name: str, unit_role: 
         worksheet.format(cell_a1, {'textFormat': {'bold': True}})
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# One-way export
+# ---------------------------------------------------------------------------
+#
+# Writing an ORBAT out to a spreadsheet, for briefings, Zeus, or anyone who
+# would rather look at a sheet. Nothing reads it back: the export always creates
+# a **new tab** and never touches an existing one, so it cannot overwrite the
+# sheet a live operation is running on. (`load_slots()` only ever reads the
+# first tab, which an exported one is not.)
+
+# Sheets caps a tab title at 100 characters.
+MAX_TAB_TITLE = 100
+
+# Where the two columns of squads land. Column C is left empty as a gutter,
+# mirroring how these sheets are laid out by hand.
+_LEFT, _RIGHT = 1, 4
+
+
+def _squad_block(squad: dict) -> list:
+    """One squad as a list of (role_cell, assignment_cell) pairs, header first."""
+    unit = squad.get('reserved_unit')
+    rows = [(f"{squad['name']} [{unit}]" if unit else squad['name'], '')]
+    if squad.get('radio'):
+        rows.append((squad['radio'], ''))
+    for number, slot in enumerate(squad['slots'], start=1):
+        booking = slot.get('booking')
+        if booking:
+            tag = booking.get('unit_role') or ''
+            assignment = f"[{tag}] {booking['member_name']}"
+        else:
+            assignment = '[] <Insert Name>'
+        rows.append((f"{number}. {slot['role_name']}", assignment))
+    rows.append(('', ''))
+    return rows
+
+
+def export_orbat(sheet_url: str, tab_title: str, squads: list, nets: list) -> str:
+    """Write the ORBAT into a new tab and return the tab's title.
+
+    The layout is the one `load_slots()` understands — a squad header, then
+    `N. Role` beside `[] <Insert Name>` — so the tab reads like the sheets these
+    units already keep by hand. It is still one-way: the bot reads the first tab
+    only, so an export is never picked up on its own.
+    """
+    client = get_client()
+    spreadsheet = client.open_by_key(extract_sheet_id(sheet_url))
+
+    title = tab_title[:MAX_TAB_TITLE]
+    taken = {ws.title for ws in spreadsheet.worksheets()}
+    if title in taken:
+        # Never overwrite. A second export in the same minute gets a suffix.
+        for suffix in range(2, 100):
+            candidate = f"{title[:MAX_TAB_TITLE - 4]} ({suffix})"
+            if candidate not in taken:
+                title = candidate
+                break
+
+    left = [_squad_block(s) for s in squads if not s['column_side']]
+    right = [_squad_block(s) for s in squads if s['column_side']]
+
+    cells = []
+
+    def place(blocks, column):
+        row = 1
+        for block in blocks:
+            for role, assignment in block:
+                if role:
+                    cells.append(gspread.Cell(row, column, role))
+                if assignment:
+                    cells.append(gspread.Cell(row, column + 1, assignment))
+                row += 1
+        return row
+
+    bottom = max(place(left, _LEFT), place(right, _RIGHT))
+
+    if nets:
+        row = bottom + 1
+        cells.append(gspread.Cell(row, _LEFT, 'RADIO NETS'))
+        for net in nets:
+            row += 1
+            channel = net['channel'] or ''
+            name = f"({net['name']})" if net['inactive'] else net['name']
+            cells.append(gspread.Cell(row, _LEFT, name))
+            if channel:
+                cells.append(gspread.Cell(row, _LEFT + 1, channel))
+        bottom = row
+
+    worksheet = spreadsheet.add_worksheet(
+        title=title, rows=max(bottom + 2, 20), cols=_RIGHT + 2
+    )
+    if cells:
+        worksheet.update_cells(cells)
+    return title

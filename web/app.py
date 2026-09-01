@@ -579,6 +579,27 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         note = await orbat_service.apply(orbat_id, text, nets_text, checked)
         return redirect(request, f"/g/{guild_id}/orbats/{orbat_id}", 'ok', note)
 
+    @app.post('/g/{guild_id}/orbats/{orbat_id}/export', response_class=HTMLResponse)
+    async def orbat_export(request: Request, guild_id: str, orbat_id: int):
+        context = await orbat_context(request, guild_id, orbat_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            tab = await orbat_service.export(
+                context['guild'], context['record'], form.get('sheet_url'),
+                bool(form.get('with_bookings')),
+            )
+        except ValueError as e:
+            return await orbat_editor(
+                request, context,
+                await orbat_service.editor_text(context['record']),
+                await orbat_service.editor_nets_text(context['record']),
+                error=str(e), status=400,
+            )
+        return redirect(request, f"/g/{guild_id}/orbats/{orbat_id}", 'ok',
+                        f'Exported into a new tab named "{tab}".')
+
     @app.post('/g/{guild_id}/orbats/{orbat_id}/duplicate')
     async def orbat_duplicate(request: Request, guild_id: str, orbat_id: int):
         context = await orbat_context(request, guild_id, orbat_id)

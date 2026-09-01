@@ -795,7 +795,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
-| ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, and a preview of the board |
+| ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, a preview of the board, and a one-way export to a Google Sheet |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
 | Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
@@ -958,6 +958,16 @@ A line starting with `-` is a net that exists in the plan but is not in use this
 **Preview** shows the board exactly as Discord would render it, without saving. It also warns you before you hit a limit Discord enforces silently: more than 8 rows of squads, a squad too long for one field, or an embed over 6000 characters. **Save** writes it.
 
 Editing an ORBAT never quietly drops anyone. Renaming a slot keeps whoever is booked into it; reordering lines changes nothing at all. Anything that would take someone off the roster — or move them onto a differently named role — stops at a confirmation page that names them and which operation they are in, and you have to click **Save anyway**.
+
+### Exporting to a Google Sheet
+
+At the bottom of the editor there is an **Export to a Google Sheet** form. Paste the sheet's URL and the roster is written into a **new tab**, named after the ORBAT and the time. An existing tab is never touched, so you cannot overwrite a sheet another operation is running on; a second export with the same name gets a `(2)` suffix instead of replacing the first.
+
+Tick **Include who is booked in** to export the current operation's board rather than the empty roster. That only works while the active operation actually runs on this ORBAT.
+
+The layout is the one the bot itself understands — squad header, `1. Squad Leader` beside `[] <Insert Name>` — so the tab looks like the sheets you already keep by hand, and if you ever move it to first position the bot can read it as a sheet-backed operation again.
+
+It is strictly one-way: nothing is read back, no link is stored, and there is no sync. The sheet has to be shared with the service account as an editor, which means this is the one ORBAT feature that does need `GOOGLE_CREDENTIALS`.
 
 ### Running an operation on an ORBAT
 

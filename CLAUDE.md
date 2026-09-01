@@ -945,6 +945,7 @@ GET  /g/{guild}/orbats                  admin — ORBAT list, POST to create
 GET  /g/{guild}/orbats/{id}             the roster editor
 POST /g/{guild}/orbats/{id}             action=preview | save | confirm
 POST /g/{guild}/orbats/{id}/duplicate   copy the structure, not the bookings
+POST /g/{guild}/orbats/{id}/export      admin — write it into a new sheet tab
 POST /g/{guild}/orbats/{id}/delete      cascades to squads and slots
 GET  /g/{guild}/embeds                  admin — saved embeds
 GET  /g/{guild}/embeds/new              builder          POST to save a draft
@@ -1040,8 +1041,6 @@ What remains, in the order it makes sense to do it:
   reminder loop), so it needs to become nullable with each of those guarded
 - Click-a-slot-to-request on the web, posting to `#slot-approvals` as today,
   then approve/deny from the web
-- A one-way export of an ORBAT into a Google Sheet, writing a new tab so it can
-  never overwrite one the bot reads
 - Importing an existing sheet into an ORBAT once, via `sheets.load_all_slots()`,
   mapping live requests onto the new slots by `slot_label`
 - An operation archive
@@ -1161,6 +1160,27 @@ replaced on save; folding it into the roster text would put a second grammar
 into the one parser that must not get slots wrong. Their problems are also
 reported in their own panel, so a line number means something: line 3 of the
 roster and line 3 of the nets are different places.
+
+### Exporting to a sheet
+
+`sheets.export_orbat()` writes the roster into a **new tab** of a spreadsheet
+and never touches an existing one — that is the whole safety story, because an
+export must not be able to overwrite the sheet another operation is running on.
+A title collision gets a `(2)` suffix rather than replacing anything.
+
+The layout is the one `load_slots()` reads: a squad header, then `N. Role`
+beside `[] <Insert Name>` or `[TAG] Name`. Two consequences worth knowing:
+
+- Moved to first position, an exported tab reads back **exactly** like a sheet
+  the bot had been filling in itself — `assign_slot()` writes `[TAG] Name` into
+  the cell the same way, and `_extract_role()` keeps the number prefix on
+  purpose so two `Rifleman` slots stay apart.
+- It is still one-way. `load_slots()` only ever reads `sheet1`, so an exported
+  tab is never picked up on its own; nothing is stored about the export either.
+
+The unit rides in the squad header (`1-1 Alpha [TFP]`) and the radio goes on its
+own line below it, where `_is_squad_header()` skips it as a frequency — so the
+squad name above stays the header for the slots underneath.
 
 ### The board, and Discord's limits
 
