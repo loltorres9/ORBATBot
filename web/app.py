@@ -20,6 +20,7 @@ from web import (
     auth,
     embeds as embed_service,
     invites as invite_service,
+    orbat as orbat_service,
     roles as roles_service,
     service,
     voice as voice_service,
@@ -480,6 +481,125 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         except ValueError as e:
             return await roles_page(request, guild_id, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/roles", 'ok', note)
+
+    # -- ORBATs -------------------------------------------------------------
+
+    def require_orbat_admin(context: dict):
+        if not context['is_admin']:
+            raise Forbidden("Only a server admin can build ORBATs.")
+
+    async def orbat_context(request: Request, guild_id: str, orbat_id: int) -> dict:
+        context = await guild_context(request, guild_id)
+        require_orbat_admin(context)
+        record = await database.get_orbat(orbat_id)
+        if record is None or record['guild_id'] != str(context['guild'].id):
+            raise Forbidden("No such ORBAT on this server.")
+        context['record'] = record
+        return context
+
+    async def orbat_list_page(request: Request, context: dict, error: str = None,
+                              status: int = 200):
+        return render(request, 'orbats.html', {
+            **context,
+            'orbats': await database.get_guild_orbats(str(context['guild'].id)),
+            'error': error,
+        }, status=status)
+
+    async def orbat_editor(request: Request, context: dict, text: str,
+                           checked: dict = None, pending_text: str = None,
+                           error: str = None, status: int = 200):
+        return render(request, 'orbat_form.html', {
+            **context,
+            'text': text,
+            'result': (checked or {}).get('result'),
+            'diff': (checked or {}).get('diff'),
+            'board': (checked or {}).get('board'),
+            'summary': (checked or {}).get('summary'),
+            'pending_text': pending_text,
+            'stored': await orbat_service.stored_board(context['record']['id']),
+            'error': error,
+        }, status=status)
+
+    @app.get('/g/{guild_id}/orbats', response_class=HTMLResponse)
+    async def orbat_list(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_orbat_admin(context)
+        return await orbat_list_page(request, context)
+
+    @app.post('/g/{guild_id}/orbats')
+    async def new_orbat(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_orbat_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            orbat_id = await orbat_service.create(
+                context['guild'], context['member'],
+                form.get('name'), form.get('description'),
+            )
+        except ValueError as e:
+            return await orbat_list_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/orbats/{orbat_id}", 'ok',
+                        'ORBAT created — now write the roster.')
+
+    @app.get('/g/{guild_id}/orbats/{orbat_id}', response_class=HTMLResponse)
+    async def orbat_edit(request: Request, guild_id: str, orbat_id: int):
+        context = await orbat_context(request, guild_id, orbat_id)
+        return await orbat_editor(
+            request, context, await orbat_service.editor_text(context['record'])
+        )
+
+    @app.post('/g/{guild_id}/orbats/{orbat_id}', response_class=HTMLResponse)
+    async def orbat_save(request: Request, guild_id: str, orbat_id: int):
+        context = await orbat_context(request, guild_id, orbat_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        text = form.get('text') or ''
+        action = form.get('action') or 'preview'
+        checked = await orbat_service.review(orbat_id, text)
+
+        if not checked['result'].ok or action == 'preview':
+            return await orbat_editor(request, context, text, checked)
+
+        # An edit that would unseat somebody, or move them onto a differently
+        # named role, always stops for a confirmation. Everything else saves
+        # straight away: asking on every edit would train people to click
+        # through the one that matters.
+        if action != 'confirm' and checked['diff'].needs_confirmation:
+            return await orbat_editor(request, context, text, checked, pending_text=text)
+
+        note = await orbat_service.apply(orbat_id, text, checked)
+        return redirect(request, f"/g/{guild_id}/orbats/{orbat_id}", 'ok', note)
+
+    @app.post('/g/{guild_id}/orbats/{orbat_id}/duplicate')
+    async def orbat_duplicate(request: Request, guild_id: str, orbat_id: int):
+        context = await orbat_context(request, guild_id, orbat_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            new_id = await orbat_service.duplicate(
+                orbat_id, context['member'], form.get('name')
+            )
+        except ValueError as e:
+            return await orbat_editor(
+                request, context,
+                await orbat_service.editor_text(context['record']),
+                error=str(e), status=400,
+            )
+        return redirect(request, f"/g/{guild_id}/orbats/{new_id}", 'ok',
+                        'Copied — the structure, not the bookings.')
+
+    @app.post('/g/{guild_id}/orbats/{orbat_id}/delete')
+    async def orbat_delete(request: Request, guild_id: str, orbat_id: int):
+        context = await orbat_context(request, guild_id, orbat_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        await database.delete_orbat(orbat_id)
+        return redirect(request, f"/g/{guild_id}/orbats", 'ok',
+                        f"Deleted \u201c{context['record']['name']}\u201d.")
 
     # -- embeds -------------------------------------------------------------
 

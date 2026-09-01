@@ -778,6 +778,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
+| ORBATs | Build and edit the slot roster in the browser — squads, slots, and a preview of the board |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
 | Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
@@ -788,7 +789,7 @@ Who may do what is **read live from your Discord roles**, not from the login:
 - **Any member of the server** — view events, RSVP, pick their own game roles, see the voice leaderboard
 - **Unit Leader or Manage Server** — create events
 - **The organiser, or an admin** — edit, cancel and delete that event
-- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, configure the member log and voice tracking
+- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, build ORBATs, configure the member log and voice tracking
 
 That is the same rule set the slash commands use; it is literally the same code. Roles are cached for a minute, so if you have just been given a role, the **“Changed your roles on Discord? Re-read them”** link at the bottom of the event list picks it up immediately.
 
@@ -892,9 +893,44 @@ Two details worth knowing about the numbers:
 
 Voice state updates need no privileged intent and no extra permission, so unlike the member log this works the moment you switch it on.
 
+### ORBATs
+
+The slot roster, written out on a page instead of kept in a Google Sheet. **Manage Server** only, under the **🗺️ ORBATs** tab.
+
+An ORBAT is a **template**: the same one is meant to back as many operation nights as you like, which is what duplicating the sheet used to be for. **Copy** takes the structure and none of the bookings.
+
+You write the roster as indented text — squad at the left margin, its slots indented under it:
+
+```
+1-0 Platoon HQ  | left
+  Platoon Leader
+  Platoon Sergeant
+
+1-1 Alpha  | left
+  Squad Leader  | unit:TFP
+  Team Leader
+  Automatic Rifleman
+  Rifleman
+
+Reservists  | right, nocount
+  Reserve
+```
+
+- `left` / `right` put the squad in that column of the board
+- `nocount` leaves the squad out of the open/filled counts (what `Reservists` gets today)
+- `unit:TFP` marks a slot as held for one unit
+- A line starting with `#` is a comment
+- A leading number — `1. Rifleman` — is removed, so lines pasted straight out of a sheet work
+
+**Preview** shows the board exactly as Discord would render it, without saving. It also warns you before you hit a limit Discord enforces silently: more than 8 rows of squads, a squad too long for one field, or an embed over 6000 characters. **Save** writes it.
+
+Editing an ORBAT never quietly drops anyone. Renaming a slot keeps whoever is booked into it; reordering lines changes nothing at all. Anything that would take someone off the roster — or move them onto a differently named role — stops at a confirmation page that names them and which operation they are in, and you have to click **Save anyway**.
+
+> **Not connected to slot requests yet.** You can build and maintain ORBATs here, but `/request-slot` and the live board in `#orbat` still read the Google Sheet. Wiring the two together is the next step.
+
 ### Limits
 
-- Events, game roles, embeds, the member log and voice time — slots and the ORBAT board are still Discord-side
+- ORBATs can be built here, but booking a slot into one is not wired up — `/request-slot` and the `#orbat` board still use the sheet
 - An event can't be moved to another channel after posting; cancel it and create a new one
 - Approving slot requests is unchanged and still happens in `#slot-approvals`
 

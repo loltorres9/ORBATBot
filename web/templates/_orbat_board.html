@@ -1,0 +1,25 @@
+{# The board as Discord would render it. Included by the ORBAT editor with the
+   parsed preview, and by the list page with what is actually booked. #}
+<div class="orbatboard">
+  <h3>🗺️ ORBAT — {{ board_title }}</h3>
+  <p class="counts">
+    🟢 <strong>{{ board.counts.open }}</strong> open ·
+    🟡 <strong>{{ board.counts.pending }}</strong> pending ·
+    🔴 <strong>{{ board.counts.filled }}/{{ board.counts.total }}</strong> filled
+  </p>
+  <div class="orbatfields">
+    {% for left, right in board.rows %}
+      {% for squad in (left, right) %}
+        {% if squad %}
+          <div>
+            <div class="squadname">{{ squad.name }}
+              {% if squad.excluded %}<span class="nocount">· not counted</span>{% endif %}
+            </div>
+            <div class="squadslots">{% for line in squad.lines %}{{ line.dot }} {% if line.state == 'open' %}<span class="off">{{ line.text }}</span>{% else %}{{ line.text }}{% endif %}
+{% endfor %}</div>
+          </div>
+        {% else %}<div></div>{% endif %}
+      {% endfor %}
+    {% endfor %}
+  </div>
+</div>

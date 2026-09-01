@@ -36,7 +36,7 @@
         <ul class="issues">
           {% for change in diff.losing_bookings %}
             <li><strong>{{ change.squad }} — {{ change.old.role_name }}</strong>
-              {% for booking in change.assignments %}
+              {% for booking in change.bookings %}
                 <br><span class="muted">↳ {{ booking.member_name }}
                 {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in „{{ booking.op_name }}“</span>
               {% endfor %}
@@ -51,7 +51,7 @@
           {% for change in diff.moving_bookings %}
             <li><strong>{{ change.squad }}</strong> — {{ change.old.role_name }}
               → {{ change.new.role_name }}
-              {% for booking in change.assignments %}
+              {% for booking in change.bookings %}
                 <br><span class="muted">↳ {{ booking.member_name }}
                 {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in „{{ booking.op_name }}“</span>
               {% endfor %}
@@ -148,12 +148,12 @@ Führende Nummerierung („1. Rifleman“) wird entfernt.</div>
             {% for change in diff.renamed %}
               <li><span class="tag renamed">umbenannt</span> {{ change.squad }} —
                 {{ change.old.role_name }} → {{ change.new.role_name }}
-                {% if change.assignments %}<span class="muted">(Belegung bleibt)</span>{% endif %}</li>
+                {% if change.bookings %}<span class="muted">(Belegung bleibt)</span>{% endif %}</li>
             {% endfor %}
             {% for change in diff.removed %}
               <li><span class="tag removed">entfernt</span> {{ change.squad }} — {{ change.old.role_name }}
-                {% if change.assignments %}
-                  <span style="color:var(--err)">— {{ change.assignments|length }} Belegung(en) gehen verloren</span>
+                {% if change.bookings %}
+                  <span style="color:var(--err)">— {{ change.bookings|length }} Belegung(en) gehen verloren</span>
                 {% endif %}</li>
             {% endfor %}
             {% if diff.kept %}

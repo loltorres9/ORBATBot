@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+{% block title %}{{ record.name }} · {{ guild.name }}{% endblock %}
+
+{% block content %}
+<div class="widepage">
+<p class="crumbs">
+  <a href="/g/{{ guild.id }}">{{ guild.name }}</a> ›
+  <a href="/g/{{ guild.id }}/orbats">ORBATs</a> ›
+  {{ record.name }}
+</p>
+
+<h1>{{ record.name }}</h1>
+{% if record.description %}<p class="muted">{{ record.description }}</p>{% endif %}
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if pending_text %}
+  <div class="flash err">
+    <strong>This change touches existing bookings.</strong>
+    {% if diff.losing_bookings %}
+      <p class="confirmlead">Removed — these people would be taken off the roster:</p>
+      <ul class="issues">
+        {% for change in diff.losing_bookings %}
+          <li><strong>{{ change.squad }} — {{ change.old.role_name }}</strong>
+            {% for booking in change.bookings %}
+              <br><span class="muted">↳ {{ booking.member_name }}
+              {%- if booking.unit_role %} [{{ booking.unit_role }}]{% endif %}
+              in “{{ booking.operation_name }}”</span>
+            {% endfor %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if diff.moving_bookings %}
+      <p class="confirmlead">Renamed — the booking stays, but on a different role:</p>
+      <ul class="issues">
+        {% for change in diff.moving_bookings %}
+          <li><strong>{{ change.squad }}</strong> — {{ change.old.role_name }}
+            → {{ change.new.role_name }}
+            {% for booking in change.bookings %}
+              <br><span class="muted">↳ {{ booking.member_name }}
+              {%- if booking.unit_role %} [{{ booking.unit_role }}]{% endif %}
+              in “{{ booking.operation_name }}”</span>
+            {% endfor %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <form method="post" action="/g/{{ guild.id }}/orbats/{{ record.id }}" class="confirmform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="text" value="{{ pending_text }}">
+      <input type="hidden" name="action" value="confirm">
+      <button class="button danger" type="submit">Save anyway</button>
+      <span class="muted">or keep editing above</span>
+    </form>
+  </div>
+{% endif %}
+
+<div class="orbatsplit">
+  <form class="form orbateditor" method="post"
+        action="/g/{{ guild.id }}/orbats/{{ record.id }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">
+      <span>Roster</span>
+      <textarea name="text" spellcheck="false" rows="24">{{ text }}</textarea>
+    </label>
+    <div class="actions">
+      <button class="button" type="submit" name="action" value="preview">Preview</button>
+      <button class="button primary" type="submit" name="action" value="save">Save</button>
+    </div>
+    <details class="card formathelp">
+      <summary>The format</summary>
+      <pre>Squad lines start at the left margin, slots are indented:
+
+1-1 Alpha  | right
+  Squad Leader  | unit:TFP
+  Rifleman
+
+Squad options: left, right, nocount
+Slot options:  unit:TAG
+A line starting with # is a comment.
+A leading number ("1. Rifleman") is stripped.</pre>
+    </details>
+  </form>
+
+  <div class="orbatside">
+    {% if result and not result.ok %}
+      <div class="card pad">
+        <h3 class="bad">{{ result.errors|length }} problem{{ '' if result.errors|length == 1 else 's' }}</h3>
+        <ul class="issues">
+          {% for line, message in result.errors %}
+            <li>{% if line %}<span class="lineno">line {{ line }}</span> {% endif %}{{ message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if result and result.warnings %}
+      <div class="card pad">
+        <h3 class="warnish">Notes</h3>
+        <ul class="issues">
+          {% for line, message in result.warnings %}
+            <li>{% if line %}<span class="lineno">line {{ line }}</span> {% endif %}{{ message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% set shown = board or stored %}
+    {% if shown %}
+      {% if shown.warnings %}
+        <div class="card pad">
+          <h3 class="warnish">Discord's limits</h3>
+          <ul class="issues">
+            {% for warning in shown.warnings %}<li>{{ warning }}</li>{% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+      <div class="card pad">
+        <h3>{{ 'How the board would look' if board else 'The saved board' }}</h3>
+        {% if board %}
+          <p class="hint">The empty roster — bookings belong to an operation, not
+            to the template.</p>
+        {% endif %}
+        {% with board = shown, board_title = record.name %}
+          {% include '_orbat_board.html' %}
+        {% endwith %}
+      </div>
+    {% endif %}
+
+    {% if diff %}
+      <div class="card pad">
+        <h3>What changes</h3>
+        <p class="muted nospace">{{ summary }}</p>
+        <ul class="difflist">
+          {% for change in diff.added %}
+            <li><span class="tag added">added</span> {{ change.squad }} — {{ change.new.role_name }}</li>
+          {% endfor %}
+          {% for change in diff.renamed %}
+            <li><span class="tag renamed">renamed</span> {{ change.squad }} —
+              {{ change.old.role_name }} → {{ change.new.role_name }}
+              {% if change.bookings %}<span class="muted">(booking kept)</span>{% endif %}</li>
+          {% endfor %}
+          {% for change in diff.removed %}
+            <li><span class="tag removed">removed</span> {{ change.squad }} — {{ change.old.role_name }}
+              {% if change.bookings %}
+                <span class="bad">— {{ change.bookings|length }} booking(s) lost</span>
+              {% endif %}</li>
+          {% endfor %}
+          {% if diff.kept %}
+            <li><span class="tag kept">unchanged</span> {{ diff.kept|length }} slots keep their id and booking</li>
+          {% endif %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<h2 style="margin-top:32px">Copy this ORBAT</h2>
+<p class="hint">A copy takes the structure and none of the bookings — which is
+  what duplicating the sheet used to be for.</p>
+<form class="inlineform" method="post" action="/g/{{ guild.id }}/orbats/{{ record.id }}/duplicate">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input name="name" value="{{ record.name }} (copy)" required maxlength="120">
+  <button class="button" type="submit">Copy</button>
+</form>
+
+<h2 style="margin-top:28px">Delete</h2>
+<form class="inlineform" method="post" action="/g/{{ guild.id }}/orbats/{{ record.id }}/delete"
+      onsubmit="return confirm('Delete “{{ record.name }}” and all of its squads and slots?')">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="button danger" type="submit">Delete this ORBAT</button>
+</form>
+</div>
+{% endblock %}
