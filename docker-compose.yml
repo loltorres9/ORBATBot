@@ -4,7 +4,9 @@ services:
     restart: unless-stopped
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - GOOGLE_CREDENTIALS=${GOOGLE_CREDENTIALS}
+      # Optional: only needed for sheet-backed operations. An empty value is
+      # fine — the bot only reads it when a sheet is actually touched.
+      - GOOGLE_CREDENTIALS=${GOOGLE_CREDENTIALS:-}
       - DATABASE_URL=postgresql://orbatuser:${DB_PASSWORD}@db:5432/orbatbot
       # Join/leave announcements. Only set this to 1 once the privileged
       # "Server Members Intent" is ticked in the Developer Portal — requesting an

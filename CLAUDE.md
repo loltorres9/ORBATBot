@@ -6,10 +6,21 @@ This file gives full context on the project. Read it before making any changes.
 
 ## What This Is
 
-A Discord bot for managing Arma 3 operation slot requests across multiple military simulation units. Members request slots; Unit Leaders and admins approve or deny via Discord buttons. The Google Sheet is updated automatically on approval.
+A Discord bot for managing Arma 3 operation slot requests across multiple military simulation units. Members request slots; Unit Leaders and admins approve or deny via Discord buttons.
 
-**Current state:** Fully operational bot deployed on Railway, plus an optional web UI (`web/`) with Discord OAuth2 login for managing events from a browser.
-**Next phase:** the web UI now covers events, game roles, embeds, the member log and voice time. Slots and the ORBAT board are deliberately still Discord- and Sheets-only — see [Web UI](#web-ui-web) at the bottom of this file.
+**An operation runs on one of two rosters**, and `utils/roster.py` is the only
+thing that knows which: an **ORBAT** held in this bot's own database and edited
+in the browser, or a **Google Sheet**, which is where it all started. The sheet
+is written on approval; an ORBAT has nothing to write, because the approved
+request *is* the booking. See
+[the roster provider](#the-roster-provider-utilsrosterpy).
+
+**Current state:** Fully operational bot deployed on Railway, plus an optional
+web UI (`web/`) with Discord OAuth2 login for events, game roles, embeds, the
+member log, voice time and the ORBAT editor.
+**Next phase:** requesting and approving slots is still Discord-side. The
+remaining steps are listed under
+[Slots on the web](#slots-on-the-web--what-is-done-and-what-is-left).
 
 ---
 
@@ -68,7 +79,7 @@ pure and Discord-free, so it is the obvious first thing to cover if that changes
 | Variable | Description |
 |---|---|
 | `DISCORD_TOKEN` | Bot token from Discord Developer Portal |
-| `GOOGLE_CREDENTIALS` | Full JSON content of the service account key file |
+| `GOOGLE_CREDENTIALS` | **Optional.** Full JSON content of the service account key file. Only read when a sheet-backed operation is actually touched — `sheets.get_client()` raises on the first call, not at import — so the bot starts and runs without it as long as every operation is ORBAT-backed |
 | `DB_PASSWORD` | PostgreSQL password (docker-compose only) |
 | `DATABASE_URL` | Full connection string — injected automatically by Railway; constructed by docker-compose; set by hand for local development |
 | `RAILWAY_API_TOKEN` | **Optional.** Account or team token that lets `/restart` trigger a clean deployment restart via the Railway GraphQL API. Without it `/restart` still works, by exiting non-zero so Railway's `ON_FAILURE` policy relaunches the container. Project tokens do **not** work — `_railway_restart()` authenticates with a `Bearer` header |
@@ -99,7 +110,7 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 |---|---|---|
 | `id` | SERIAL PK | |
 | `guild_id` | TEXT | Discord guild (server) ID |
-| `name` | TEXT | Operation name (from sheet) |
+| `name` | TEXT | Operation name — from the ORBAT or the spreadsheet title, or overridden on `/setup-slots` |
 | `sheet_url` | TEXT | Full Google Sheets URL. **NULL on an ORBAT-backed operation** |
 | `sheet_id` | TEXT | Extracted sheet ID. NULL likewise |
 | `orbat_id` | INTEGER | → `orbats.id`. NULL on a sheet-backed operation. Exactly one of this and `sheet_url` is set, and `utils/roster.py` is the only thing that looks |
@@ -465,10 +476,10 @@ Opens a two-step ephemeral squad → slot picker. Validates no existing active r
 Cancels the member's pending request. Voids the approval message (grey embed, buttons removed via `_void_approval_message()`).
 
 **`/change-slot`**
-Cancels current slot (pending or approved — if approved, clears the sheet cell) then opens the squad → slot picker for a new selection.
+Cancels the current slot (pending or approved) then opens the squad → slot picker again. An approved slot goes through `roster.clear()`, which clears the sheet cell on a sheet-backed operation and does nothing on an ORBAT.
 
 **`/leave-operation`**
-Shows a confirmation button. On confirm: cancels the request, clears sheet if approved, DMs the member.
+Shows a confirmation button. On confirm: cancels the request, releases the slot through `roster.clear()` if it was approved, DMs the member.
 
 **`/post-orbat [channel]`** (Admin — `default_permissions(manage_guild=True)`)
 Posts a fresh ORBAT embed to the specified channel (defaults to current). Saves
@@ -489,10 +500,10 @@ message ID to DB. **It lives in `slots.py`, not `admin.py`**, next to
   or from the spreadsheet's title
 
 **`/assign-slot @member`**
-Direct assignment — bypasses approval flow. Writes to sheet immediately. Blocked if member already holds a slot.
+Direct assignment — bypasses the approval flow, recording the request as already approved. `roster.assign()` writes the sheet on a sheet-backed operation. Blocked if the member already holds a slot.
 
 **`/clear-slot`**
-Dropdown of active (pending + approved) slots. On select: clears sheet cell (approved only), cancels DB record, DMs member. Unit Leaders scoped to own unit.
+Dropdown of active (pending + approved) slots. On select: `roster.clear()` for an approved one, cancels the DB record, DMs the member. Unit Leaders scoped to own unit.
 
 **`/clear-requests`**
 Cancels all pending requests for the active operation.
@@ -513,7 +524,7 @@ One-time migration. Scans up to 500 messages in `#slot-approvals` for old bot-po
 Copies each to `#approval-archive`, deletes from `#slot-approvals`.
 
 **`/current-operation`**
-Shows active operation name and sheet link.
+Shows the active operation and where its roster comes from — the ORBAT's name, or a link to the sheet.
 
 **`/debug-slots [squad]`**
 Shows the raw slot data as the bot sees it, whichever roster is in use, keyed by
@@ -542,8 +553,11 @@ Nothing is lost either way: state lives in PostgreSQL and every view is re-regis
 3. Approver clicks **✅ Approve**:
    - `_can_action_request()` checks unit gating
    - DB updated to `approved`
-   - Google Sheet written via `sheets.assign_slot()`
-   - If sheet write fails → DB rolled back to `denied`, error shown
+   - `roster.assign()` — writes the sheet on a sheet-backed operation, and does
+     nothing on an ORBAT-backed one
+   - If that write fails → DB rolled back to `denied`, error shown. Only
+     reachable on a sheet: a failed network call is the only thing this ever
+     protected against
    - Approval message deleted from `#slot-approvals`
    - Compact green embed posted to `#approval-archive`
    - Member DMed
