@@ -12,6 +12,7 @@ Two things decide whether this does anything at all:
 """
 
 import asyncio
+from collections import namedtuple
 from datetime import timedelta
 
 import discord
@@ -26,6 +27,28 @@ AUDIT_WINDOW = timedelta(seconds=20)
 
 # How long to wait before reading the audit log, so the entry exists by then.
 AUDIT_DELAY = 2
+
+# How recently an invite must have been deleted for a join to be credited to it.
+# Discord deletes a link the moment it hits `max_uses`, so the one that let this
+# member in can be gone before its counter is ever seen to move.
+CONSUMED_WINDOW = timedelta(seconds=15)
+
+# What a join could be told about the invite it came through. `code` is set
+# when it was worked out; otherwise `reason` says why not, so the join message
+# can print that instead of silently dropping the field — a missing line is
+# indistinguishable from a bot that was never given Manage Server.
+Attribution = namedtuple('Attribution', 'code inviter kind reason')
+
+NO_ATTRIBUTION = Attribution(None, None, None, None)
+
+# Why an invite could not be named. `off` is the one case that prints nothing:
+# the admin switched tracking off, so saying so on every join is just noise.
+REASONS = {
+    'forbidden': "Unknown — I need **Manage Server** to read the invite list.",
+    'nocache': "Unknown — I hadn't read the invite list yet when they joined.",
+    'unmoved': ('Unknown — no invite counter moved. Added by another bot, found '
+                'through server discovery, or two people joined in the same moment.'),
+}
 
 COLOR_JOIN = discord.Color.green()
 COLOR_LEAVE = discord.Color.light_grey()
@@ -54,6 +77,11 @@ class MemberLogCog(commands.Cog):
         # Guarded because two joins seconds apart would otherwise both re-read
         # the invite list and each credit the other's increment.
         self._invite_lock = asyncio.Lock()
+        # invite code -> who created it. Kept separately because a consumed
+        # single-use link is gone from the API by the time we look it up.
+        self._inviters: dict = {}
+        # invite code -> (guild id, when it went), for the same reason.
+        self._deleted: dict = {}
 
     # -- settings -----------------------------------------------------------
 
@@ -78,12 +106,25 @@ class MemberLogCog(commands.Cog):
 
     # -- invite tracking ----------------------------------------------------
 
-    async def _snapshot_invites(self, guild: discord.Guild) -> dict:
-        """Current use counts, or an empty mapping when we may not read them."""
+    async def _fetch_invites(self, guild: discord.Guild):
+        """The guild's invites, or **None** when the list may not be read.
+
+        None and an empty list have to stay distinct: a guild really can have no
+        invites, while a missing Manage Server means we know nothing. Diffing a
+        join against an empty snapshot would read every existing invite as
+        freshly incremented and credit the first one it saw.
+        """
         try:
-            return {invite.code: (invite.uses or 0) for invite in await guild.invites()}
+            return await guild.invites()
         except (discord.Forbidden, discord.HTTPException):
-            return {}
+            return None
+
+    async def _snapshot_invites(self, guild: discord.Guild):
+        """Just the use counts, which is all the cache between joins needs."""
+        invites = await self._fetch_invites(guild)
+        if invites is None:
+            return None
+        return {invite.code: (invite.uses or 0) for invite in invites}
 
     async def _cache_invites(self, guild: discord.Guild):
         settings = await database.get_log_settings(str(guild.id))
@@ -91,8 +132,8 @@ class MemberLogCog(commands.Cog):
             return
         self._invites[guild.id] = await self._snapshot_invites(guild)
 
-    async def _used_invite(self, guild: discord.Guild) -> tuple:
-        """Which invite a join came through, as (code, inviter, kind) — best effort.
+    async def _used_invite(self, guild: discord.Guild) -> Attribution:
+        """Which invite a join came through — best effort, and it says when it failed.
 
         Works by diffing use counts against the cached snapshot. Two people
         joining in the same instant can't be told apart this way; the counter is
@@ -100,21 +141,38 @@ class MemberLogCog(commands.Cog):
         """
         settings = await database.get_log_settings(str(guild.id))
         if settings and not settings['track_invites']:
-            return None, None, None
+            return NO_ATTRIBUTION._replace(reason='off')
 
         async with self._invite_lock:
-            before = self._invites.get(guild.id, {})
-            try:
-                invites = await guild.invites()
-            except (discord.Forbidden, discord.HTTPException):
-                return None, None, None
-
+            before = self._invites.get(guild.id)
+            invites = await self._fetch_invites(guild)
+            if invites is None:
+                return NO_ATTRIBUTION._replace(reason='forbidden')
             after = {invite.code: (invite.uses or 0) for invite in invites}
             self._invites[guild.id] = after
 
+            if before is None:
+                return NO_ATTRIBUTION._replace(reason='nocache')
+
             for invite in invites:
                 if (invite.uses or 0) > before.get(invite.code, 0):
-                    return invite.code, invite.inviter, 'invite'
+                    return Attribution(invite.code, invite.inviter, 'invite', None)
+
+            # A link with `max_uses` reached is deleted by Discord the moment it
+            # is used, so its counter is never seen to move — the code is simply
+            # gone. Two paths find it, because INVITE_DELETE and GUILD_MEMBER_ADD
+            # race: if the delete arrived first the code is in `_deleted`, and if
+            # it has not arrived yet the code is still in `before` but already
+            # absent from the list we just fetched.
+            #
+            # Both are bounded to the seconds around this join. An unbounded
+            # "gone since the last snapshot" would credit a link an admin tidied
+            # up yesterday to the next person through the door.
+            gone = {code for code in before if code not in after}
+            gone |= self._recently_deleted(guild)
+            if len(gone) == 1:
+                code = gone.pop()
+                return Attribution(code, self._inviters.get(code), 'consumed', None)
 
         # No counter moved: either a vanity URL, or the member was added by a
         # bot, or the snapshot was stale.
@@ -122,10 +180,28 @@ class MemberLogCog(commands.Cog):
             try:
                 vanity = await guild.vanity_invite()
                 if vanity is not None:
-                    return vanity.code, None, 'vanity'
+                    return Attribution(vanity.code, None, 'vanity', None)
             except (discord.Forbidden, discord.HTTPException):
                 pass
-        return None, None, None
+        return NO_ATTRIBUTION._replace(reason='unmoved')
+
+    def _invite_field(self, attribution: Attribution, labels: dict) -> str:
+        """The body of the "Invite used" field, however the lookup turned out."""
+        if not attribution.code:
+            return REASONS.get(attribution.reason, REASONS['unmoved'])
+
+        parts = [f"`{attribution.code}`"]
+        # The label says where that link was published — the whole point of
+        # keeping it, so nobody has to look the code up in a spreadsheet.
+        if labels.get(attribution.code):
+            parts.append(f"**{labels[attribution.code]}**")
+        if attribution.kind == 'vanity':
+            parts.append('vanity URL')
+        elif attribution.kind == 'consumed':
+            parts.append('single-use link, used up')
+        if attribution.inviter:
+            parts.append(f"created by {attribution.inviter.mention}")
+        return ' · '.join(parts)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -138,13 +214,37 @@ class MemberLogCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_invite_create(self, invite: discord.Invite):
-        if invite.guild is not None:
-            self._invites.setdefault(invite.guild.id, {})[invite.code] = invite.uses or 0
+        if invite.guild is None:
+            return
+        if invite.inviter is not None:
+            self._inviters[invite.code] = invite.inviter
+        cached = self._invites.get(invite.guild.id)
+        if cached is not None:
+            cached[invite.code] = invite.uses or 0
 
     @commands.Cog.listener()
     async def on_invite_delete(self, invite: discord.Invite):
-        if invite.guild is not None:
-            self._invites.get(invite.guild.id, {}).pop(invite.code, None)
+        if invite.guild is None:
+            return
+        cached = self._invites.get(invite.guild.id)
+        if cached is not None:
+            cached.pop(invite.code, None)
+        # Remembered briefly: dropping it from the snapshot alone is what made a
+        # used-up single-use link unattributable, because the join it let in is
+        # handled moments later.
+        self._deleted[invite.code] = (invite.guild.id, discord.utils.utcnow())
+
+    def _recently_deleted(self, guild: discord.Guild) -> set:
+        """Codes this guild lost in the last few seconds, pruning the older ones."""
+        now = discord.utils.utcnow()
+        for code, (guild_id, when) in list(self._deleted.items()):
+            if now - when > CONSUMED_WINDOW:
+                del self._deleted[code]
+                self._inviters.pop(code, None)
+        return {
+            code for code, (guild_id, _) in self._deleted.items()
+            if guild_id == guild.id
+        }
 
     # -- audit log ----------------------------------------------------------
 
@@ -169,7 +269,7 @@ class MemberLogCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         try:
-            code, inviter, kind = await self._used_invite(member.guild)
+            attribution = await self._used_invite(member.guild)
             embed = discord.Embed(
                 title='📥 Member joined',
                 description=_user_line(member),
@@ -177,18 +277,15 @@ class MemberLogCog(commands.Cog):
                 timestamp=discord.utils.utcnow(),
             )
             embed.add_field(name='Account created', value=_stamp(member.created_at), inline=False)
-            if code:
-                # The label says where that link was published — the whole point
-                # of keeping it, so nobody has to look the code up in a spreadsheet.
-                labels = await database.get_invite_labels(str(member.guild.id))
-                parts = [f"`{code}`"]
-                if labels.get(code):
-                    parts.append(f"**{labels[code]}**")
-                elif kind == 'vanity':
-                    parts.append('vanity URL')
-                if inviter:
-                    parts.append(f"created by {inviter.mention}")
-                embed.add_field(name='Invite used', value=' · '.join(parts), inline=False)
+            if attribution.reason != 'off':
+                # Only worth a query once there is a code to look up.
+                labels = (await database.get_invite_labels(str(member.guild.id))
+                          if attribution.code else {})
+                embed.add_field(
+                    name='Invite used',
+                    value=self._invite_field(attribution, labels),
+                    inline=False,
+                )
             embed.set_footer(text=f"{member.guild.member_count} members")
             if member.display_avatar:
                 embed.set_thumbnail(url=member.display_avatar.url)

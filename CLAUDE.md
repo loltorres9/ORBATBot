@@ -1112,11 +1112,34 @@ that, or two joins seconds apart would each credit the other's increment. Two
 joins in the *same instant* still can't be told apart — the counter is corrected
 either way, only that one attribution may be wrong.
 
-Reading invites needs **Manage Server**. Without it, and for members added by
-another bot, no link is shown. A guild with `VANITY_URL` falls back to
-`vanity_invite()` when no counter moved — `_used_invite()` returns
-`(code, inviter, kind)` so the vanity case can be labelled as such rather than
-looked up like an ordinary code.
+**`_used_invite()` returns an `Attribution`, and it always explains itself.**
+When it can't name a link it sets `reason`, and the join embed prints that
+instead of dropping the field: a missing line looked identical whether the bot
+lacked **Manage Server**, had never read the invite list, or genuinely saw no
+counter move, which made the feature impossible to debug from Discord. The
+reasons are in `REASONS`; `off` is the only one that prints nothing, since an
+admin who unticked the box does not need telling on every join.
+
+Reading invites needs **Manage Server**. `_fetch_invites()` returns **None**
+rather than an empty list when it may not read them — the two must stay
+distinct, because diffing a join against an empty snapshot reads every existing
+invite as freshly incremented and credits the first one seen. The same reason
+`before is None` reports `nocache` rather than guessing.
+
+A guild with `VANITY_URL` falls back to `vanity_invite()` when no counter moved,
+labelled `vanity` so it isn't looked up like an ordinary code.
+
+**A single-use link never shows its increment.** Discord deletes an invite the
+moment it hits `max_uses`, so the code that let the member in is simply gone.
+Two paths find it, because `INVITE_DELETE` and `GUILD_MEMBER_ADD` race: if the
+delete arrived first the code is in `_deleted`, and if it hasn't the code is
+still in the cached snapshot but already absent from the freshly fetched list.
+Both are bounded by `CONSUMED_WINDOW` — an unbounded "gone since the last
+snapshot" would credit a link an admin tidied up yesterday to the next person
+through the door. Exactly one candidate is credited (kind `consumed`); two is
+ambiguous and reported as unknown. `_inviters`, filled by `on_invite_create`,
+is how such a join can still name who made the link; the ordinary path reads
+`inviter` off the live invite object.
 
 **`invite_labels` is what makes the code useful.** The join message shows the
 label next to the code, which is the whole point: the alternative is keeping a
