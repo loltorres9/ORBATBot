@@ -265,6 +265,7 @@ async def init_db():
                 name TEXT NOT NULL,
                 column_side INTEGER NOT NULL DEFAULT 0,
                 exclude_from_count INTEGER NOT NULL DEFAULT 0,
+                reserved_unit TEXT,
                 sort_order INTEGER NOT NULL DEFAULT 0
             )
         ''')
@@ -273,7 +274,6 @@ async def init_db():
                 id SERIAL PRIMARY KEY,
                 squad_id INTEGER NOT NULL REFERENCES orbat_squads(id) ON DELETE CASCADE,
                 role_name TEXT NOT NULL,
-                reserved_unit TEXT,
                 sort_order INTEGER NOT NULL DEFAULT 0
             )
         ''')
@@ -335,6 +335,29 @@ async def init_db():
             ALTER TABLE operations ADD COLUMN IF NOT EXISTS
                 reminder_fired INTEGER DEFAULT 0
         ''')
+        # The unit an ORBAT squad belongs to. It started out on the slot, which
+        # meant repeating the same tag on every line of a squad that belongs to
+        # one unit as a whole; these three statements lift any values already
+        # entered up to their squad and then retire the slot column. All three
+        # are no-ops once they have run.
+        await db.execute('''
+            ALTER TABLE orbat_squads ADD COLUMN IF NOT EXISTS reserved_unit TEXT
+        ''')
+        if await db.fetchval(
+            """SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'orbat_slots' AND column_name = 'reserved_unit'"""
+        ):
+            # The squad takes the first unit any of its slots named, in slot
+            # order — with one unit per squad there is nothing to choose between.
+            await db.execute('''
+                UPDATE orbat_squads q SET reserved_unit = (
+                    SELECT s.reserved_unit FROM orbat_slots s
+                     WHERE s.squad_id = q.id AND s.reserved_unit IS NOT NULL
+                     ORDER BY s.sort_order, s.id LIMIT 1)
+                 WHERE q.reserved_unit IS NULL
+            ''')
+            await db.execute('ALTER TABLE orbat_slots DROP COLUMN reserved_unit')
+
         # Which ORBAT slot a request is for. NULL on every sheet-backed request,
         # which is all of them until slots can be booked from the board — the
         # column exists now so an ORBAT knows who its slots are promised to.
@@ -1507,40 +1530,41 @@ async def apply_orbat_structure(orbat_id: int, parsed_squads: list, diff,
 
             for order, squad in enumerate(parsed_squads):
                 squad_id = squad_of_new.get(id(squad))
-                values = (squad.name, squad.column, int(squad.exclude_from_count), order)
+                values = (squad.name, squad.column, int(squad.exclude_from_count),
+                          squad.reserved_unit, order)
                 if squad_id:
                     await db.execute(
                         '''UPDATE orbat_squads
-                              SET name = $2, column_side = $3,
-                                  exclude_from_count = $4, sort_order = $5
+                              SET name = $2, column_side = $3, exclude_from_count = $4,
+                                  reserved_unit = $5, sort_order = $6
                             WHERE id = $1''',
                         squad_id, *values,
                     )
                 else:
                     row = await db.fetchrow(
                         '''INSERT INTO orbat_squads
-                           (orbat_id, name, column_side, exclude_from_count, sort_order)
-                           VALUES ($1, $2, $3, $4, $5) RETURNING id''',
+                           (orbat_id, name, column_side, exclude_from_count,
+                            reserved_unit, sort_order)
+                           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id''',
                         orbat_id, *values,
                     )
                     squad_id = row['id']
 
                 for slot_order, slot in enumerate(squad.slots):
                     slot_id = slot_of_new.get(id(slot))
-                    fields = (slot.role_name, slot.reserved_unit, slot_order, squad_id)
+                    fields = (slot.role_name, slot_order, squad_id)
                     if slot_id:
                         await db.execute(
                             '''UPDATE orbat_slots
-                                  SET role_name = $2, reserved_unit = $3,
-                                      sort_order = $4, squad_id = $5
+                                  SET role_name = $2, sort_order = $3, squad_id = $4
                                 WHERE id = $1''',
                             slot_id, *fields,
                         )
                     else:
                         await db.execute(
                             '''INSERT INTO orbat_slots
-                               (role_name, reserved_unit, sort_order, squad_id)
-                               VALUES ($1, $2, $3, $4)''',
+                               (role_name, sort_order, squad_id)
+                               VALUES ($1, $2, $3)''',
                             *fields,
                         )
 
@@ -1566,18 +1590,18 @@ async def duplicate_orbat(orbat_id: int, name: str, created_by: str,
             for squad in squads:
                 row = await db.fetchrow(
                     '''INSERT INTO orbat_squads
-                       (orbat_id, name, column_side, exclude_from_count, sort_order)
-                       VALUES ($1, $2, $3, $4, $5) RETURNING id''',
+                       (orbat_id, name, column_side, exclude_from_count,
+                        reserved_unit, sort_order)
+                       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id''',
                     new_id, squad['name'], squad['column_side'],
-                    squad['exclude_from_count'], squad['sort_order'],
+                    squad['exclude_from_count'], squad['reserved_unit'],
+                    squad['sort_order'],
                 )
                 for slot in squad['slots']:
                     await db.execute(
-                        '''INSERT INTO orbat_slots
-                           (squad_id, role_name, reserved_unit, sort_order)
-                           VALUES ($1, $2, $3, $4)''',
-                        row['id'], slot['role_name'], slot['reserved_unit'],
-                        slot['sort_order'],
+                        '''INSERT INTO orbat_slots (squad_id, role_name, sort_order)
+                           VALUES ($1, $2, $3)''',
+                        row['id'], slot['role_name'], slot['sort_order'],
                     )
             await db.execute(
                 'UPDATE orbats SET source_text = $2 WHERE id = $1',

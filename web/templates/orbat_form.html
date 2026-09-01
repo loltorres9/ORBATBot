@@ -72,12 +72,15 @@
       <summary>The format</summary>
       <pre>Squad lines start at the left margin, slots are indented:
 
-1-1 Alpha  | right
-  Squad Leader  | unit:TFP
+1-1 Alpha  | right, unit:TFP
+  Squad Leader
   Rifleman
 
-Squad options: left, right, nocount
-Slot options:  unit:TAG
+Squad options
+  left / right   which column of the board the squad sits in
+  unit:TAG       the unit the whole squad belongs to
+  nocount        leave the squad out of the open/filled counts
+
 A line starting with # is a comment.
 A leading number ("1. Rifleman") is stripped.</pre>
     </details>

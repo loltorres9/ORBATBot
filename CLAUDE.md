@@ -165,6 +165,7 @@ The slot roster held here rather than read out of a Google Sheet — see
 | `name` | TEXT | The embed field's heading |
 | `column_side` | INTEGER | 0 = left, 1 = right. What `_build_orbat_embed()` infers from sheet geometry is stated outright here |
 | `exclude_from_count` | INTEGER | 0/1 — replaces the case-insensitive `Reservists` name match |
+| `reserved_unit` | TEXT | The unit the whole squad belongs to, matched by name against `UNIT_ROLES`. It began on the slot; `init_db()` lifts any values entered there up to their squad and drops the slot column |
 | `sort_order` | INTEGER | |
 
 ### `orbat_slots`
@@ -173,7 +174,6 @@ The slot roster held here rather than read out of a Google Sheet — see
 | `id` | SERIAL PK | The stable slot identity a booking hangs off |
 | `squad_id` | INTEGER | FK → `orbat_squads.id` **ON DELETE CASCADE** |
 | `role_name` | TEXT | |
-| `reserved_unit` | TEXT | Optional unit tag the slot is held for — something a sheet cell cannot express |
 | `sort_order` | INTEGER | |
 
 **A slot carries no booking.** Who holds one lives in `requests`, keyed by
@@ -963,8 +963,8 @@ forty slots. So the editor is one indented-text field, which is how ORBATs get
 written down anyway:
 
 ```
-1-1 Alpha  | right
-  Squad Leader  | unit:TFP
+1-1 Alpha  | right, unit:TFP
+  Squad Leader
   Rifleman
 
 Reservists  | right, nocount
@@ -972,8 +972,17 @@ Reservists  | right, nocount
 ```
 
 Squad lines start at the left margin, slots are indented (space or tab). Options
-after a pipe: `left` / `right` / `nocount` on a squad, `unit:TAG` on a slot. `#`
-starts a comment. A leading `1.` / `2)` / `3 -` is stripped, so lines pasted out
+after a pipe, all on the squad: `left` / `right`, `unit:TAG`, `nocount`. `#`
+starts a comment.
+
+**The unit is per squad, not per slot.** A squad belongs to a unit as a whole —
+that is how the rosters are actually organised — so tagging every line of it
+would be the same tag repeated six times. `utils/orbat.py` takes the tag as free
+text and knows nothing about units; `web/orbat.py` warns when it matches none of
+`UNIT_ROLES`, as a warning rather than an error because a unit could be renamed
+in Discord tomorrow and a roster that stops saving over that would be worse. A
+`unit:` written on a slot line produces a warning naming the squad it belongs on,
+rather than being dropped in silence. A leading `1.` / `2)` / `3 -` is stripped, so lines pasted out
 of a sheet land clean — the number is load-bearing there (it keeps two "Rifleman"
 cells apart) and noise here, where every slot has an id.
 

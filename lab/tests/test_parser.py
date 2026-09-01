@@ -27,12 +27,21 @@ def test_tab_counts_as_indentation():
     assert result.ok and result.slot_count == 1
 
 
-def test_options_on_squad_and_slot():
-    result = parse("Reservists | right, nocount\n  Reserve | unit:TFP\n")
+def test_squad_options():
+    result = parse("Reservists | right, unit:tfp, nocount\n  Reserve\n")
     squad = result.squads[0]
     assert squad.column == 1
     assert squad.exclude_from_count
-    assert squad.slots[0].reserved_unit == 'TFP'
+    assert squad.reserved_unit == 'TFP'     # upper-cased on the way in
+
+
+def test_a_unit_on_a_slot_says_where_it_belongs_now():
+    # The unit used to sit on the slot. Saying so beats dropping it silently for
+    # anyone whose roster predates the move.
+    result = parse("Alpha\n  Rifleman | unit:TFP\n")
+    assert result.ok
+    line, message = result.warnings[0]
+    assert line == 2 and 'squad line' in message and 'Alpha' in message
 
 
 def test_unknown_option_warns_but_parses():
@@ -94,20 +103,21 @@ def test_an_explicit_marker_stops_the_guessing():
 
 
 def test_round_trip_through_to_text():
-    text = "1-1 Alpha  | left\n  Squad Leader  | unit:TFP\n  Rifleman\n\nReservists  | right, nocount\n  Reserve\n"
+    text = ("1-1 Alpha  | left, unit:TFP\n  Squad Leader\n  Rifleman\n\n"
+            "Reservists  | right, nocount\n  Reserve\n")
     first = parse(text)
     assert first.ok, first.errors
     stored = [
         {'name': s.name, 'column_side': s.column,
          'exclude_from_count': int(s.exclude_from_count),
-         'slots': [{'role_name': slot.role_name, 'reserved_unit': slot.reserved_unit}
-                   for slot in s.slots]}
+         'reserved_unit': s.reserved_unit,
+         'slots': [{'role_name': slot.role_name} for slot in s.slots]}
         for s in first.squads
     ]
     second = parse(parser.to_text(stored))
     assert second.ok, second.errors
-    assert [(s.name, s.column, s.exclude_from_count) for s in second.squads] == \
-           [(s.name, s.column, s.exclude_from_count) for s in first.squads]
+    assert [(s.name, s.column, s.exclude_from_count, s.reserved_unit) for s in second.squads] == \
+           [(s.name, s.column, s.exclude_from_count, s.reserved_unit) for s in first.squads]
     assert [[x.role_name for x in s.slots] for s in second.squads] == \
            [[x.role_name for x in s.slots] for s in first.squads]
 

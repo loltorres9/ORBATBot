@@ -13,6 +13,7 @@
         {% if squad %}
           <div>
             <div class="squadname">{{ squad.name }}
+              {% if squad.unit %}<span class="squadunit">{{ squad.unit }}</span>{% endif %}
               {% if squad.excluded %}<span class="nocount">· not counted</span>{% endif %}
             </div>
             <div class="squadslots">{% for line in squad.lines %}{{ line.dot }} {% if line.state == 'open' %}<span class="off">{{ line.text }}</span>{% else %}{{ line.text }}{% endif %}

@@ -7,6 +7,7 @@ helpers, the way `web/service.py` does for events. A `ValueError` raised here is
 a message meant for the user and is shown on the form.
 """
 
+from cogs.slots import UNIT_ROLES
 from utils import database, orbat
 
 MAX_NAME = 120
@@ -16,9 +17,9 @@ MAX_DESCRIPTION = 300
 # the format rather than an empty box.
 STARTER_TEXT = """\
 # Squad lines start at the left margin, slots are indented.
-# Options after the pipe: left / right / nocount, and unit:TAG on a slot.
+# Options after the pipe: left / right, unit:TAG, nocount.
 
-1-1 Alpha  | left
+1-1 Alpha  | left, unit:TFP
   Squad Leader
   Team Leader
   Automatic Rifleman
@@ -81,15 +82,38 @@ def _as_board_input(parsed_squads: list) -> list:
     return [
         {'id': None, 'name': squad.name, 'column_side': squad.column,
          'exclude_from_count': squad.exclude_from_count,
-         'slots': [{'role_name': slot.role_name, 'reserved_unit': slot.reserved_unit,
-                    'booking': None, 'pending': False} for slot in squad.slots]}
+         'reserved_unit': squad.reserved_unit,
+         'slots': [{'role_name': slot.role_name, 'booking': None, 'pending': False}
+                   for slot in squad.slots]}
         for squad in parsed_squads
     ]
+
+
+def _check_units(result) -> None:
+    """Warn about a unit tag that is not one of the unit roles.
+
+    `utils/orbat.py` knows nothing about units on purpose, and this is a warning
+    rather than an error: a unit could be renamed in Discord tomorrow, and a
+    roster that stops saving because of it would be worse than a typo. The point
+    is that a tag which matches nothing silently means nothing.
+    """
+    for squad in result.squads:
+        if squad.reserved_unit and squad.reserved_unit not in _UNIT_TAGS:
+            result.warnings.append((
+                squad.line,
+                f'"{squad.reserved_unit}" is not one of the unit roles '
+                f'({", ".join(sorted(UNIT_ROLES))}).',
+            ))
+
+
+# Matched case-insensitively, since the editor upper-cases what is typed.
+_UNIT_TAGS = {role.upper() for role in UNIT_ROLES}
 
 
 async def review(orbat_id: int, text: str) -> dict:
     """Parse the submitted text and work out what saving it would do."""
     result = orbat.parse(text)
+    _check_units(result)
     if not result.ok:
         return {'result': result, 'diff': None, 'board': None, 'summary': None}
 

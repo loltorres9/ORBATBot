@@ -47,7 +47,6 @@ _OPTIONS = re.compile(r'\s*\|\s*(.+)$')
 @dataclass
 class ParsedSlot:
     role_name: str
-    reserved_unit: str | None = None
     line: int = 0
 
 
@@ -57,6 +56,10 @@ class ParsedSquad:
     column: int = 0                     # 0 = left, 1 = right
     exclude_from_count: bool = False
     explicit_column: bool = False       # was left/right actually written down?
+    # The unit the whole squad belongs to. A squad is a unit's squad — that is
+    # how the rosters are actually organised — so this sits here rather than on
+    # every slot, where it would have to be repeated line after line.
+    reserved_unit: str | None = None
     slots: list = field(default_factory=list)
     line: int = 0
 
@@ -144,6 +147,8 @@ def parse(text: str) -> ParseResult:
                     squad.column, squad.explicit_column = 1, True
                 elif option in ('nocount', 'reserve'):
                     squad.exclude_from_count = True
+                elif option.startswith('unit:'):
+                    squad.reserved_unit = option.split(':', 1)[1].strip().upper() or None
                 else:
                     result.warnings.append(
                         (number, f'Unknown squad option "{option}" — ignored.')
@@ -171,7 +176,12 @@ def parse(text: str) -> ParseResult:
         slot = ParsedSlot(role_name=role, line=number)
         for option in options:
             if option.startswith('unit:'):
-                slot.reserved_unit = option.split(':', 1)[1].strip().upper() or None
+                # Said on a slot this used to mean something. Saying so beats
+                # silently dropping it for anyone whose roster predates the move.
+                result.warnings.append(
+                    (number, f'A unit belongs on the squad line now — '
+                             f'put "{option}" after "{current.name}".')
+                )
             else:
                 result.warnings.append(
                     (number, f'Unknown slot option "{option}" — ignored.')
@@ -221,13 +231,14 @@ def to_text(squads: list) -> str:
         options = []
         if explicit:
             options.append('right' if squad['column_side'] else 'left')
+        if squad['reserved_unit']:
+            options.append(f"unit:{squad['reserved_unit']}")
         if squad['exclude_from_count']:
             options.append('nocount')
         suffix = f"  | {', '.join(options)}" if options else ''
         lines.append(f"{squad['name']}{suffix}")
         for slot in squad['slots']:
-            slot_suffix = f"  | unit:{slot['reserved_unit']}" if slot['reserved_unit'] else ''
-            lines.append(f"  {slot['role_name']}{slot_suffix}")
+            lines.append(f"  {slot['role_name']}")
         lines.append('')
     return '\n'.join(lines).strip() + '\n'
 
@@ -430,8 +441,7 @@ def _line(slot: dict) -> dict:
     if slot.get('pending'):
         return {'state': 'pending', 'dot': '\U0001F7E1',
                 'text': f"{slot['role_name']} (pending)"}
-    reserved = f" · {slot['reserved_unit']} only" if slot.get('reserved_unit') else ''
-    return {'state': 'open', 'dot': '\U0001F7E2', 'text': f"{slot['role_name']}{reserved}"}
+    return {'state': 'open', 'dot': '\U0001F7E2', 'text': slot['role_name']}
 
 
 def build_board(squads: list) -> dict:
@@ -451,6 +461,7 @@ def build_board(squads: list) -> dict:
         rendered.append({
             'id': squad.get('id'),
             'name': squad['name'],
+            'unit': squad.get('reserved_unit'),
             'column': squad['column_side'],
             'excluded': bool(squad['exclude_from_count']),
             'slots': squad['slots'],

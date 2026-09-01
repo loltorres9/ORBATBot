@@ -906,8 +906,8 @@ You write the roster as indented text — squad at the left margin, its slots in
   Platoon Leader
   Platoon Sergeant
 
-1-1 Alpha  | left
-  Squad Leader  | unit:TFP
+1-1 Alpha  | left, unit:TFP
+  Squad Leader
   Team Leader
   Automatic Rifleman
   Rifleman
@@ -916,11 +916,13 @@ Reservists  | right, nocount
   Reserve
 ```
 
-- `left` / `right` put the squad in that column of the board
-- `nocount` leaves the squad out of the open/filled counts (what `Reservists` gets today)
-- `unit:TFP` marks a slot as held for one unit
-- A line starting with `#` is a comment
-- A leading number — `1. Rifleman` — is removed, so lines pasted straight out of a sheet work
+Everything after the pipe belongs to the **squad**:
+
+- `left` / `right` put it in that column of the board
+- `unit:TFP` marks the whole squad as one unit's — the tag is the unit's role name, and you get a warning if it matches none of them
+- `nocount` leaves it out of the open/filled counts (what `Reservists` gets today)
+
+A line starting with `#` is a comment, and a leading number — `1. Rifleman` — is removed, so lines pasted straight out of a sheet work.
 
 **Preview** shows the board exactly as Discord would render it, without saving. It also warns you before you hit a limit Discord enforces silently: more than 8 rows of squads, a squad too long for one field, or an embed over 6000 characters. **Save** writes it.
 

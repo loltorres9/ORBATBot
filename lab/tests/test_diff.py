@@ -9,13 +9,14 @@ def stored(*squads):
     out, slot_id = [], 0
     for name, roles in squads:
         entry = {'id': len(out) + 1, 'name': name, 'column_side': 0,
-                 'exclude_from_count': 0, 'sort_order': len(out), 'slots': []}
+                 'exclude_from_count': 0, 'reserved_unit': None,
+                 'sort_order': len(out), 'slots': []}
         for role in roles:
             slot_id += 1
             booked = role.endswith('*')
             role = role.rstrip('*')
             entry['slots'].append({
-                'id': slot_id, 'role_name': role, 'reserved_unit': None,
+                'id': slot_id, 'role_name': role,
                 'sort_order': len(entry['slots']),
                 'bookings': ([{'member_name': 'Panz', 'op_name': 'Op', 'unit': 'TFP'}]
                                 if booked else []),
