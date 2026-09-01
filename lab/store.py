@@ -69,6 +69,7 @@ def init() -> None:
                 column_side        INTEGER NOT NULL DEFAULT 0,
                 exclude_from_count INTEGER NOT NULL DEFAULT 0,
                 reserved_unit      TEXT,
+                radio              TEXT,
                 sort_order         INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS lab_slots (
@@ -149,9 +150,10 @@ def duplicate_orbat(orbat_id: int, name: str) -> int:
         for squad in squads:
             cursor = db.execute(
                 'INSERT INTO lab_squads (orbat_id, name, column_side, exclude_from_count,'
-                ' reserved_unit, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+                ' reserved_unit, radio, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
                 (new_id, squad['name'], squad['column_side'],
-                 squad['exclude_from_count'], squad['reserved_unit'], squad['sort_order']),
+                 squad['exclude_from_count'], squad['reserved_unit'], squad['radio'],
+                 squad['sort_order']),
             )
             for slot in squad['slots']:
                 db.execute(
@@ -244,17 +246,18 @@ def apply_structure(orbat_id: int, parsed_squads: list, diff, source_text: str =
         for order, squad in enumerate(parsed_squads):
             squad_id = squad_of_new.get(id(squad))
             values = (squad.name, squad.column, int(squad.exclude_from_count),
-                      squad.reserved_unit, order)
+                      squad.reserved_unit, squad.radio, order)
             if squad_id:
                 db.execute(
                     'UPDATE lab_squads SET name = ?, column_side = ?, exclude_from_count = ?,'
-                    ' reserved_unit = ?, sort_order = ? WHERE id = ?',
+                    ' reserved_unit = ?, radio = ?, sort_order = ? WHERE id = ?',
                     values + (squad_id,),
                 )
             else:
                 squad_id = db.execute(
                     'INSERT INTO lab_squads (name, column_side, exclude_from_count,'
-                    ' reserved_unit, sort_order, orbat_id) VALUES (?, ?, ?, ?, ?, ?)',
+                    ' reserved_unit, radio, sort_order, orbat_id)'
+                    ' VALUES (?, ?, ?, ?, ?, ?, ?)',
                     values + (orbat_id,),
                 ).lastrowid
 

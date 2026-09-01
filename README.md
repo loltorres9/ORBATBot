@@ -906,7 +906,7 @@ You write the roster as indented text — squad at the left margin, its slots in
   Platoon Leader
   Platoon Sergeant
 
-1-1 Alpha  | left, unit:TFP
+1-1 Alpha  | left, unit:TFP, radio:343 CHN:3
   Squad Leader
   Team Leader
   Automatic Rifleman
@@ -920,9 +920,21 @@ Everything after the pipe belongs to the **squad**:
 
 - `left` / `right` put it in that column of the board
 - `unit:TFP` marks the whole squad as one unit's — the tag is the unit's role name, and you get a warning if it matches none of them
+- `radio:343 CHN:3` is the channel that squad talks on internally, shown under its name on the board
 - `nocount` leaves it out of the open/filled counts (what `Reservists` gets today)
 
 A line starting with `#` is a comment, and a leading number — `1. Rifleman` — is removed, so lines pasted straight out of a sheet work.
+
+Under the roster there is a second, smaller box for the **radio nets** everyone shares — the platoon net, logistics, air, high command. One per line:
+
+```
+Platoon Net   | 152 CHN : 1
+Logi          | 152 CHN : 2
+-Air Net      | 152 CHN : 3
+High Com Net  | 152 CHN : 4
+```
+
+A line starting with `-` is a net that exists in the plan but is not in use this time; it shows struck through, the way you would cross it out on paper.
 
 **Preview** shows the board exactly as Discord would render it, without saving. It also warns you before you hit a limit Discord enforces silently: more than 8 rows of squads, a squad too long for one field, or an embed over 6000 characters. **Save** writes it.
 

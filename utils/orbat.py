@@ -60,6 +60,10 @@ class ParsedSquad:
     # how the rosters are actually organised — so this sits here rather than on
     # every slot, where it would have to be repeated line after line.
     reserved_unit: str | None = None
+    # The radio and channel the squad talks on internally, e.g. "343 CHN:3".
+    # Free text: every unit writes these slightly differently, and a format
+    # this code enforced would be one more thing to fight.
+    radio: str | None = None
     slots: list = field(default_factory=list)
     line: int = 0
 
@@ -92,11 +96,17 @@ def _strip_enumeration(name: str) -> str:
 
 
 def _split_options(raw: str) -> tuple[str, list]:
+    """Split "Name | one, two:value" into the name and its options.
+
+    Options come back with their case intact — a radio channel is written
+    "343 CHN:3" and lower-casing it on the way in would hand that back as
+    "343 chn:3". Keywords are matched case-insensitively at the point of use.
+    """
     match = _OPTIONS.search(raw)
     if not match:
         return raw.strip(), []
     name = raw[:match.start()].strip()
-    options = [o.strip().lower() for o in match.group(1).split(',') if o.strip()]
+    options = [o.strip() for o in match.group(1).split(',') if o.strip()]
     return name, options
 
 
@@ -141,14 +151,17 @@ def parse(text: str) -> ParseResult:
 
             squad = ParsedSquad(name=name, line=number)
             for option in options:
-                if option == 'left':
+                keyword = option.lower()
+                if keyword == 'left':
                     squad.column, squad.explicit_column = 0, True
-                elif option == 'right':
+                elif keyword == 'right':
                     squad.column, squad.explicit_column = 1, True
-                elif option in ('nocount', 'reserve'):
+                elif keyword in ('nocount', 'reserve'):
                     squad.exclude_from_count = True
-                elif option.startswith('unit:'):
+                elif keyword.startswith('unit:'):
                     squad.reserved_unit = option.split(':', 1)[1].strip().upper() or None
+                elif keyword.startswith('radio:') or keyword.startswith('net:'):
+                    squad.radio = option.split(':', 1)[1].strip() or None
                 else:
                     result.warnings.append(
                         (number, f'Unknown squad option "{option}" — ignored.')
@@ -175,7 +188,7 @@ def parse(text: str) -> ParseResult:
 
         slot = ParsedSlot(role_name=role, line=number)
         for option in options:
-            if option.startswith('unit:'):
+            if option.lower().startswith('unit:'):
                 # Said on a slot this used to mean something. Saying so beats
                 # silently dropping it for anyone whose roster predates the move.
                 result.warnings.append(
@@ -231,9 +244,11 @@ def to_text(squads: list) -> str:
         options = []
         if explicit:
             options.append('right' if squad['column_side'] else 'left')
-        if squad['reserved_unit']:
+        if squad.get('reserved_unit'):
             options.append(f"unit:{squad['reserved_unit']}")
-        if squad['exclude_from_count']:
+        if squad.get('radio'):
+            options.append(f"radio:{squad['radio']}")
+        if squad.get('exclude_from_count'):
             options.append('nocount')
         suffix = f"  | {', '.join(options)}" if options else ''
         lines.append(f"{squad['name']}{suffix}")
@@ -241,6 +256,94 @@ def to_text(squads: list) -> str:
             lines.append(f"  {slot['role_name']}")
         lines.append('')
     return '\n'.join(lines).strip() + '\n'
+
+
+# ---------------------------------------------------------------------------
+# Radio nets
+# ---------------------------------------------------------------------------
+#
+# The long-range nets the whole operation shares — platoon, logistics, air, high
+# command — as against the short-range channel each squad talks on internally,
+# which is the squad's own `radio`. They are a flat list with no identity of
+# their own, so unlike squads and slots they are simply replaced on save; there
+# is nothing hanging off a net that an edit could unseat.
+
+MAX_NETS = 25
+MAX_NET_NAME = 60
+MAX_NET_CHANNEL = 40
+
+
+@dataclass
+class ParsedNet:
+    name: str
+    channel: str | None = None
+    # Struck through on the board: the net exists in the plan but is not in use
+    # for this operation. The leading "-" that marks it is the same convention
+    # `cogs/events.py` uses for a decline response.
+    inactive: bool = False
+    line: int = 0
+
+
+@dataclass
+class NetsResult:
+    nets: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+
+def parse_nets(text: str) -> NetsResult:
+    """One net per line: "Platoon Net | 152 CHN : 1".
+
+    A leading "-" marks a net as not in use. The channel is free text and may be
+    left off entirely, for a net whose frequency has not been decided yet.
+    """
+    result = NetsResult()
+    for number, raw_line in enumerate((text or '').splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+
+        inactive = line.startswith('-')
+        if inactive:
+            line = line[1:].strip()
+
+        name, _, channel = line.partition('|')
+        name, channel = name.strip(), channel.strip()
+
+        if not name:
+            result.errors.append((number, 'Net without a name.'))
+            continue
+        if len(name) > MAX_NET_NAME:
+            result.errors.append(
+                (number, f'Net name is {len(name)} characters; the limit is {MAX_NET_NAME}.')
+            )
+            continue
+        if len(channel) > MAX_NET_CHANNEL:
+            result.errors.append(
+                (number, f'Channel is {len(channel)} characters; the limit is '
+                         f'{MAX_NET_CHANNEL}.')
+            )
+            continue
+
+        result.nets.append(ParsedNet(name=name, channel=channel or None,
+                                     inactive=inactive, line=number))
+
+    if len(result.nets) > MAX_NETS:
+        result.errors.append((None, f'More than {MAX_NETS} nets.'))
+    return result
+
+
+def nets_to_text(rows: list) -> str:
+    lines = []
+    for row in rows:
+        prefix = '-' if row['inactive'] else ''
+        suffix = f"  | {row['channel']}" if row['channel'] else ''
+        lines.append(f"{prefix}{row['name']}{suffix}")
+    return '\n'.join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +547,7 @@ def _line(slot: dict) -> dict:
     return {'state': 'open', 'dot': '\U0001F7E2', 'text': slot['role_name']}
 
 
-def build_board(squads: list) -> dict:
+def build_board(squads: list, nets: list = None) -> dict:
     """Squads (each with 'slots', each slot optionally carrying a 'booking')
     into everything a board page or embed needs.
 
@@ -462,6 +565,7 @@ def build_board(squads: list) -> dict:
             'id': squad.get('id'),
             'name': squad['name'],
             'unit': squad.get('reserved_unit'),
+            'radio': squad.get('radio'),
             'column': squad['column_side'],
             'excluded': bool(squad['exclude_from_count']),
             'slots': squad['slots'],
@@ -481,24 +585,35 @@ def build_board(squads: list) -> dict:
         for i in range(max(len(left), len(right)))
     ]
 
+    nets = list(nets or [])
     return {
         'squads': rendered,
         'rows': rows,
+        'nets': nets,
         'counts': {
             'open': len(slots) - filled - pending,
             'pending': pending,
             'filled': filled,
             'total': len(slots),
         },
-        'warnings': check_limits(rendered, rows),
+        'warnings': check_limits(rendered, rows, nets),
     }
 
 
-def check_limits(rendered: list, rows: list) -> list:
+def check_limits(rendered: list, rows: list, nets: list = None) -> list:
     """What Discord would do to this board, said out loud while it can still be
     changed. There is no equivalent today: a board that outgrows the embed
     silently loses its last squads."""
     warnings = []
+
+    # The nets ride along as one more field, which is what makes eight rows the
+    # limit rather than eight-and-a-bit: 8 x 3 + 1 is exactly 25.
+    fields = min(len(rows), MAX_ROWS) * 3 + (1 if nets else 0)
+    if fields > MAX_FIELDS:
+        warnings.append(
+            f'{fields} embed fields — Discord allows {MAX_FIELDS}. Drop a squad '
+            'row or the net list.'
+        )
 
     if len(rows) > MAX_ROWS:
         dropped = sum(1 for index, row in enumerate(rows) if index >= MAX_ROWS
@@ -520,6 +635,7 @@ def check_limits(rendered: list, rows: list) -> list:
             warnings.append(f'Squad name "{squad["name"][:40]}…" is too long for an embed field.')
 
     total = sum(len(s['name']) + s['value_len'] for s in rendered)
+    total += sum(len(n['name']) + len(n['channel'] or '') + 4 for n in (nets or []))
     if total > MAX_EMBED_CHARS:
         warnings.append(
             f'The whole embed would be {total} characters — Discord\'s maximum is '

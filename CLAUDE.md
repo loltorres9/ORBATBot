@@ -153,6 +153,7 @@ The slot roster held here rather than read out of a Google Sheet — see
 | `guild_id` | TEXT | |
 | `name` | TEXT | Shown in the list |
 | `description` | TEXT | Optional |
+| `nets_text` | TEXT | The net list as its author typed it, for the same reason as below |
 | `source_text` | TEXT | The roster as its author typed it. The squads and slots below are the source of truth; this is kept alongside so comments, blank lines and their own spacing survive a reload, which regenerating the text from the structure would flatten |
 | `created_by` / `created_by_name` | TEXT | |
 | `created_at` / `updated_at` | TIMESTAMP | |
@@ -166,6 +167,7 @@ The slot roster held here rather than read out of a Google Sheet — see
 | `column_side` | INTEGER | 0 = left, 1 = right. What `_build_orbat_embed()` infers from sheet geometry is stated outright here |
 | `exclude_from_count` | INTEGER | 0/1 — replaces the case-insensitive `Reservists` name match |
 | `reserved_unit` | TEXT | The unit the whole squad belongs to, matched by name against `UNIT_ROLES`. It began on the slot; `init_db()` lifts any values entered there up to their squad and drops the slot column |
+| `radio` | TEXT | The channel the squad talks on internally, e.g. `343 CHN:3`. Free text — every unit writes these slightly differently |
 | `sort_order` | INTEGER | |
 
 ### `orbat_slots`
@@ -179,6 +181,22 @@ The slot roster held here rather than read out of a Google Sheet — see
 **A slot carries no booking.** Who holds one lives in `requests`, keyed by
 `(operation_id, slot_id)`, which is what makes an ORBAT a reusable template
 rather than one night's board.
+
+### `orbat_nets`
+The long-range nets the whole operation shares — platoon, logistics, air, high
+command — as against `orbat_squads.radio`, which is one squad's internal channel.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `orbat_id` | INTEGER | FK → `orbats.id` **ON DELETE CASCADE** |
+| `name` | TEXT | *Platoon Net*, *Logi*, *High Com Net* |
+| `channel` | TEXT | Free text, e.g. `152 CHN : 1`. May be NULL for a net whose frequency isn't decided |
+| `inactive` | INTEGER | 0/1 — struck through on the board: planned, but not in use this time |
+| `sort_order` | INTEGER | |
+
+**Nothing hangs off a net**, so unlike the squads and slots a save replaces the
+list wholesale — there is no identity for an edit to lose.
 
 ### `guild_settings`
 | Column | Type | Notes |
@@ -963,7 +981,7 @@ forty slots. So the editor is one indented-text field, which is how ORBATs get
 written down anyway:
 
 ```
-1-1 Alpha  | right, unit:TFP
+1-1 Alpha  | right, unit:TFP, radio:343 CHN:3
   Squad Leader
   Rifleman
 
@@ -972,8 +990,12 @@ Reservists  | right, nocount
 ```
 
 Squad lines start at the left margin, slots are indented (space or tab). Options
-after a pipe, all on the squad: `left` / `right`, `unit:TAG`, `nocount`. `#`
-starts a comment.
+after a pipe, all on the squad: `left` / `right`, `unit:TAG`, `radio:…`,
+`nocount`. `#` starts a comment.
+
+**`_split_options()` keeps an option's case** and lower-cases only the keyword
+when matching. It used to lower-case the whole list, which turned a channel
+written `343 CHN:3` into `343 chn:3` on the way in.
 
 **The unit is per squad, not per slot.** A squad belongs to a unit as a whole —
 that is how the rosters are actually organised — so tagging every line of it
@@ -1023,6 +1045,20 @@ key, so without that the request would survive as an approved booking pointing a
 a slot that no longer exists — invisible on every board, and a contradiction of
 what the confirmation page just promised.
 
+### The net list is a second field, not part of the roster
+
+The shared nets are their own textarea and their own parser (`parse_nets()`),
+one net per line as `Platoon Net | 152 CHN : 1`. A leading `-` marks a net that
+is planned but not in use, rendered struck through — the same convention
+`cogs/events.py` uses for a decline response.
+
+They are kept out of the roster grammar deliberately. A net has no identity for
+an edit to lose, so it needs none of the diff machinery above and is simply
+replaced on save; folding it into the roster text would put a second grammar
+into the one parser that must not get slots wrong. Their problems are also
+reported in their own panel, so a line number means something: line 3 of the
+roster and line 3 of the nets are different places.
+
 ### The board, and Discord's limits
 
 `build_board()` groups squads into the same left/right columns
@@ -1034,6 +1070,9 @@ from the sheet's geometry, this reads `column_side` off the squad.
 outgrow what Discord will render — 25 fields, 1024 characters per field value,
 6000 per embed — and finding that out when the board silently loses its last
 three squads is too late. The editor says so while it can still be changed.
+
+The net list rides along as **one more field**, which is what makes eight rows
+the cap rather than eight-and-a-bit: 8 × 3 + 1 is exactly 25.
 
 ### Notes for future changes
 

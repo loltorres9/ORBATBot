@@ -37,6 +37,15 @@ Reservists  | right, nocount
   Reserve
 """
 
+# The shared nets a new ORBAT starts with, so the format is visible rather than
+# described. A leading "-" is a net that exists but is not in use this time.
+STARTER_NETS = """\
+Platoon Net   | 152 CHN : 1
+Logi          | 152 CHN : 2
+-Air Net      | 152 CHN : 3
+High Com Net  | 152 CHN : 4
+"""
+
 
 def _clean(raw, limit: int, what: str) -> str:
     value = (raw or '').strip()
@@ -73,6 +82,14 @@ async def editor_text(record) -> str:
     return orbat.to_text(squads) if squads else STARTER_TEXT
 
 
+async def editor_nets_text(record) -> str:
+    """The same, for the net list."""
+    if record['nets_text']:
+        return record['nets_text']
+    rows = await database.get_orbat_nets(record['id'])
+    return orbat.nets_to_text(rows) if rows else STARTER_NETS
+
+
 def _as_board_input(parsed_squads: list) -> list:
     """Parsed squads in the shape build_board() wants, with nothing booked.
 
@@ -82,11 +99,16 @@ def _as_board_input(parsed_squads: list) -> list:
     return [
         {'id': None, 'name': squad.name, 'column_side': squad.column,
          'exclude_from_count': squad.exclude_from_count,
-         'reserved_unit': squad.reserved_unit,
+         'reserved_unit': squad.reserved_unit, 'radio': squad.radio,
          'slots': [{'role_name': slot.role_name, 'booking': None, 'pending': False}
                    for slot in squad.slots]}
         for squad in parsed_squads
     ]
+
+
+def _as_net_input(parsed_nets: list) -> list:
+    return [{'name': net.name, 'channel': net.channel, 'inactive': int(net.inactive)}
+            for net in parsed_nets]
 
 
 def _check_units(result) -> None:
@@ -110,31 +132,40 @@ def _check_units(result) -> None:
 _UNIT_TAGS = {role.upper() for role in UNIT_ROLES}
 
 
-async def review(orbat_id: int, text: str) -> dict:
-    """Parse the submitted text and work out what saving it would do."""
+async def review(orbat_id: int, text: str, nets_text: str) -> dict:
+    """Parse both fields and work out what saving them would do.
+
+    The two are reported separately so a line number means something: line 3 of
+    the roster and line 3 of the net list are different places.
+    """
     result = orbat.parse(text)
     _check_units(result)
+    nets = orbat.parse_nets(nets_text)
+    checked = {'result': result, 'nets': nets, 'diff': None, 'board': None,
+               'summary': None, 'ok': result.ok and nets.ok}
     if not result.ok:
-        return {'result': result, 'diff': None, 'board': None, 'summary': None}
+        return checked
 
     stored = await database.get_orbat_structure(orbat_id)
-    diff = orbat.build_diff(stored, result.squads)
-    return {
-        'result': result,
-        'diff': diff,
-        'board': orbat.build_board(_as_board_input(result.squads)),
-        'summary': orbat.summarise(diff),
-    }
+    checked['diff'] = orbat.build_diff(stored, result.squads)
+    checked['board'] = orbat.build_board(
+        _as_board_input(result.squads), _as_net_input(nets.nets)
+    )
+    checked['summary'] = orbat.summarise(checked['diff'])
+    return checked
 
 
-async def apply(orbat_id: int, text: str, checked: dict) -> str:
+async def apply(orbat_id: int, text: str, nets_text: str, checked: dict) -> str:
     await database.apply_orbat_structure(
         orbat_id, checked['result'].squads, checked['diff'], source_text=text
     )
+    await database.set_orbat_nets(orbat_id, checked['nets'].nets, nets_text=nets_text)
     return f"Saved — {checked['summary']}."
 
 
 async def stored_board(orbat_id: int):
     """The board as stored, with whatever is actually booked into it."""
     squads = await database.get_orbat_structure(orbat_id)
-    return orbat.build_board(squads) if squads else None
+    if not squads:
+        return None
+    return orbat.build_board(squads, await database.get_orbat_nets(orbat_id))

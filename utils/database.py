@@ -252,6 +252,10 @@ async def init_db():
                 -- blank lines and their own spacing survive a reload, which
                 -- regenerating the text from the structure would flatten.
                 source_text TEXT,
+                -- The net list as its author typed it, for the same reason
+                -- source_text exists: regenerating it would flatten comments,
+                -- blank lines and their own alignment.
+                nets_text TEXT,
                 created_by TEXT,
                 created_by_name TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -266,6 +270,7 @@ async def init_db():
                 column_side INTEGER NOT NULL DEFAULT 0,
                 exclude_from_count INTEGER NOT NULL DEFAULT 0,
                 reserved_unit TEXT,
+                radio TEXT,
                 sort_order INTEGER NOT NULL DEFAULT 0
             )
         ''')
@@ -276,6 +281,23 @@ async def init_db():
                 role_name TEXT NOT NULL,
                 sort_order INTEGER NOT NULL DEFAULT 0
             )
+        ''')
+        # The long-range nets the whole operation shares, as against the
+        # short-range channel on orbat_squads.radio. A flat list with no
+        # identity of its own, so a save replaces it wholesale.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS orbat_nets (
+                id SERIAL PRIMARY KEY,
+                orbat_id INTEGER NOT NULL REFERENCES orbats(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                channel TEXT,
+                inactive INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_orbat_nets
+                ON orbat_nets (orbat_id, sort_order)
         ''')
         await db.execute('''
             CREATE INDEX IF NOT EXISTS idx_orbat_squads
@@ -358,6 +380,14 @@ async def init_db():
             ''')
             await db.execute('ALTER TABLE orbat_slots DROP COLUMN reserved_unit')
 
+        # The squad's own radio channel and the shared net list, both added
+        # after the ORBAT tables shipped.
+        await db.execute('''
+            ALTER TABLE orbat_squads ADD COLUMN IF NOT EXISTS radio TEXT
+        ''')
+        await db.execute('''
+            ALTER TABLE orbats ADD COLUMN IF NOT EXISTS nets_text TEXT
+        ''')
         # Which ORBAT slot a request is for. NULL on every sheet-backed request,
         # which is all of them until slots can be booked from the board — the
         # column exists now so an ORBAT knows who its slots are promised to.
@@ -1531,12 +1561,12 @@ async def apply_orbat_structure(orbat_id: int, parsed_squads: list, diff,
             for order, squad in enumerate(parsed_squads):
                 squad_id = squad_of_new.get(id(squad))
                 values = (squad.name, squad.column, int(squad.exclude_from_count),
-                          squad.reserved_unit, order)
+                          squad.reserved_unit, squad.radio, order)
                 if squad_id:
                     await db.execute(
                         '''UPDATE orbat_squads
                               SET name = $2, column_side = $3, exclude_from_count = $4,
-                                  reserved_unit = $5, sort_order = $6
+                                  reserved_unit = $5, radio = $6, sort_order = $7
                             WHERE id = $1''',
                         squad_id, *values,
                     )
@@ -1544,8 +1574,8 @@ async def apply_orbat_structure(orbat_id: int, parsed_squads: list, diff,
                     row = await db.fetchrow(
                         '''INSERT INTO orbat_squads
                            (orbat_id, name, column_side, exclude_from_count,
-                            reserved_unit, sort_order)
-                           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id''',
+                            reserved_unit, radio, sort_order)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id''',
                         orbat_id, *values,
                     )
                     squad_id = row['id']
@@ -1576,11 +1606,41 @@ async def apply_orbat_structure(orbat_id: int, parsed_squads: list, diff,
             )
 
 
+async def get_orbat_nets(orbat_id: int) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM orbat_nets WHERE orbat_id = $1 ORDER BY sort_order, id',
+            orbat_id,
+        )
+
+
+async def set_orbat_nets(orbat_id: int, nets: list, nets_text: str = None):
+    """Replace the net list. Nothing hangs off a net, so unlike the squads and
+    slots there is nothing to match up — the old rows go and the new ones land."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            await db.execute('DELETE FROM orbat_nets WHERE orbat_id = $1', orbat_id)
+            for order, net in enumerate(nets):
+                await db.execute(
+                    '''INSERT INTO orbat_nets (orbat_id, name, channel, inactive, sort_order)
+                       VALUES ($1, $2, $3, $4, $5)''',
+                    orbat_id, net.name, net.channel, int(net.inactive), order,
+                )
+            await db.execute(
+                '''UPDATE orbats SET nets_text = $2, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $1''',
+                orbat_id, nets_text,
+            )
+
+
 async def duplicate_orbat(orbat_id: int, name: str, created_by: str,
                           created_by_name: str) -> int:
     """Copy the structure, never the bookings — that is what a template is."""
     source = await get_orbat(orbat_id)
     squads = await get_orbat_structure(orbat_id)
+    nets = await get_orbat_nets(orbat_id)
     new_id = await create_orbat(
         source['guild_id'], name, source['description'], created_by, created_by_name
     )
@@ -1591,11 +1651,11 @@ async def duplicate_orbat(orbat_id: int, name: str, created_by: str,
                 row = await db.fetchrow(
                     '''INSERT INTO orbat_squads
                        (orbat_id, name, column_side, exclude_from_count,
-                        reserved_unit, sort_order)
-                       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id''',
+                        reserved_unit, radio, sort_order)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id''',
                     new_id, squad['name'], squad['column_side'],
                     squad['exclude_from_count'], squad['reserved_unit'],
-                    squad['sort_order'],
+                    squad['radio'], squad['sort_order'],
                 )
                 for slot in squad['slots']:
                     await db.execute(
@@ -1603,8 +1663,14 @@ async def duplicate_orbat(orbat_id: int, name: str, created_by: str,
                            VALUES ($1, $2, $3)''',
                         row['id'], slot['role_name'], slot['sort_order'],
                     )
+            for order, net in enumerate(nets):
+                await db.execute(
+                    '''INSERT INTO orbat_nets (orbat_id, name, channel, inactive, sort_order)
+                       VALUES ($1, $2, $3, $4, $5)''',
+                    new_id, net['name'], net['channel'], net['inactive'], order,
+                )
             await db.execute(
-                'UPDATE orbats SET source_text = $2 WHERE id = $1',
-                new_id, source['source_text'],
+                'UPDATE orbats SET source_text = $2, nets_text = $3 WHERE id = $1',
+                new_id, source['source_text'], source['nets_text'],
             )
     return new_id

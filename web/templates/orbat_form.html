@@ -14,7 +14,7 @@
 
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 
-{% if pending_text %}
+{% if pending %}
   <div class="flash err">
     <strong>This change touches existing bookings.</strong>
     {% if diff.losing_bookings %}
@@ -48,7 +48,8 @@
     {% endif %}
     <form method="post" action="/g/{{ guild.id }}/orbats/{{ record.id }}" class="confirmform">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="text" value="{{ pending_text }}">
+      <input type="hidden" name="text" value="{{ text }}">
+      <input type="hidden" name="nets" value="{{ nets_text }}">
       <input type="hidden" name="action" value="confirm">
       <button class="button danger" type="submit">Save anyway</button>
       <span class="muted">or keep editing above</span>
@@ -64,6 +65,13 @@
       <span>Roster</span>
       <textarea name="text" spellcheck="false" rows="24">{{ text }}</textarea>
     </label>
+    <label class="field">
+      <span>Radio nets</span>
+      <textarea class="netsfield" name="nets" spellcheck="false" rows="6">{{ nets_text }}</textarea>
+      <span class="hint">One net per line: <code>Platoon Net | 152 CHN : 1</code>.
+        Start a line with <code>-</code> for a net that exists but is not in use —
+        it shows struck through.</span>
+    </label>
     <div class="actions">
       <button class="button" type="submit" name="action" value="preview">Preview</button>
       <button class="button primary" type="submit" name="action" value="save">Save</button>
@@ -72,13 +80,14 @@
       <summary>The format</summary>
       <pre>Squad lines start at the left margin, slots are indented:
 
-1-1 Alpha  | right, unit:TFP
+1-1 Alpha  | right, unit:TFP, radio:343 CHN:3
   Squad Leader
   Rifleman
 
 Squad options
   left / right   which column of the board the squad sits in
   unit:TAG       the unit the whole squad belongs to
+  radio:...      the channel the squad talks on internally
   nocount        leave the squad out of the open/filled counts
 
 A line starting with # is a comment.
@@ -93,6 +102,17 @@ A leading number ("1. Rifleman") is stripped.</pre>
         <ul class="issues">
           {% for line, message in result.errors %}
             <li>{% if line %}<span class="lineno">line {{ line }}</span> {% endif %}{{ message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if nets and not nets.ok %}
+      <div class="card pad">
+        <h3 class="bad">{{ nets.errors|length }} problem{{ '' if nets.errors|length == 1 else 's' }} in the net list</h3>
+        <ul class="issues">
+          {% for line, message in nets.errors %}
+            <li>{% if line %}<span class="lineno">nets line {{ line }}</span> {% endif %}{{ message }}</li>
           {% endfor %}
         </ul>
       </div>

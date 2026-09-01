@@ -128,3 +128,44 @@ def test_new_orbat_from_nothing_is_all_additions():
     changes = diff_of([], "Alpha\n  Squad Leader\n  Rifleman\n")
     assert len(changes.added) == 2
     assert not changes.removed and not changes.destructive
+
+
+# -- the board ---------------------------------------------------------------
+
+def board_of(text, nets_text=''):
+    from lab import render
+    parsed = parser.parse(text)
+    assert parsed.ok, parsed.errors
+    nets = parser.parse_nets(nets_text)
+    return render.build_board(
+        [{'id': None, 'name': s.name, 'column_side': s.column,
+          'exclude_from_count': s.exclude_from_count,
+          'reserved_unit': s.reserved_unit, 'radio': s.radio,
+          'slots': [{'role_name': x.role_name, 'booking': None, 'pending': False}
+                    for x in s.slots]}
+         for s in parsed.squads],
+        [{'name': n.name, 'channel': n.channel, 'inactive': int(n.inactive)}
+         for n in nets.nets],
+    )
+
+
+def test_board_carries_the_squad_unit_and_radio():
+    board = board_of("1-1 Alpha | left, unit:TFP, radio:343 CHN:3\n  Squad Leader\n")
+    squad = board['squads'][0]
+    assert squad['unit'] == 'TFP' and squad['radio'] == '343 CHN:3'
+
+
+def test_board_carries_the_nets():
+    board = board_of("A | left\n  S\n", "Platoon Net | 152 CHN : 1\n-Air Net | 152 CHN : 3\n")
+    assert [n['name'] for n in board['nets']] == ['Platoon Net', 'Air Net']
+    assert board['nets'][1]['inactive'] == 1
+
+
+def test_the_net_list_costs_an_embed_field():
+    # Eight rows of squads is 24 fields; the nets make 25, which still fits.
+    roster = '\n'.join(f"S{i} | {'left' if i % 2 else 'right'}\n  R" for i in range(16))
+    assert not board_of(roster)['warnings']
+    assert not board_of(roster, 'Platoon Net | 1')['warnings']
+    # A ninth row does not, with or without them.
+    roster18 = '\n'.join(f"S{i} | {'left' if i % 2 else 'right'}\n  R" for i in range(18))
+    assert board_of(roster18)['warnings']
