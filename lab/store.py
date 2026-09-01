@@ -207,7 +207,7 @@ def load_squads(orbat_id: int, op_id: int = None) -> list:
             slot['pending'] = any(b['status'] == 'pending' for b in here)
             # Every booking across every operation -- what the confirmation page
             # needs in order to say what deleting this slot would cost.
-            slot['assignments'] = every.get(slot['id'], [])
+            slot['bookings'] = every.get(slot['id'], [])
             by_id[slot['squad_id']]['slots'].append(slot)
 
         return squads

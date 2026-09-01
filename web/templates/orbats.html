@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · ORBATs{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'orbats' %}{% include '_nav.html' %}{% endwith %}
+
+<h2>ORBATs</h2>
+<p class="hint">
+  The slot roster, held here instead of in a Google Sheet. An ORBAT is a
+  template: the same one backs as many operations as you like, and the bookings
+  belong to the operation rather than to the roster.
+</p>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if orbats %}
+  <ul class="eventlist">
+    {% for item in orbats %}
+      <li class="event">
+        <a class="eventmain" href="/g/{{ guild.id }}/orbats/{{ item.id }}">
+          <span class="title">{{ item.name }}</span>
+          <span class="meta">
+            #{{ item.id }}
+            {% if item.description %} · {{ item.description }}{% endif %}
+            {% if item.created_by_name %} · by {{ item.created_by_name }}{% endif %}
+          </span>
+        </a>
+        <span class="chip">{{ item.squad_count }} squads</span>
+        <span class="chip">{{ item.slot_count }} slots</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="empty">No ORBAT yet. Build the first one below.</p>
+{% endif %}
+
+<h2 style="margin-top:28px">New ORBAT</h2>
+<form class="form" method="post" action="/g/{{ guild.id }}/orbats">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="row">
+    <label class="field">
+      <span>Name</span>
+      <input name="name" required maxlength="120" placeholder="Platoon ORBAT">
+      <span class="hint">How you will recognise it in this list.</span>
+    </label>
+    <label class="field">
+      <span>Description</span>
+      <input name="description" maxlength="300" placeholder="Optional">
+    </label>
+  </div>
+  <div class="actions">
+    <button class="button primary" type="submit">Create</button>
+  </div>
+</form>
+{% endblock %}

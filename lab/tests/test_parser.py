@@ -69,13 +69,13 @@ def test_slot_before_any_squad_is_an_error():
 def test_duplicate_squad_names_are_refused():
     result = parse("Alpha\n  Rifleman\nalpha\n  Medic\n")
     assert not result.ok
-    assert 'schon' in result.errors[0][1]
+    assert 'already exists' in result.errors[0][1]
 
 
 def test_squad_without_slots_is_an_error():
     result = parse("Alpha\nBravo\n  Rifleman\n")
     assert not result.ok
-    assert any('keine Slots' in message for _, message in result.errors)
+    assert any('has no slots' in message for _, message in result.errors)
 
 
 def test_empty_text_is_an_error():

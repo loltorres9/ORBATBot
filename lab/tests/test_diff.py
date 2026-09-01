@@ -17,7 +17,7 @@ def stored(*squads):
             entry['slots'].append({
                 'id': slot_id, 'role_name': role, 'reserved_unit': None,
                 'sort_order': len(entry['slots']),
-                'assignments': ([{'member_name': 'Panz', 'op_name': 'Op', 'unit': 'TFP'}]
+                'bookings': ([{'member_name': 'Panz', 'op_name': 'Op', 'unit': 'TFP'}]
                                 if booked else []),
             })
         out.append(entry)
@@ -84,7 +84,7 @@ def test_removing_an_occupied_slot_is_flagged_destructive():
     changes = diff_of(old, "Alpha\n  Squad Leader\n")
     assert len(changes.removed) == 1
     assert changes.destructive
-    assert changes.losing_bookings[0].assignments[0]['member_name'] == 'Panz'
+    assert changes.losing_bookings[0].bookings[0]['member_name'] == 'Panz'
 
 
 def test_removing_an_empty_slot_is_not_destructive():

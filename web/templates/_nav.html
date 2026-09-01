@@ -3,6 +3,7 @@
   <a class="tab {{ 'active' if active == 'roles' else '' }}" href="/g/{{ guild.id }}/roles">🎮 Game roles</a>
   <a class="tab {{ 'active' if active == 'voice' else '' }}" href="/g/{{ guild.id }}/voice">🔊 Voice time</a>
   {% if is_admin %}
+    <a class="tab {{ 'active' if active == 'orbats' else '' }}" href="/g/{{ guild.id }}/orbats">🗺️ ORBATs</a>
     <a class="tab {{ 'active' if active == 'embeds' else '' }}" href="/g/{{ guild.id }}/embeds">📝 Embeds</a>
     <a class="tab {{ 'active' if active == 'logs' else '' }}" href="/g/{{ guild.id }}/logs">📋 Member log</a>
   {% endif %}

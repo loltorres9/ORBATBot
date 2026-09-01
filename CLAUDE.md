@@ -28,6 +28,7 @@ cogs/
 utils/
   database.py           # All PostgreSQL queries (asyncpg)
   sheets.py             # Google Sheets read/write (gspread)
+  orbat.py              # DB-held ORBATs: the text format, the safe edit, the board
   embeds.py             # Builder-made rich messages → discord.Embed, post and edit
 web/                    # Optional browser UI — Discord OAuth2 login + event management
   config.py             # Env-driven config; the feature is off until it is complete
@@ -38,10 +39,12 @@ web/                    # Optional browser UI — Discord OAuth2 login + event m
   service.py            # Create/edit/cancel/delete/RSVP, on top of cogs/events.py
   roles.py              # Game roles, on top of cogs/gameroles.py
   embeds.py             # Embed builder forms, on top of utils/embeds.py
+  orbat.py              # ORBAT editor forms, on top of utils/orbat.py
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates and one stylesheet — no build step
+lab/                    # Standalone ORBAT-editor playground — no Discord, no Postgres
 requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
@@ -125,6 +128,7 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 | `approved_by` | TEXT | Display name of approver/denier |
 | `denial_reason` | TEXT | Optional reason text |
 | `unit_role` | TEXT | Unit role of the requester at submission time |
+| `slot_id` | INTEGER | → `orbat_slots.id` for a DB-backed roster. **NULL on every request today** — `cogs/slots.py` still books against the sheet. No foreign key: `apply_orbat_structure()` releases the bookings itself when a slot goes, so the promise the confirmation page makes is kept |
 | `created_at` | TIMESTAMP | |
 | `updated_at` | TIMESTAMP | |
 
@@ -138,6 +142,43 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 
 ### `open_slots_messages`
 Same structure as `orbat_messages`. Reserved for a planned secondary "open slots" message. **Nothing reads or writes it** — the table is still created so existing deployments aren't orphaned, but the accessors were removed as dead code. Re-add them if the feature is picked up.
+
+### `orbats`
+The slot roster held here rather than read out of a Google Sheet — see
+[ORBATs](#orbats-utilsorbatpy--weborbatpy).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `guild_id` | TEXT | |
+| `name` | TEXT | Shown in the list |
+| `description` | TEXT | Optional |
+| `source_text` | TEXT | The roster as its author typed it. The squads and slots below are the source of truth; this is kept alongside so comments, blank lines and their own spacing survive a reload, which regenerating the text from the structure would flatten |
+| `created_by` / `created_by_name` | TEXT | |
+| `created_at` / `updated_at` | TIMESTAMP | |
+
+### `orbat_squads`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `orbat_id` | INTEGER | FK → `orbats.id` **ON DELETE CASCADE** |
+| `name` | TEXT | The embed field's heading |
+| `column_side` | INTEGER | 0 = left, 1 = right. What `_build_orbat_embed()` infers from sheet geometry is stated outright here |
+| `exclude_from_count` | INTEGER | 0/1 — replaces the case-insensitive `Reservists` name match |
+| `sort_order` | INTEGER | |
+
+### `orbat_slots`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | The stable slot identity a booking hangs off |
+| `squad_id` | INTEGER | FK → `orbat_squads.id` **ON DELETE CASCADE** |
+| `role_name` | TEXT | |
+| `reserved_unit` | TEXT | Optional unit tag the slot is held for — something a sheet cell cannot express |
+| `sort_order` | INTEGER | |
+
+**A slot carries no booking.** Who holds one lives in `requests`, keyed by
+`(operation_id, slot_id)`, which is what makes an ORBAT a reusable template
+rather than one night's board.
 
 ### `guild_settings`
 | Column | Type | Notes |
@@ -761,6 +802,7 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Edit / cancel / delete | organiser or admin | `_is_organiser()` |
 | Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
 | Build and post embeds, configure the member log and voice tracking | admin | `is_admin()` — `manage_guild` or `administrator` |
+| Build and edit ORBATs | admin | `is_admin()` |
 | See the voice leaderboard | any member of the guild | — |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
@@ -795,6 +837,11 @@ POST /g/{guild}/roles                   set your game roles to what is ticked
 POST /g/{guild}/roles/add               admin — register/create a game role
 POST /g/{guild}/roles/remove            admin — unregister, optionally delete
 POST /g/{guild}/roles/panel             admin — post the self-assign panel
+GET  /g/{guild}/orbats                  admin — ORBAT list, POST to create
+GET  /g/{guild}/orbats/{id}             the roster editor
+POST /g/{guild}/orbats/{id}             action=preview | save | confirm
+POST /g/{guild}/orbats/{id}/duplicate   copy the structure, not the bookings
+POST /g/{guild}/orbats/{id}/delete      cascades to squads and slots
 GET  /g/{guild}/embeds                  admin — saved embeds
 GET  /g/{guild}/embeds/new              builder          POST to save a draft
 GET  /g/{guild}/embeds/{id}             preview, send, delete
@@ -867,28 +914,131 @@ per request.
 
 ### Deliberately not covered yet
 
-- **Slots and the ORBAT board** — still Discord- and Sheets-only. This is the
-  natural next step: `squads` / `slots` tables, a visual ORBAT, and slot requests
-  that post to `#slot-approvals`.
+- **Booking a slot from the board** — the roster is editable on the web (see
+  [ORBATs](#orbats-utilsorbatpy--weborbatpy)) but nothing books into it yet.
+  `cogs/slots.py` still reads the Google Sheet, so `requests.slot_id` is NULL on
+  every live request.
 - **Approving slot requests** — still Discord-side.
 - **Moving an event to another channel** — the message would have to be deleted
   and reposted, losing the sign-up history's continuity; cancel and recreate.
 - **Per-user input timezones** — display is already per-user via Discord
   timestamps, but everything typed in is guild-timezone based.
 
-### Slots on the web — the shape it was planned in
+### Slots on the web — what is done and what is left
 
-Kept from the original plan, still the intended direction:
+The tables and the builder exist now (`orbats` / `orbat_squads` / `orbat_slots`,
+and the editor at `/g/{guild}/orbats`). What remains, in the order it makes sense
+to do it:
 
-- New table `squads (id, operation_id, name, sort_order)`
-- New table `slots (id, squad_id, role_name, sort_order, assigned_request_id)`
-- Make the Google Sheets columns on `operations` optional rather than required,
-  so sheet-backed and DB-backed operations can coexist during the migration
-- Read-only visual ORBAT first, then click-a-slot-to-request (posting to
-  `#slot-approvals` as today), then approve/deny from the web, then an ORBAT
-  builder and an operation archive
+- Point an operation at an ORBAT — `operations.orbat_id`, nullable, so
+  sheet-backed and DB-backed operations coexist during the migration
+- Import an existing sheet into an ORBAT once, via `sheets.load_all_slots()`,
+  mapping live requests onto the new slots by `slot_label`
+- Teach `cogs/slots.py` to read a DB-backed operation: a provider that returns
+  the same normalised slot either way, so the request, approval and ORBAT-embed
+  paths stop caring where the roster came from
+- Then click-a-slot-to-request on the web (posting to `#slot-approvals` as
+  today), then approve/deny from the web, then an operation archive
 - Live updates were sketched as Server-Sent Events; running in-process makes that
   straightforward, since the request handler already sees every change
+
+---
+
+## ORBATs (`utils/orbat.py` + `web/orbat.py`)
+
+The slot roster, built and maintained in the browser instead of in a Google
+Sheet. Admin-only, one tab on the guild page.
+
+**Nothing books into it yet.** `cogs/slots.py` still reads the sheet, so
+`requests.slot_id` is NULL on every live request and the boards render empty.
+The editor, the tables and the safe-edit machinery are what shipped; wiring the
+request flow to a DB-backed operation is the next step (see
+[Slots on the web](#slots-on-the-web--what-is-done-and-what-is-left)).
+
+### Why a text field and not a slot editor
+
+`web/` has no JavaScript and no build step, which rules out drag-and-drop. The
+alternative — an up/down button per row — is worse than the sheet it replaces at
+forty slots. So the editor is one indented-text field, which is how ORBATs get
+written down anyway:
+
+```
+1-1 Alpha  | right
+  Squad Leader  | unit:TFP
+  Rifleman
+
+Reservists  | right, nocount
+  Reserve
+```
+
+Squad lines start at the left margin, slots are indented (space or tab). Options
+after a pipe: `left` / `right` / `nocount` on a squad, `unit:TAG` on a slot. `#`
+starts a comment. A leading `1.` / `2)` / `3 -` is stripped, so lines pasted out
+of a sheet land clean — the number is load-bearing there (it keeps two "Rifleman"
+cells apart) and noise here, where every slot has an id.
+
+The price is that there is no live preview: **Preview** is a button. That is the
+one thing to weigh if this ever gets reconsidered.
+
+`assign_columns()` splits the squads down the middle when nobody wrote `left` or
+`right`, reproducing what the sheet reader infers from column geometry. One
+explicit marker turns the guessing off for the whole ORBAT.
+
+### The edit must never unseat anybody silently
+
+A slot's id is what a booking hangs off, so re-parsing the text cannot drop every
+slot and recreate it. `build_diff()` matches in three passes, most to least
+confident: squads by name, then leftover squads pairwise by position (a rename);
+inside a matched squad, slots by role name in order, then leftover slots pairwise
+by position (a rename). A rename therefore keeps the id, and with it the booking.
+
+Two properties fall out and are worth keeping:
+
+- **Reordering is free.** Moving lines around matches every slot by name in
+  pass 1, so nothing is added or removed.
+- **Duplicate role names pair up in order.** Three `Rifleman` lines cut to two
+  keep the *first two* existing slots, so the booked one is not the casualty.
+
+`needs_confirmation` is deliberately wider than `destructive`. Removing a booked
+slot is destructive. Renaming one is not — nobody is unseated — but the person's
+role changes under them, which is right when the edit was a typo fix and wrong
+when it was meant as a replacement. The text cannot tell those apart, so both
+stop at a confirmation page naming the people affected. Everything else saves
+straight away: asking on every edit trains people to click through the one that
+matters.
+
+**Applying a removal releases the booking.** `apply_orbat_structure()` sets those
+requests to `cancelled` with `slot_id = NULL` before the `DELETE`, and does the
+same for the slots a deleted squad cascades away. `slot_id` carries no foreign
+key, so without that the request would survive as an approved booking pointing at
+a slot that no longer exists — invisible on every board, and a contradiction of
+what the confirmation page just promised.
+
+### The board, and Discord's limits
+
+`build_board()` groups squads into the same left/right columns
+`_build_orbat_embed()` uses, with the same 🟢/🟡/🔴 line per slot and the same
+counted header. The difference is where the layout comes from: the cog infers it
+from the sheet's geometry, this reads `column_side` off the squad.
+
+`check_limits()` has no counterpart today. An ORBAT built in a browser can
+outgrow what Discord will render — 25 fields, 1024 characters per field value,
+6000 per embed — and finding that out when the board silently loses its last
+three squads is too late. The editor says so while it can still be changed.
+
+### Notes for future changes
+
+- **`utils/orbat.py` imports nothing.** No discord.py, no FastAPI, no asyncpg —
+  which is why the parser and the diff are the only tested code in this repo
+  (`lab/tests`, 28 cases). Keep it that way: these are the two places where a
+  bug silently deletes slots.
+- **`lab/` is the same code.** The standalone playground that prototyped this
+  re-exports `utils/orbat.py` rather than keeping a second copy; a drifting
+  parser would be the worst possible bug here. It has no other reason to exist
+  and can be deleted whenever.
+- **The editor page steps outside the 900px column** via `.widepage`, because
+  the text field and the preview do not fit side by side inside it. It is the
+  only page that does.
 
 ---
 
