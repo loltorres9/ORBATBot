@@ -14,6 +14,11 @@ APPROVAL_CHANNEL_NAME = 'slot-approvals'
 # that same role (or has manage_guild / administrator permissions).
 UNIT_ROLES = {'2nd USC', 'CNTO', 'PXG', 'TFP', 'SKUA'}
 
+# The role that may decide a request. It lives here rather than in `cogs/admin.py`
+# because `_can_action_request()` below needs it and admin.py already imports
+# from this module — the other direction would be a cycle.
+UNIT_LEADER_ROLE = 'Unit Leader'
+
 
 def _get_unit_role(member: discord.Member) -> Optional[str]:
     """Return the first UNIT_ROLES role the member has, or None."""
@@ -189,12 +194,19 @@ def _can_action_request(approver: discord.Member, unit_role: Optional[str]) -> b
 
     Rules:
     - Admins (manage_guild or administrator) can always action any request.
-    - Otherwise the approver must share the same unit role as the requester.
-    - If the requester has no unit role, any Unit Leader / admin can action it.
+    - Otherwise the approver needs the Unit Leader role **and** must share the
+      requester's unit.
+    - A request with no unit role can be actioned by any Unit Leader.
+
+    The Unit Leader check is not optional: the buttons in #slot-approvals are
+    visible to everyone who can read the channel, so without it any member of a
+    unit could approve their own request by pressing the button on it.
     """
     perms = approver.guild_permissions
     if perms.manage_guild or perms.administrator:
         return True
+    if not any(r.name == UNIT_LEADER_ROLE for r in approver.roles):
+        return False
     if unit_role is None:
         return True
     return any(r.name == unit_role for r in approver.roles)
@@ -581,11 +593,16 @@ async def approve_slot_request(bot: commands.Bot, guild: discord.Guild,
     req = await _load_for_action(guild, request_id, approver, 'approve')
     await database.approve_request(request_id, approver.display_name)
 
+    # The operation this request was made for, which is not necessarily the one
+    # running now: /setup-slots only deactivates its predecessor, and the old
+    # approval messages stay clickable. Reading the active operation here would
+    # write last week's row and column into this week's sheet.
+    op = await database.get_operation(req['operation_id'])
+
     # Write the assignment out. On an ORBAT-backed operation this is nothing at
     # all — the approved request *is* the booking — so the rollback below only
     # ever runs for a sheet, where a failed network write would otherwise leave
     # the slot stuck in approved limbo.
-    op = await database.get_active_operation(str(guild.id))
     if op:
         try:
             await roster.assign(op, {'row': req['sheet_row'], 'col': req['sheet_col']},
@@ -654,7 +671,10 @@ async def approve_slot_request(bot: commands.Bot, guild: discord.Guild,
                       f"This slot was awarded to another member. "
                       f"You can request a different slot with `/request-slot`.")
 
-        asyncio.create_task(_update_orbat(bot, guild, op))
+        # The board shows whatever is running now, so a decision on a finished
+        # operation must not redraw it.
+        if op['is_active']:
+            asyncio.create_task(_update_orbat(bot, guild, op))
 
     return {'request': req, 'operation': op, 'competitors': len(competitors)}
 
@@ -666,7 +686,7 @@ async def deny_slot_request(bot: commands.Bot, guild: discord.Guild, request_id:
     reason = (reason or '').strip() or 'No reason provided'
     await database.deny_request(request_id, approver.display_name, reason)
 
-    op = await database.get_active_operation(str(guild.id))
+    op = await database.get_operation(req['operation_id'])
     await _drop_approval_message(guild, req)
 
     archive = await _archive_channel(guild)
@@ -689,7 +709,7 @@ async def deny_slot_request(bot: commands.Bot, guild: discord.Guild, request_id:
               f"Reason: {reason}\n\n"
               f"You can request a different slot with `/request-slot`.")
 
-    if op:
+    if op and op['is_active']:
         asyncio.create_task(_update_orbat(bot, guild, op))
 
     return {'request': req, 'operation': op, 'reason': reason}

@@ -42,7 +42,7 @@ utils/
   roster.py             # One normalised slot, from a sheet or from an ORBAT
   orbat.py              # DB-held ORBATs: the text format, the safe edit, the board
   embeds.py             # Builder-made rich messages → discord.Embed, post and edit
-web/                    # Optional browser UI — Discord OAuth2 login + event management
+web/                    # Optional browser UI — Discord OAuth2 login, events, roster, approvals
   config.py             # Env-driven config; the feature is off until it is complete
   server.py             # uvicorn driven from inside the bot's event loop
   app.py                # FastAPI routes, session plumbing, template rendering
@@ -52,6 +52,7 @@ web/                    # Optional browser UI — Discord OAuth2 login + event m
   roles.py              # Game roles, on top of cogs/gameroles.py
   embeds.py             # Embed builder forms, on top of utils/embeds.py
   orbat.py              # ORBAT editor forms, on top of utils/orbat.py
+  slots.py              # The approval queue, on top of cogs/slots.py
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
@@ -68,9 +69,12 @@ README.md               # User-facing docs — commands, setup, deployment
 CLAUDE.md               # This file
 ```
 
-There is no test suite, CI or linter config. The date logic in `cogs/events.py`
-(`_next_occurrence()`, `_weekday_day()`, `_add_months()`, `_nth_occurrence()`) is
-pure and Discord-free, so it is the obvious first thing to cover if that changes.
+There is no CI or linter config, and the only tests are `lab/tests` (47 cases,
+`python -m pytest lab/tests`), which cover `utils/orbat.py`'s parser and diff —
+the two places where a bug silently deletes somebody's slot. The date logic in
+`cogs/events.py` (`_next_occurrence()`, `_weekday_day()`, `_add_months()`,
+`_nth_occurrence()`) is pure and Discord-free, so it is the obvious next thing
+to cover.
 
 ---
 
@@ -410,7 +414,7 @@ Indexes on `(guild_id, started_at)` and a partial one on the open rows.
 | `/event-edit`, `/event-cancel`, `/event-delete` | ❌ | ✅ own events | ✅ |
 
 **Admin** = `manage_guild` or `administrator` Discord permission.
-**Unit gating:** `_can_action_request()` in `slots.py` — admins bypass all unit checks; Unit Leaders must share the requester's unit role; requests with no unit role can be actioned by anyone.
+**Unit gating:** `_can_action_request()` in `slots.py` — admins bypass all unit checks; anyone else needs the `Unit Leader` role **and** the requester's unit role; a request with no unit role can be actioned by any Unit Leader. The Unit Leader half is not optional: the buttons in `#slot-approvals` are visible to everyone who can read the channel, so without it any member of a unit could approve their own request by pressing the button on it.
 
 **Unit roles and `Unit Leader` can never become game roles** — `PROTECTED_ROLE_NAMES` in `cogs/gameroles.py` blocks it, so members can't self-assign their way into approval rights.
 
@@ -565,11 +569,22 @@ button callbacks in the same move. **None of them takes an `Interaction`** —
 they take a `discord.Guild` and ids, which is the only reason the web can reach
 them at all.
 
+**A decision reads the request's own operation** (`database.get_operation(
+req['operation_id'])`), not the guild's active one. `/setup-slots` deactivates
+its predecessor but leaves that operation's pending requests alone, and
+`setup_hook()` re-registers an `ApprovalView` for **every** pending request, so
+an old message in `#slot-approvals` stays clickable indefinitely. Approving one
+against the active operation wrote the old request's row and column into the
+*new* operation's sheet, named the wrong operation in the archive and the DM,
+and looked for competitors under the wrong operation id — so the loser of a
+contested slot stayed pending. The board is only refreshed when that operation
+is the active one; a decision on a finished one must not redraw it.
+
 ### Approval
 1. Member submits → `requests` row created with `status = pending`
 2. Embed posted to `#slot-approvals` — description: `**Op Name**  ·  @UnitRole\n@Member → **Slot**`. Footer: `Request ID: {id}`. Unit role is a Discord role mention (pings Unit Leaders).
 3. Approver clicks **✅ Approve** in Discord, or on `/g/{guild}/slots`:
-   - `_can_action_request()` checks unit gating
+   - `_can_action_request()` checks the Unit Leader role and the unit
    - DB updated to `approved`
    - `roster.assign()` — writes the sheet on a sheet-backed operation, and does
      nothing on an ORBAT-backed one
@@ -1029,9 +1044,11 @@ messages keep using `<t:…>` timestamps and localise themselves.
 
 ### Front end
 
-Server-rendered Jinja2 plus one hand-written stylesheet. No build step, no CDN,
-no JavaScript — the page has to work from a fresh container with nothing but the
-bot's own dependencies installed.
+Server-rendered Jinja2 plus one hand-written stylesheet. No build step, no CDN
+and no script files — the page has to work from a fresh container with nothing
+but the bot's own dependencies installed. The one exception is a single inline
+`confirm()` on the ORBAT delete button, which degrades to deleting without the
+prompt if scripting is off; nothing else on the site depends on JavaScript.
 
 **Branding is data, not markup.** The name comes from `config.brand` (`WEB_BRAND`,
 default `TFP BOT`) and the logo from `_logo_url()`, which looks for
@@ -1091,9 +1108,12 @@ operation runs on an ORBAT today.
 
 What remains, in the order it makes sense to do it:
 
-- Booking someone who is not on Discord — `requests.member_id` is a snowflake in
-  six places (the `<@…>` mentions, four `fetch_member()` DM calls, and the
-  reminder loop), so it needs to become nullable with each of those guarded
+- Booking someone who is not on Discord — `requests.member_id` is read as a
+  snowflake in six places: the two archive-embed mentions in `cogs/slots.py`,
+  the `fetch_member()` in `_dm()`, the one in `/clear-slot`, and the fetch plus
+  the `<@…>` ping in `bot.py`'s reminder loop. It needs to become nullable with
+  each of those guarded (pulling the button callbacks into `_dm()` already
+  removed three of them)
 - Click-a-slot-to-request on the web, posting to `#slot-approvals` as today —
   approve/deny from the web is done, see
   [the approval queue](#the-approval-queue-webslotspy)
@@ -1203,6 +1223,15 @@ key, so without that the request would survive as an approved booking pointing a
 a slot that no longer exists — invisible on every board, and a contradiction of
 what the confirmation page just promised.
 
+**Deleting the whole ORBAT obeys the same rule, and refuses outright while it is
+live.** `web/orbat.delete()` checks `database.orbat_operations()` first: an ORBAT
+running the guild's **active** operation cannot be deleted, because the cascade
+would take tonight's entire board with it and no confirmation prompt makes that
+recoverable. Once that operation is over, deleting is allowed and
+`database.delete_orbat()` releases the bookings in the same transaction as the
+`DELETE`, exactly as an edit does — `operations.orbat_id` and `requests.slot_id`
+both carry no foreign key, so nothing else would.
+
 ### The net list is a second field, not part of the roster
 
 The shared nets are their own textarea and their own parser (`parse_nets()`),
@@ -1257,7 +1286,7 @@ the cap rather than eight-and-a-bit: 8 × 3 + 1 is exactly 25.
 
 - **`utils/orbat.py` imports nothing.** No discord.py, no FastAPI, no asyncpg —
   which is why the parser and the diff are the only tested code in this repo
-  (`lab/tests`, 28 cases). Keep it that way: these are the two places where a
+  (`lab/tests`, 47 cases). Keep it that way: these are the two places where a
   bug silently deletes slots.
 - **`lab/` is the same code.** The standalone playground that prototyped this
   re-exports `utils/orbat.py` rather than keeping a second copy; a drifting

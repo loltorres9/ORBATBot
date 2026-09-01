@@ -9,9 +9,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import database, roster, sheets
-from cogs.slots import _build_orbat_embed, _get_unit_role, _update_orbat, _void_approval_message, OrbatRequestButton, SquadSelectView
-
-UNIT_LEADER_ROLE = 'Unit Leader'
+from cogs.slots import (_build_orbat_embed, _get_unit_role, _update_orbat,
+                       _void_approval_message, OrbatRequestButton,
+                       SquadSelectView, UNIT_LEADER_ROLE)
 
 
 def _is_unit_leader_or_admin(member: discord.Member) -> bool:
@@ -626,7 +626,8 @@ class AdminCog(commands.Cog):
 
         pending_rows = set(await database.get_pending_slots(op['id']))
         approved_rows = set(await database.get_approved_slots(op['id']))
-        available = [s for s in data['slots'] if (s['row'], s.get('col')) not in approved_rows]
+        # `load_available()` has already subtracted the approved slots, by key.
+        available = data['slots']
 
         if not available:
             await interaction.followup.send("ℹ️ All slots are currently filled.", ephemeral=True)

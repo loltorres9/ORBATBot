@@ -677,9 +677,16 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         context = await orbat_context(request, guild_id, orbat_id)
         form = await request.form()
         auth.check_csrf(context['session'], form.get('csrf'))
-        await database.delete_orbat(orbat_id)
-        return redirect(request, f"/g/{guild_id}/orbats", 'ok',
-                        f"Deleted \u201c{context['record']['name']}\u201d.")
+        try:
+            note = await orbat_service.delete(context['record'])
+        except ValueError as e:
+            return await orbat_editor(
+                request, context,
+                await orbat_service.editor_text(context['record']),
+                await orbat_service.editor_nets_text(context['record']),
+                error=str(e), status=400,
+            )
+        return redirect(request, f"/g/{guild_id}/orbats", 'ok', note)
 
     # -- embeds -------------------------------------------------------------
 
