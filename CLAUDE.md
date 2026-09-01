@@ -993,9 +993,23 @@ Squad lines start at the left margin, slots are indented (space or tab). Options
 after a pipe, all on the squad: `left` / `right`, `unit:TAG`, `radio:…`,
 `nocount`. `#` starts a comment.
 
+Options are **separated by commas**, and that is what the help text tells people
+to write. `_peel_options()` also reads them without one: it splits before a
+keyword that takes a value (`unit:`, `radio:`, `net:`) and peels the standalone
+keywords off either end, so `| left unit:CNTO` is two options rather than one
+unknown one. Both rules key on names this module already knows, which is what
+keeps a value containing spaces whole — `unit:2nd USC` and `radio:152 CHN : 1`
+are followed by neither. Without this the whole chunk read as one unknown
+option and the column and the unit were lost together, in silence.
+
 **`_split_options()` keeps an option's case** and lower-cases only the keyword
 when matching. It used to lower-case the whole list, which turned a channel
 written `343 CHN:3` into `343 chn:3` on the way in.
+
+**The unit tag is stored as typed** and spelled by `web/orbat.py` against the
+real `UNIT_ROLES` — `unit:tfp` becomes `TFP`, `unit:2nd usc` becomes `2nd USC`.
+Upper-casing it in the parser would have rendered a unit genuinely called
+`2nd USC` as `2ND USC`.
 
 **The unit is per squad, not per slot.** A squad belongs to a unit as a whole —
 that is how the rosters are actually organised — so tagging every line of it

@@ -32,7 +32,9 @@ def test_squad_options():
     squad = result.squads[0]
     assert squad.column == 1
     assert squad.exclude_from_count
-    assert squad.reserved_unit == 'TFP'     # upper-cased on the way in
+    # Kept as typed here; web/orbat.py spells it the way the role is spelled,
+    # which is what keeps a unit called "2nd USC" from becoming "2ND USC".
+    assert squad.reserved_unit == 'tfp'
 
 
 def test_a_unit_on_a_slot_says_where_it_belongs_now():
@@ -57,8 +59,48 @@ def test_squad_options_are_matched_case_insensitively():
     result = parse("Alpha | RIGHT, Unit:tfp, Radio:152 CHN : 4\n  S\n")
     squad = result.squads[0]
     assert result.ok, result.errors
-    assert squad.column == 1 and squad.reserved_unit == 'TFP'
+    assert squad.column == 1 and squad.reserved_unit == 'tfp'
     assert squad.radio == '152 CHN : 4'
+
+
+# -- the commas between options are optional ---------------------------------
+#
+# "| left unit:CNTO" is how people write it. Before this the whole thing read as
+# one unknown option and the column and the unit were both lost, in silence.
+
+def test_a_bare_keyword_next_to_a_valued_one_without_a_comma():
+    squad = parse("1-1 CNTO | left unit:CNTO\n  S\n").squads[0]
+    assert squad.column == 0 and squad.reserved_unit == 'CNTO'
+
+
+def test_the_other_order_works_too():
+    squad = parse("1-1 CNTO | unit:CNTO left\n  S\n").squads[0]
+    assert squad.column == 0 and squad.reserved_unit == 'CNTO'
+
+
+def test_two_valued_options_without_a_comma():
+    squad = parse("2-1 W | right unit:TFP radio:343 CHN:3\n  S\n").squads[0]
+    assert squad.column == 1
+    assert squad.reserved_unit == 'TFP'
+    assert squad.radio == '343 CHN:3'
+
+
+def test_two_bare_keywords_without_a_comma():
+    squad = parse("Reservists | right nocount\n  S\n").squads[0]
+    assert squad.column == 1 and squad.exclude_from_count
+
+
+def test_a_value_containing_spaces_is_not_split():
+    # The unit really is called "2nd USC", and a channel really is written
+    # "152 CHN : 1" — neither may be chopped up by the comma-less handling.
+    squad = parse("1-2 | left unit:2nd USC radio:152 CHN : 1\n  S\n").squads[0]
+    assert squad.reserved_unit == '2nd USC'
+    assert squad.radio == '152 CHN : 1'
+
+
+def test_no_option_is_swallowed_silently():
+    result = parse("1-1 CNTO | left unit:CNTO\n  S\n")
+    assert not result.warnings
 
 
 def test_unknown_option_warns_but_parses():

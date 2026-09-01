@@ -43,6 +43,15 @@ _ENUM = re.compile(r'^\d+\s*[.)\-]\s*')
 # An option list after a pipe: "1-1 Alpha | right, nocount"
 _OPTIONS = re.compile(r'\s*\|\s*(.+)$')
 
+# Options that are a word on their own, with no value after them.
+_BARE_OPTIONS = ('left', 'right', 'nocount', 'reserve')
+
+# The options that carry a value. Splitting on whitespace before one of these is
+# what lets "unit:TFP radio:343 CHN:3" be read as two options while leaving the
+# spaces inside a value alone — "unit:2nd USC" is not followed by a keyword, so
+# it stays whole. See _peel_options().
+_VALUED_SPLIT = re.compile(r'\s+(?=(?:unit|radio|net):)', re.IGNORECASE)
+
 
 @dataclass
 class ParsedSlot:
@@ -95,6 +104,40 @@ def _strip_enumeration(name: str) -> str:
     return stripped
 
 
+def _peel_options(chunk: str) -> list:
+    """Separate options inside one comma-separated chunk.
+
+    The commas between options are easy to leave out — "| left unit:CNTO" is
+    how people write it — and without this the whole chunk reads as one unknown
+    option, losing the column and the unit together and in silence.
+
+    Two rules, both keyed on names this module already knows, so a value that
+    contains spaces survives: split before a keyword that takes a value, and
+    peel the keywords that stand alone off either end. "unit:2nd USC" is
+    followed by neither, so it stays whole.
+    """
+    found = []
+    for piece in _VALUED_SPLIT.split(chunk):
+        piece = piece.strip()
+        leading, trailing = [], []
+        while True:
+            head, _, rest = piece.partition(' ')
+            if head.lower() in _BARE_OPTIONS and rest.strip():
+                leading.append(head)
+                piece = rest.strip()
+            else:
+                break
+        while True:
+            rest, space, last = piece.rpartition(' ')
+            if space and last.lower() in _BARE_OPTIONS and rest.strip():
+                trailing.insert(0, last)
+                piece = rest.strip()
+            else:
+                break
+        found.extend(leading + ([piece] if piece else []) + trailing)
+    return found
+
+
 def _split_options(raw: str) -> tuple[str, list]:
     """Split "Name | one, two:value" into the name and its options.
 
@@ -106,7 +149,9 @@ def _split_options(raw: str) -> tuple[str, list]:
     if not match:
         return raw.strip(), []
     name = raw[:match.start()].strip()
-    options = [o.strip() for o in match.group(1).split(',') if o.strip()]
+    options = []
+    for chunk in match.group(1).split(','):
+        options.extend(_peel_options(chunk.strip()))
     return name, options
 
 
@@ -159,7 +204,10 @@ def parse(text: str) -> ParseResult:
                 elif keyword in ('nocount', 'reserve'):
                     squad.exclude_from_count = True
                 elif keyword.startswith('unit:'):
-                    squad.reserved_unit = option.split(':', 1)[1].strip().upper() or None
+                    # Kept as typed. Upper-casing it would turn a unit really
+                    # called "2nd USC" into "2ND USC"; web/orbat.py matches it
+                    # against the actual roles and fixes the spelling there.
+                    squad.reserved_unit = option.split(':', 1)[1].strip() or None
                 elif keyword.startswith('radio:') or keyword.startswith('net:'):
                     squad.radio = option.split(':', 1)[1].strip() or None
                 else:
