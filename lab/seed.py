@@ -5,15 +5,15 @@ from lab import parser, store
 
 DEMO_TEXT = """\
 # Squad-Zeilen stehen links am Rand, Slots werden eingerückt.
-# Optionen nach dem |: left / right / nocount, bei Slots unit:TAG
+# Optionen nach dem |: left / right, unit:TAG, nocount
 
 1-0 Platoon HQ  | left
   Platoon Leader
   Platoon Sergeant
   Forward Observer
 
-1-1 Alpha  | left
-  Squad Leader  | unit:TFP
+1-1 Alpha  | left, unit:TFP
+  Squad Leader
   Team Leader
   Automatic Rifleman
   Grenadier

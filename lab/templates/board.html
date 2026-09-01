@@ -43,7 +43,7 @@
     <label class="field"><span>Slot</span>
       <select name="slot_id" required>
         {% for slot, squad in open_slots %}
-          <option value="{{ slot.id }}">{{ squad.name }} — {{ slot.role_name }}{% if slot.reserved_unit %} (nur {{ slot.reserved_unit }}){% endif %}</option>
+          <option value="{{ slot.id }}">{{ squad.name }}{% if squad.reserved_unit %} [{{ squad.reserved_unit }}]{% endif %} — {{ slot.role_name }}</option>
         {% endfor %}
       </select></label>
     <label class="field"><span>Name</span><input name="member_name" required></label>

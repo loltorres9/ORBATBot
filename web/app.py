@@ -505,17 +505,19 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'error': error,
         }, status=status)
 
-    async def orbat_editor(request: Request, context: dict, text: str,
-                           checked: dict = None, pending_text: str = None,
+    async def orbat_editor(request: Request, context: dict, text: str, nets_text: str,
+                           checked: dict = None, pending: bool = False,
                            error: str = None, status: int = 200):
         return render(request, 'orbat_form.html', {
             **context,
             'text': text,
+            'nets_text': nets_text,
             'result': (checked or {}).get('result'),
+            'nets': (checked or {}).get('nets'),
             'diff': (checked or {}).get('diff'),
             'board': (checked or {}).get('board'),
             'summary': (checked or {}).get('summary'),
-            'pending_text': pending_text,
+            'pending': pending,
             'stored': await orbat_service.stored_board(context['record']['id']),
             'error': error,
         }, status=status)
@@ -547,7 +549,9 @@ def create_app(bot, config: WebConfig) -> FastAPI:
     async def orbat_edit(request: Request, guild_id: str, orbat_id: int):
         context = await orbat_context(request, guild_id, orbat_id)
         return await orbat_editor(
-            request, context, await orbat_service.editor_text(context['record'])
+            request, context,
+            await orbat_service.editor_text(context['record']),
+            await orbat_service.editor_nets_text(context['record']),
         )
 
     @app.post('/g/{guild_id}/orbats/{orbat_id}', response_class=HTMLResponse)
@@ -557,20 +561,22 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         auth.check_csrf(context['session'], form.get('csrf'))
 
         text = form.get('text') or ''
+        nets_text = form.get('nets') or ''
         action = form.get('action') or 'preview'
-        checked = await orbat_service.review(orbat_id, text)
+        checked = await orbat_service.review(orbat_id, text, nets_text)
 
-        if not checked['result'].ok or action == 'preview':
-            return await orbat_editor(request, context, text, checked)
+        if not checked['ok'] or action == 'preview':
+            return await orbat_editor(request, context, text, nets_text, checked)
 
         # An edit that would unseat somebody, or move them onto a differently
         # named role, always stops for a confirmation. Everything else saves
         # straight away: asking on every edit would train people to click
         # through the one that matters.
         if action != 'confirm' and checked['diff'].needs_confirmation:
-            return await orbat_editor(request, context, text, checked, pending_text=text)
+            return await orbat_editor(request, context, text, nets_text, checked,
+                                      pending=True)
 
-        note = await orbat_service.apply(orbat_id, text, checked)
+        note = await orbat_service.apply(orbat_id, text, nets_text, checked)
         return redirect(request, f"/g/{guild_id}/orbats/{orbat_id}", 'ok', note)
 
     @app.post('/g/{guild_id}/orbats/{orbat_id}/duplicate')
@@ -587,6 +593,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             return await orbat_editor(
                 request, context,
                 await orbat_service.editor_text(context['record']),
+                await orbat_service.editor_nets_text(context['record']),
                 error=str(e), status=400,
             )
         return redirect(request, f"/g/{guild_id}/orbats/{new_id}", 'ok',

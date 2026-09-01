@@ -13,8 +13,10 @@
         {% if squad %}
           <div>
             <div class="squadname">{{ squad.name }}
+              {% if squad.unit %}<span class="squadunit">{{ squad.unit }}</span>{% endif %}
               {% if squad.excluded %}<span class="nocount">· not counted</span>{% endif %}
             </div>
+            {% if squad.radio %}<div class="squadradio">📻 {{ squad.radio }}</div>{% endif %}
             <div class="squadslots">{% for line in squad.lines %}{{ line.dot }} {% if line.state == 'open' %}<span class="off">{{ line.text }}</span>{% else %}{{ line.text }}{% endif %}
 {% endfor %}</div>
           </div>
@@ -22,4 +24,17 @@
       {% endfor %}
     {% endfor %}
   </div>
+  {% if board.nets %}
+    <div class="netsblock">
+      <div class="squadname">Radio nets</div>
+      <table class="nets">
+        {% for net in board.nets %}
+          <tr{% if net.inactive %} class="netoff"{% endif %}>
+            <td>{{ net.name }}</td>
+            <td>{{ net.channel or '—' }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+  {% endif %}
 </div>

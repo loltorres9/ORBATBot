@@ -74,6 +74,13 @@ Umbenennung behält deshalb die ID und die Belegung. Alles, was jemanden
 austrägt *oder* auf eine andere Rolle verschiebt, geht über eine
 Bestätigungsseite, die die betroffenen Leute namentlich nennt.
 
+## Wo das Lab hinter dem echten Editor liegt
+
+Der ORBAT-Editor in `web/` ist inzwischen die echte Umsetzung. Das Lab teilt sich
+mit ihm den Parser (`utils/orbat.py`), hat aber **keine Netz-Liste** — die
+gemeinsamen Funknetze gibt es nur im echten Editor. Der Funkkanal pro Squad
+(`radio:`) wird hier gespeichert.
+
 ## Was Stufe A nicht beantwortet
 
 Rechte und OAuth, der Approval-Flow gegen echte Unit-Rollen, die View-Persistenz
