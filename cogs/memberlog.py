@@ -28,6 +28,11 @@ AUDIT_WINDOW = timedelta(seconds=20)
 # How long to wait before reading the audit log, so the entry exists by then.
 AUDIT_DELAY = 2
 
+# How many invite_create audit entries to walk when looking for who made a link.
+# One page; the walk caches every code it passes, so one scan usually answers
+# every future join too.
+AUDIT_INVITE_SCAN = 100
+
 # How recently an invite must have been deleted for a join to be credited to it.
 # Discord deletes a link the moment it hits `max_uses`, so the one that let this
 # member in can be gone before its counter is ever seen to move.
@@ -85,6 +90,11 @@ class MemberLogCog(commands.Cog):
         # Codes already credited to a join, so the second half of the race can't
         # hand the same consumed link to the next person through the door.
         self._spent: dict = {}
+        # invite code -> who made it, from the audit log. A code is immutable and
+        # so is its creator, so this never needs invalidating. Only successful
+        # reads are recorded, a miss included; a failed read stays absent so a
+        # permission granted later is picked up.
+        self._creators: dict = {}
 
     # -- settings -----------------------------------------------------------
 
@@ -136,16 +146,58 @@ class MemberLogCog(commands.Cog):
         self._invites[guild.id] = await self._snapshot_invites(guild)
 
     async def _used_invite(self, guild: discord.Guild) -> Attribution:
-        """Which invite a join came through — best effort, and it says when it failed.
+        """Which invite a join came through, and who made it — best effort.
 
-        Works by diffing use counts against the cached snapshot. Two people
-        joining in the same instant can't be told apart this way; the counter is
-        still corrected, only the attribution of that one join may be wrong.
+        Naming the link and naming its creator are two lookups against two
+        different permissions, so they are kept apart: `_match_invite()` needs
+        Manage Server, and the audit-log fallback below needs View Audit Log.
+        Either can succeed without the other.
         """
         settings = await database.get_log_settings(str(guild.id))
         if settings and not settings['track_invites']:
             return NO_ATTRIBUTION._replace(reason='off')
 
+        attribution = await self._match_invite(guild)
+        # A vanity URL is a guild setting, not an invite anybody created, so it
+        # has no invite_create entry and scanning for one is a wasted call.
+        if attribution.code and attribution.inviter is None and attribution.kind != 'vanity':
+            # A live invite carries its creator, so this is for the link that is
+            # already gone — the single-use one an admin made for one person,
+            # which is exactly the case where who sent it is the useful part.
+            inviter = await self._invite_creator(guild, attribution.code)
+            if inviter is not None:
+                attribution = attribution._replace(inviter=inviter)
+        return attribution
+
+    async def _invite_creator(self, guild: discord.Guild, code: str):
+        """Who created *code*, from the audit log — None if it can't be found.
+
+        Needs View Audit Log, and the log only reaches back 90 days, so a miss
+        is ordinary rather than an error. A read that fails is not cached, so a
+        permission granted afterwards takes effect on the next join.
+        """
+        if code in self._creators:
+            return self._creators[code]
+        try:
+            async for entry in guild.audit_logs(
+                limit=AUDIT_INVITE_SCAN, action=discord.AuditLogAction.invite_create
+            ):
+                seen = getattr(entry.target, 'code', None)
+                if seen:
+                    self._creators.setdefault(seen, entry.user)
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+        # Recorded even when absent: a code the log does not reach must not cost
+        # a scan on every join that comes through it.
+        return self._creators.setdefault(code, None)
+
+    async def _match_invite(self, guild: discord.Guild) -> Attribution:
+        """Which invite a join came through, by diffing use counts.
+
+        Two people joining in the same instant can't be told apart this way; the
+        counter is still corrected, only the attribution of that one join may be
+        wrong.
+        """
         async with self._invite_lock:
             before = self._invites.get(guild.id)
             invites = await self._fetch_invites(guild)
@@ -210,7 +262,10 @@ class MemberLogCog(commands.Cog):
         elif attribution.kind == 'consumed':
             parts.append('single-use link, used up')
         if attribution.inviter:
-            parts.append(f"created by {attribution.inviter.mention}")
+            # A shared link is *created by* somebody and used by many; a consumed
+            # one was made for the person who just walked through it.
+            made = 'invited by' if attribution.kind == 'consumed' else 'created by'
+            parts.append(f"{made} {attribution.inviter.mention}")
         return ' · '.join(parts)
 
     @commands.Cog.listener()

@@ -1191,6 +1191,17 @@ invite as freshly incremented and credits the first one seen. The same reason
 A guild with `VANITY_URL` falls back to `vanity_invite()` when no counter moved,
 labelled `vanity` so it isn't looked up like an ordinary code.
 
+**Naming the link and naming who made it are two lookups against two different
+permissions**, which is why `_used_invite()` keeps them apart: `_match_invite()`
+needs **Manage Server**, and `_invite_creator()` needs **View Audit Log**. Either
+can succeed without the other. A live invite already carries its `inviter`, so
+the audit-log walk only runs for a link that is already gone — the single-use one
+an admin made for one person, where who sent it is the whole answer. It is
+skipped for a vanity URL, which is a guild setting and has no `invite_create`
+entry to find. One walk caches every code it passes, misses included, so a code
+the log can no longer reach doesn't cost a scan on every join; a walk that
+*fails* is not cached, so a permission granted afterwards takes effect at once.
+
 **A single-use link never shows its increment.** Discord deletes an invite the
 moment it hits `max_uses`, so the code that let the member in is simply gone.
 Two paths find it, because `INVITE_DELETE` and `GUILD_MEMBER_ADD` race: if the
@@ -1205,7 +1216,9 @@ is how such a join can still name who made the link; the ordinary path reads
 
 **`invite_labels` is what makes the code useful.** The join message shows the
 label next to the code, which is the whole point: the alternative is keeping a
-spreadsheet of which link was posted where and consulting it by hand.
+spreadsheet of which link was posted where and consulting it by hand. A shared
+link reads *created by*, a consumed one *invited by* — the first is used by many
+people, the second was made for the one who just walked through it.
 
 Every listener body is wrapped in a `try`/`except` that prints and moves on: a
 failure to *log* an event must never propagate into the gateway handler.
