@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block content %}
+  <div class="pagehead">
+    <div>
+      <h1>ORBATs</h1>
+      <p class="muted">Gliederungen als wiederverwendbare Vorlage — ein ORBAT trägt beliebig
+        viele Einsätze, ohne dass etwas zurückgesetzt werden muss.</p>
+    </div>
+  </div>
+
+  {% if orbats %}
+    <ul class="cards">
+      {% for o in orbats %}
+        <li class="card pad">
+          <div class="pagehead" style="margin:0">
+            <div>
+              <h2 style="margin:0 0 4px"><a href="/orbats/{{ o.id }}">{{ o.name }}</a></h2>
+              {% if o.description %}<p class="muted" style="margin:0 0 8px">{{ o.description }}</p>{% endif %}
+              <span class="chip">{{ o.squad_count }} Squads</span>
+              <span class="chip">{{ o.slot_count }} Slots</span>
+              <span class="chip">{{ o.op_count }} Einsätze</span>
+            </div>
+            <div class="rowbtns">
+              <a class="button" href="/orbats/{{ o.id }}">Bearbeiten</a>
+              <form method="post" action="/orbats/{{ o.id }}/delete"
+                    onsubmit="return confirm('ORBAT „{{ o.name }}“ mit allen Einsätzen löschen?')">
+                <button class="button danger" type="submit">Löschen</button>
+              </form>
+            </div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">Noch kein ORBAT angelegt.</p>
+  {% endif %}
+
+  <h2 style="margin-top:28px">Neues ORBAT</h2>
+  <form method="post" action="/orbats" class="card pad stack">
+    <label class="field"><span>Name</span>
+      <input name="name" placeholder="z. B. Zug-ORBAT Standard" required></label>
+    <label class="field"><span>Beschreibung (optional)</span>
+      <input name="description"></label>
+    <div><button class="button primary" type="submit">Anlegen</button></div>
+  </form>
+{% endblock %}

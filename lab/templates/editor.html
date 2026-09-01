@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+{% block title %}{{ orbat.name }} — ORBAT Lab{% endblock %}
+
+{% macro board_fields(board) %}
+  <div class="fields">
+    {% for left, right in board.rows %}
+      {% for squad in (left, right) %}
+        {% if squad %}
+          <div>
+            <div class="fieldname">{{ squad.name }}
+              {% if squad.excluded %}<span class="nocount">· zählt nicht</span>{% endif %}
+            </div>
+            <div class="fieldval">{% for line in squad.lines %}{{ line.dot }} {% if line.state == 'open' %}<span class="off">{{ line.text }}</span>{% else %}{{ line.text }}{% endif %}
+{% endfor %}</div>
+          </div>
+        {% else %}<div></div>{% endif %}
+      {% endfor %}
+    {% endfor %}
+  </div>
+{% endmacro %}
+
+{% block content %}
+  <p class="crumbs"><a href="/">← Alle ORBATs</a></p>
+  <div class="pagehead">
+    <div>
+      <h1 style="margin-bottom:4px">{{ orbat.name }}</h1>
+      <p class="muted" style="margin:0">{{ stored_slots }} Slots gespeichert</p>
+    </div>
+  </div>
+
+  {% if pending_text %}
+    <div class="flash err">
+      <strong>Diese Änderung greift in bestehende Belegungen ein.</strong>
+      {% if diff.losing_bookings %}
+        <p style="margin:10px 0 4px">Wird <strong>entfernt</strong> — die Leute werden ausgetragen:</p>
+        <ul class="issues">
+          {% for change in diff.losing_bookings %}
+            <li><strong>{{ change.squad }} — {{ change.old.role_name }}</strong>
+              {% for booking in change.assignments %}
+                <br><span class="muted">↳ {{ booking.member_name }}
+                {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in „{{ booking.op_name }}“</span>
+              {% endfor %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {% if diff.moving_bookings %}
+        <p style="margin:10px 0 4px">Wird <strong>umbenannt</strong> — die Belegung bleibt,
+          aber auf einer anderen Rolle:</p>
+        <ul class="issues">
+          {% for change in diff.moving_bookings %}
+            <li><strong>{{ change.squad }}</strong> — {{ change.old.role_name }}
+              → {{ change.new.role_name }}
+              {% for booking in change.assignments %}
+                <br><span class="muted">↳ {{ booking.member_name }}
+                {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in „{{ booking.op_name }}“</span>
+              {% endfor %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      <form method="post" action="/orbats/{{ orbat.id }}" style="margin-top:12px">
+        <input type="hidden" name="text" value="{{ pending_text }}">
+        <input type="hidden" name="action" value="confirm">
+        <button class="button danger" type="submit">Trotzdem speichern</button>
+        <span class="muted" style="margin-left:8px">oder oben weiter bearbeiten</span>
+      </form>
+    </div>
+  {% endif %}
+
+  <div class="split">
+    <form method="post" action="/orbats/{{ orbat.id }}" class="editor stack">
+      <label class="field"><span>ORBAT-Text</span>
+        <textarea name="text" spellcheck="false">{{ text }}</textarea></label>
+      <div class="rowbtns">
+        <button class="button" type="submit" name="action" value="preview">Vorschau</button>
+        <button class="button primary" type="submit" name="action" value="save">Speichern</button>
+      </div>
+      <details class="card pad">
+        <summary>Format</summary>
+        <div class="fieldval" style="margin-top:10px">Squad ganz links, Slots eingerückt:
+
+1-1 Alpha  | right
+  Squad Leader  | unit:TFP
+  Rifleman
+
+Squad-Optionen: <code>left</code>, <code>right</code>, <code>nocount</code>
+Slot-Optionen: <code>unit:TAG</code>
+<code>#</code> am Zeilenanfang ist ein Kommentar.
+Führende Nummerierung („1. Rifleman“) wird entfernt.</div>
+      </details>
+    </form>
+
+    <div class="stack">
+      {% if result and not result.ok %}
+        <div class="card pad">
+          <h3 style="margin-top:0;color:var(--err)">{{ result.errors|length }} Fehler</h3>
+          <ul class="issues">
+            {% for line, message in result.errors %}
+              <li>{% if line %}<span class="lineno">Zeile {{ line }}</span> {% endif %}{{ message }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      {% if result and result.warnings %}
+        <div class="card pad">
+          <h3 style="margin-top:0;color:var(--warn)">Hinweise</h3>
+          <ul class="issues">
+            {% for line, message in result.warnings %}
+              <li>{% if line %}<span class="lineno">Zeile {{ line }}</span> {% endif %}{{ message }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      {% if preview %}
+        {% if preview.warnings %}
+          <div class="card pad">
+            <h3 style="margin-top:0;color:var(--warn)">Discord-Grenzen</h3>
+            <ul class="issues">
+              {% for warning in preview.warnings %}<li>{{ warning }}</li>{% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+        <div class="card pad">
+          <h3 style="margin-top:0">So sähe das Board aus</h3>
+          <p class="muted" style="margin-top:-4px">Leere Gliederung — Belegungen hängen
+            am jeweiligen Einsatz, nicht an der Vorlage.</p>
+          <div class="embed">
+            <h3>🗺️ ORBAT — {{ orbat.name }}</h3>
+            <div class="desc">🟢 <strong>{{ preview.counts.open }}</strong> offen ·
+              🟡 <strong>{{ preview.counts.pending }}</strong> pending ·
+              🔴 <strong>{{ preview.counts.filled }}/{{ preview.counts.total }}</strong> belegt</div>
+            {{ board_fields(preview) }}
+          </div>
+        </div>
+      {% endif %}
+
+      {% if diff %}
+        <div class="card pad">
+          <h3 style="margin-top:0">Was sich ändert</h3>
+          <p class="muted" style="margin-top:0">{{ summary }}</p>
+          <ul class="diff">
+            {% for change in diff.added %}
+              <li><span class="tag added">neu</span> {{ change.squad }} — {{ change.new.role_name }}</li>
+            {% endfor %}
+            {% for change in diff.renamed %}
+              <li><span class="tag renamed">umbenannt</span> {{ change.squad }} —
+                {{ change.old.role_name }} → {{ change.new.role_name }}
+                {% if change.assignments %}<span class="muted">(Belegung bleibt)</span>{% endif %}</li>
+            {% endfor %}
+            {% for change in diff.removed %}
+              <li><span class="tag removed">entfernt</span> {{ change.squad }} — {{ change.old.role_name }}
+                {% if change.assignments %}
+                  <span style="color:var(--err)">— {{ change.assignments|length }} Belegung(en) gehen verloren</span>
+                {% endif %}</li>
+            {% endfor %}
+            {% if diff.kept %}
+              <li><span class="tag kept">unverändert</span> {{ diff.kept|length }} Slots behalten ihre ID und Belegung</li>
+            {% endif %}
+          </ul>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <h2 style="margin-top:32px">Einsätze auf dieser Gliederung</h2>
+  <p class="muted">Jeder Einsatz hat sein eigenes Board. Die Gliederung wird geteilt,
+    die Belegungen nicht — genau das, was heute „Sheet duplizieren“ ist.</p>
+  {% if ops %}
+    <ul class="cards">
+      {% for op in ops %}
+        <li class="card pad">
+          <div class="pagehead" style="margin:0">
+            <div><strong><a href="/orbats/{{ orbat.id }}/ops/{{ op.id }}">{{ op.name }}</a></strong>
+              <span class="chip">{{ op.booked }} belegt</span></div>
+            <form method="post" action="/orbats/{{ orbat.id }}/ops/{{ op.id }}/delete">
+              <button class="button danger mini" type="submit">Löschen</button>
+            </form>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">Noch kein Einsatz angelegt.</p>
+  {% endif %}
+  <form method="post" action="/orbats/{{ orbat.id }}/ops" class="rowbtns" style="margin-top:12px">
+    <input name="name" placeholder="z. B. Sonntag 19:00" required style="max-width:320px">
+    <button class="button" type="submit">Einsatz anlegen</button>
+  </form>
+
+  <h2 style="margin-top:32px">Vorlage kopieren</h2>
+  <form method="post" action="/orbats/{{ orbat.id }}/duplicate" class="rowbtns">
+    <input name="name" value="{{ orbat.name }} (Kopie)" required style="max-width:320px">
+    <button class="button" type="submit">Kopieren</button>
+  </form>
+{% endblock %}
