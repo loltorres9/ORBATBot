@@ -240,6 +240,7 @@ h3 { font-size: 15px; margin: 0 0 8px; }
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin: 18px 0 8px;
   border-bottom: 1px solid var(--line);
@@ -251,6 +252,9 @@ h3 { font-size: 15px; margin: 0 0 8px; }
   color: var(--muted);
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
+  /* Past five tabs a flex row starts breaking the labels themselves instead of
+     wrapping; this makes the row wrap and keeps each label on one line. */
+  white-space: nowrap;
 }
 
 .tab:hover { color: var(--text); }
@@ -588,3 +592,9 @@ tr.netoff td { text-decoration: line-through; opacity: .55; }
 .tag.removed { color: var(--err); }
 .tag.renamed { color: var(--warn); }
 .tag.kept { color: var(--muted); }
+
+/* -- slot approvals ------------------------------------------------------ */
+
+.chip.contested { border-color: var(--warn); color: var(--warn); }
+.denyrow { display: flex; gap: 8px; margin-top: 10px; }
+.denyrow input { flex: 1; }

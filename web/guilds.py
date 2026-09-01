@@ -83,6 +83,13 @@ def can_create_events(member: discord.Member) -> bool:
     return _is_unit_leader_or_admin(member)
 
 
+def can_action_slots(member: discord.Member) -> bool:
+    """Who may open the approvals queue — the same bar the buttons in
+    #slot-approvals put on pressing them. Which requests they may actually
+    decide is a per-request question, answered by `_can_action_request()`."""
+    return _is_unit_leader_or_admin(member)
+
+
 def can_manage_event(member: discord.Member, event) -> bool:
     return _is_organiser(member, event)
 

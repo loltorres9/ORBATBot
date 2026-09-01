@@ -23,11 +23,13 @@ from web import (
     orbat as orbat_service,
     roles as roles_service,
     service,
+    slots as slots_service,
     voice as voice_service,
 )
 from web.auth import Forbidden, NotAuthenticated
 from web.config import LOGO_NAMES, WebConfig
 from web.guilds import (
+    can_action_slots,
     can_create_events,
     can_manage_event,
     forget_member,
@@ -132,6 +134,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'member': member,
             'tz': await database.get_guild_timezone(str(guild.id)),
             'may_create': can_create_events(member),
+            'may_action_slots': can_action_slots(member),
             'is_admin': is_admin(member),
         }
 
@@ -481,6 +484,55 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         except ValueError as e:
             return await roles_page(request, guild_id, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/roles", 'ok', note)
+
+    # -- slot approvals -----------------------------------------------------
+
+    async def slots_context(request: Request, guild_id: str) -> dict:
+        context = await guild_context(request, guild_id)
+        if not context['may_action_slots']:
+            raise Forbidden(
+                'Only a Unit Leader or a server admin can action slot requests.'
+            )
+        return context
+
+    async def slots_page(request: Request, context: dict, error: str = None,
+                         status: int = 200):
+        return render(request, 'slots.html', {
+            **context,
+            **await slots_service.queue(context['guild'], context['member']),
+            'error': error,
+        }, status=status)
+
+    @app.get('/g/{guild_id}/slots', response_class=HTMLResponse)
+    async def slot_queue(request: Request, guild_id: str):
+        return await slots_page(request, await slots_context(request, guild_id))
+
+    @app.post('/g/{guild_id}/slots/{request_id}/approve', response_class=HTMLResponse)
+    async def slot_approve(request: Request, guild_id: str, request_id: int):
+        context = await slots_context(request, guild_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = await slots_service.approve(
+                bot, context['guild'], context['member'], request_id
+            )
+        except ValueError as e:
+            return await slots_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/slots", 'ok', note)
+
+    @app.post('/g/{guild_id}/slots/{request_id}/deny', response_class=HTMLResponse)
+    async def slot_deny(request: Request, guild_id: str, request_id: int):
+        context = await slots_context(request, guild_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = await slots_service.deny(
+                bot, context['guild'], context['member'], request_id,
+                form.get('reason'),
+            )
+        except ValueError as e:
+            return await slots_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/slots", 'ok', note)
 
     # -- ORBATs -------------------------------------------------------------
 

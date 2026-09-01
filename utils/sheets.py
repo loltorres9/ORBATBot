@@ -3,7 +3,6 @@ from google.oauth2.service_account import Credentials
 import json
 import os
 import re
-from typing import Optional
 
 SCOPES = [
     'https://spreadsheets.google.com/feeds',

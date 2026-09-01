@@ -505,6 +505,196 @@ class SlotSelectView(discord.ui.View):
 # Denial modal
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Approving and denying — the one implementation
+# ---------------------------------------------------------------------------
+#
+# Both the buttons in #slot-approvals and the web page call these. Everything a
+# decision entails lives here: the unit gating, the roster write, clearing the
+# request out of #slot-approvals, the archive record, the DMs, the competing
+# requests and the board refresh. A second copy of this for the web would be the
+# one place the two surfaces could quietly drift apart.
+
+
+class ActionError(Exception):
+    """A reason an approval or denial cannot go ahead, phrased for whoever asked."""
+
+
+ARCHIVE_CHANNEL_NAME = 'approval-archive'
+
+
+async def _archive_channel(guild: discord.Guild):
+    channel = discord.utils.get(guild.text_channels, name=ARCHIVE_CHANNEL_NAME)
+    if channel is None:
+        try:
+            channel = await guild.create_text_channel(ARCHIVE_CHANNEL_NAME)
+        except discord.Forbidden:
+            channel = None
+    return channel
+
+
+async def _drop_approval_message(guild: discord.Guild, req) -> None:
+    """Take an actioned request out of #slot-approvals.
+
+    Found through the ids on the row rather than through an interaction, so the
+    web page reaches exactly the same message the button would have.
+    """
+    if not (req['approval_channel_id'] and req['approval_message_id']):
+        return
+    try:
+        channel = guild.get_channel(int(req['approval_channel_id']))
+        if channel:
+            msg = await channel.fetch_message(int(req['approval_message_id']))
+            await msg.delete()
+    except (discord.NotFound, discord.Forbidden):
+        pass
+
+
+async def _dm(guild: discord.Guild, member_id, text: str) -> None:
+    """Best-effort DM. A member who left, or who blocks DMs, is not an error."""
+    if not member_id:
+        return
+    try:
+        member = await guild.fetch_member(int(member_id))
+        await member.send(text)
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException, ValueError):
+        pass
+
+
+async def _load_for_action(guild: discord.Guild, request_id: int, approver, verb: str):
+    req = await database.get_request_by_id(request_id)
+    if not req or req['guild_id'] != str(guild.id):
+        raise ActionError('Request not found.')
+    if not _can_action_request(approver, req['unit_role']):
+        unit = req['unit_role'] or 'that unit'
+        raise ActionError(
+            f"You can only {verb} requests from your own unit. This one is for {unit}."
+        )
+    if req['status'] != 'pending':
+        raise ActionError(f"This request has already been {req['status']}.")
+    return req
+
+
+async def approve_slot_request(bot: commands.Bot, guild: discord.Guild,
+                               request_id: int, approver: discord.Member) -> dict:
+    """Approve one request. Raises ActionError with a message for *approver*."""
+    req = await _load_for_action(guild, request_id, approver, 'approve')
+    await database.approve_request(request_id, approver.display_name)
+
+    # Write the assignment out. On an ORBAT-backed operation this is nothing at
+    # all — the approved request *is* the booking — so the rollback below only
+    # ever runs for a sheet, where a failed network write would otherwise leave
+    # the slot stuck in approved limbo.
+    op = await database.get_active_operation(str(guild.id))
+    if op:
+        try:
+            await roster.assign(op, {'row': req['sheet_row'], 'col': req['sheet_col']},
+                                req['member_name'], req['unit_role'])
+        except Exception as e:
+            await database.deny_request(
+                request_id, approver.display_name,
+                reason='Sheet update failed — please re-approve',
+            )
+            raise ActionError(
+                f"Sheet update failed: {e}. The request has been reset to denied so "
+                "the slot stays open — please try approving again."
+            )
+
+    await _drop_approval_message(guild, req)
+
+    op_name = op['name'] if op else 'Unknown'
+    archive = await _archive_channel(guild)
+    if archive:
+        unit_line = f"  ·  **{req['unit_role']}**" if req['unit_role'] else ''
+        embed = discord.Embed(
+            description=(f"**{op_name}**{unit_line}\n"
+                         f"<@{req['member_id']}> → **{req['slot_label']}**"),
+            color=discord.Color.green(),
+        )
+        embed.add_field(name='✅ Approved by', value=approver.mention, inline=True)
+        embed.timestamp = discord.utils.utcnow()
+        await archive.send(embed=embed)
+
+    await _dm(guild, req['member_id'],
+              f"✅ **Slot Request Approved!**\n"
+              f"Operation: **{op_name}**\n"
+              f"Slot: **{req['slot_label']}**\n"
+              f"You're confirmed. See you on the field! 🎖️")
+
+    # Everyone else who wanted this slot loses it, and is told so.
+    competitors = []
+    if op:
+        competitors = await database.get_competing_requests(
+            op['id'], roster.request_key(req), request_id
+        )
+        for comp in competitors:
+            await database.deny_request(
+                comp['id'], approver.display_name,
+                reason='Slot was awarded to another member',
+            )
+            if comp['approval_channel_id'] and comp['approval_message_id']:
+                try:
+                    channel = guild.get_channel(int(comp['approval_channel_id']))
+                    if channel:
+                        msg = await channel.fetch_message(int(comp['approval_message_id']))
+                        comp_embed = msg.embeds[0].copy() if msg.embeds else discord.Embed()
+                        comp_embed.color = discord.Color.dark_gray()
+                        comp_embed.add_field(
+                            name='❌ Denied',
+                            value=f"Slot awarded to **{req['member_name']}**",
+                            inline=False,
+                        )
+                        await msg.edit(embed=comp_embed, view=None)
+                except (discord.NotFound, discord.Forbidden):
+                    pass
+            await _dm(guild, comp['member_id'],
+                      f"❌ **Slot Request Denied**\n"
+                      f"Operation: **{op_name}**\n"
+                      f"Slot: **{comp['slot_label']}**\n"
+                      f"This slot was awarded to another member. "
+                      f"You can request a different slot with `/request-slot`.")
+
+        asyncio.create_task(_update_orbat(bot, guild, op))
+
+    return {'request': req, 'operation': op, 'competitors': len(competitors)}
+
+
+async def deny_slot_request(bot: commands.Bot, guild: discord.Guild, request_id: int,
+                            approver: discord.Member, reason: str = None) -> dict:
+    """Deny one request. Raises ActionError with a message for *approver*."""
+    req = await _load_for_action(guild, request_id, approver, 'deny')
+    reason = (reason or '').strip() or 'No reason provided'
+    await database.deny_request(request_id, approver.display_name, reason)
+
+    op = await database.get_active_operation(str(guild.id))
+    await _drop_approval_message(guild, req)
+
+    archive = await _archive_channel(guild)
+    if archive:
+        op_name = op['name'] if op else 'Unknown'
+        unit_line = f"  ·  **{req['unit_role']}**" if req['unit_role'] else ''
+        embed = discord.Embed(
+            description=(f"**{op_name}**{unit_line}\n"
+                         f"<@{req['member_id']}> → **{req['slot_label']}**"),
+            color=discord.Color.red(),
+        )
+        embed.add_field(name='❌ Denied by', value=approver.mention, inline=True)
+        embed.add_field(name='Reason', value=reason, inline=True)
+        embed.timestamp = discord.utils.utcnow()
+        await archive.send(embed=embed)
+
+    await _dm(guild, req['member_id'],
+              f"❌ **Slot Request Denied**\n"
+              f"Slot: **{req['slot_label']}**\n"
+              f"Reason: {reason}\n\n"
+              f"You can request a different slot with `/request-slot`.")
+
+    if op:
+        asyncio.create_task(_update_orbat(bot, guild, op))
+
+    return {'request': req, 'operation': op, 'reason': reason}
+
+
 class DenialModal(discord.ui.Modal, title='Deny Slot Request'):
     reason = discord.ui.TextInput(
         label='Reason for denial (optional)',
@@ -513,83 +703,24 @@ class DenialModal(discord.ui.Modal, title='Deny Slot Request'):
         max_length=200,
     )
 
-    def __init__(
-        self,
-        request_id: int,
-        bot: commands.Bot,
-        message_id: int,
-        channel_id: int,
-        requester_id: int,
-    ):
+    def __init__(self, request_id: int, bot: commands.Bot):
         super().__init__()
         self.request_id = request_id
         self.bot = bot
-        self.message_id = message_id
-        self.channel_id = channel_id
-        self.requester_id = requester_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        reason = self.reason.value.strip() or 'No reason provided'
-        await database.deny_request(self.request_id, interaction.user.display_name, reason)
-
-        req = await database.get_request_by_id(self.request_id)
-        op = await database.get_active_operation(str(interaction.guild_id))
-
-        # Remove the request from #slot-approvals
+        # Deferred first: the shared path posts to two channels and DMs people,
+        # which is well past Discord's three seconds.
+        await interaction.response.defer(ephemeral=True)
         try:
-            channel = self.bot.get_channel(self.channel_id)
-            if channel:
-                msg = await channel.fetch_message(self.message_id)
-                await msg.delete()
-        except (discord.NotFound, discord.Forbidden):
-            pass
-
-        # Post a compact record to #approval-archive
-        archive_channel = discord.utils.get(
-            interaction.guild.text_channels, name='approval-archive'
-        )
-        if archive_channel is None:
-            try:
-                archive_channel = await interaction.guild.create_text_channel('approval-archive')
-            except discord.Forbidden:
-                archive_channel = None
-
-        if archive_channel and req:
-            op_name = op['name'] if op else 'Unknown'
-            unit_line = f"  ·  **{req['unit_role']}**" if req['unit_role'] else ""
-            archive_embed = discord.Embed(
-                description=(
-                    f"**{op_name}**{unit_line}\n"
-                    f"<@{req['member_id']}> → **{req['slot_label']}**"
-                ),
-                color=discord.Color.red(),
+            await deny_slot_request(
+                self.bot, interaction.guild, self.request_id,
+                interaction.user, self.reason.value,
             )
-            archive_embed.add_field(
-                name='❌ Denied by', value=interaction.user.mention, inline=True
-            )
-            archive_embed.add_field(
-                name='Reason', value=reason, inline=True
-            )
-            archive_embed.timestamp = discord.utils.utcnow()
-            await archive_channel.send(embed=archive_embed)
-
-        await interaction.response.send_message("❌ Request denied.", ephemeral=True)
-
-        # Refresh the live ORBAT board (fire-and-forget)
-        if op:
-            asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
-
-        # DM the member
-        try:
-            member = await interaction.guild.fetch_member(self.requester_id)
-            await member.send(
-                f"❌ **Slot Request Denied**\n"
-                f"Slot: **{req['slot_label'] if req else 'Unknown'}**\n"
-                f"Reason: {reason}\n\n"
-                f"You can request a different slot with `/request-slot`."
-            )
-        except (discord.Forbidden, discord.NotFound):
-            pass
+        except ActionError as e:
+            await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
+            return
+        await interaction.followup.send("❌ Request denied.", ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
@@ -626,171 +757,34 @@ class ApprovalView(discord.ui.View):
         self.add_item(deny_btn)
 
     async def _approve_callback(self, interaction: discord.Interaction):
-        req = await database.get_request_by_id(self.request_id)
-        if not req:
-            await interaction.response.send_message("❌ Request not found.", ephemeral=True)
-            return
-
-        if not _can_action_request(interaction.user, req['unit_role']):
-            unit = req['unit_role'] or 'that unit'
-            await interaction.response.send_message(
-                f"🚫 You can only approve requests from your own unit. "
-                f"This request is for **{unit}**.",
-                ephemeral=True,
-            )
-            return
-
-        if req['status'] != 'pending':
-            await interaction.response.send_message(
-                f"⚠️ This request has already been **{req['status']}**.", ephemeral=True
-            )
-            return
-
-        await database.approve_request(self.request_id, interaction.user.display_name)
-
-        # Write the assignment out. On an ORBAT-backed operation this is
-        # nothing at all — the approved request *is* the booking — so the
-        # rollback below only ever runs for a sheet, where a failed network
-        # write would otherwise leave the slot stuck in approved limbo.
-        op = await database.get_active_operation(str(interaction.guild_id))
-        if op:
-            try:
-                await roster.assign(op, {'row': req['sheet_row'], 'col': req['sheet_col']},
-                                    req['member_name'], req['unit_role'])
-            except Exception as e:
-                await database.deny_request(
-                    self.request_id, interaction.user.display_name,
-                    reason='Sheet update failed — please re-approve',
-                )
-                await interaction.response.send_message(
-                    f"⚠️ Sheet update failed: `{e}`\n"
-                    "The request has been reset to denied so the slot stays open — please try approving again.",
-                    ephemeral=True,
-                )
-                return
-
-        # Acknowledge the interaction first (Discord requires a response within 3 s)
-        await interaction.response.send_message(
-            "✅ Request approved!", ephemeral=True
-        )
-
-        # Remove the request from #slot-approvals
+        await interaction.response.defer(ephemeral=True)
         try:
-            await interaction.message.delete()
-        except (discord.NotFound, discord.Forbidden):
-            pass
-
-        # Post a compact record to #approval-archive (create the channel if needed)
-        archive_channel = discord.utils.get(
-            interaction.guild.text_channels, name='approval-archive'
-        )
-        if archive_channel is None:
-            try:
-                archive_channel = await interaction.guild.create_text_channel('approval-archive')
-            except discord.Forbidden:
-                archive_channel = None
-
-        if archive_channel:
-            op_name = op['name'] if op else 'Unknown'
-            unit_line = f"  ·  **{req['unit_role']}**" if req['unit_role'] else ""
-            archive_embed = discord.Embed(
-                description=(
-                    f"**{op_name}**{unit_line}\n"
-                    f"<@{req['member_id']}> → **{req['slot_label']}**"
-                ),
-                color=discord.Color.green(),
+            result = await approve_slot_request(
+                self.bot, interaction.guild, self.request_id, interaction.user
             )
-            archive_embed.add_field(
-                name='✅ Approved by', value=interaction.user.mention, inline=True
-            )
-            archive_embed.timestamp = discord.utils.utcnow()
-            await archive_channel.send(embed=archive_embed)
-
-        # DM the approved member
-        try:
-            member = await interaction.guild.fetch_member(int(req['member_id']))
-            await member.send(
-                f"✅ **Slot Request Approved!**\n"
-                f"Operation: **{op['name'] if op else 'Unknown'}**\n"
-                f"Slot: **{req['slot_label']}**\n"
-                f"You're confirmed. See you on the field! 🎖️"
-            )
-        except (discord.Forbidden, discord.NotFound):
-            pass
-
-        # Auto-deny any competing requests for the same slot
-        if op:
-            competitors = await database.get_competing_requests(
-                op['id'], roster.request_key(req), self.request_id
-            )
-            for comp in competitors:
-                await database.deny_request(
-                    comp['id'],
-                    interaction.user.display_name,
-                    reason='Slot was awarded to another member',
-                )
-                # Update their approval message
-                if comp['approval_channel_id'] and comp['approval_message_id']:
-                    try:
-                        ch = interaction.guild.get_channel(int(comp['approval_channel_id']))
-                        if ch:
-                            msg = await ch.fetch_message(int(comp['approval_message_id']))
-                            comp_embed = msg.embeds[0].copy() if msg.embeds else discord.Embed()
-                            comp_embed.color = discord.Color.dark_gray()
-                            comp_embed.add_field(
-                                name='❌ Denied',
-                                value=f"Slot awarded to **{req['member_name']}**",
-                                inline=False,
-                            )
-                            await msg.edit(embed=comp_embed, view=None)
-                    except (discord.NotFound, discord.Forbidden):
-                        pass
-                # DM the competing member
-                try:
-                    comp_member = await interaction.guild.fetch_member(int(comp['member_id']))
-                    await comp_member.send(
-                        f"❌ **Slot Request Denied**\n"
-                        f"Operation: **{op['name']}**\n"
-                        f"Slot: **{comp['slot_label']}**\n"
-                        f"This slot was awarded to another member. "
-                        f"You can request a different slot with `/request-slot`."
-                    )
-                except (discord.Forbidden, discord.NotFound):
-                    pass
-
-        # Refresh the live ORBAT board (fire-and-forget)
-        if op:
-            asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
+        except ActionError as e:
+            await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
+            return
+        note = (f" {result['competitors']} competing request(s) were denied."
+                if result['competitors'] else '')
+        await interaction.followup.send(f"✅ Request approved!{note}", ephemeral=True)
 
     async def _deny_callback(self, interaction: discord.Interaction):
-        req = await database.get_request_by_id(self.request_id)
-        if not req:
-            await interaction.response.send_message("❌ Request not found.", ephemeral=True)
-            return
-
-        if not _can_action_request(interaction.user, req['unit_role']):
-            unit = req['unit_role'] or 'that unit'
-            await interaction.response.send_message(
-                f"🚫 You can only deny requests from your own unit. "
-                f"This request is for **{unit}**.",
-                ephemeral=True,
+        # Checked before the modal opens rather than after it is filled in, so
+        # nobody types a reason for a request they may not action. A modal
+        # cannot be shown after deferring, so these have to stay fast — they are
+        # two database reads. The same checks run again inside
+        # `deny_slot_request()`, which is what makes the web path safe too.
+        try:
+            await _load_for_action(
+                interaction.guild, self.request_id, interaction.user, 'deny'
             )
+        except ActionError as e:
+            await interaction.response.send_message(f"⚠️ {e}", ephemeral=True)
             return
-
-        if req['status'] != 'pending':
-            await interaction.response.send_message(
-                f"⚠️ This request has already been **{req['status']}**.", ephemeral=True
-            )
-            return
-
-        modal = DenialModal(
-            request_id=self.request_id,
-            bot=self.bot,
-            message_id=interaction.message.id,
-            channel_id=interaction.channel_id,
-            requester_id=int(req['member_id']),
+        await interaction.response.send_modal(
+            DenialModal(request_id=self.request_id, bot=self.bot)
         )
-        await interaction.response.send_modal(modal)
 
 
 # ---------------------------------------------------------------------------

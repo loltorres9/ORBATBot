@@ -8,7 +8,7 @@ It also manages **self-assignable game roles** — permission-free tag roles for
 
 And it runs **standalone events** with sign-ups — trainings, movie nights, anything — where members answer Accepted / Tentative / Declined on a button, or whatever options the organiser defined, and get reminded before the start. No Google Sheet involved. See [Events](#events).
 
-Events can also be managed from a **browser** instead of slash commands: an optional web interface with Discord login, running inside the same bot process. See [Web UI](#web-ui).
+Much of this can also be done from a **browser** instead of slash commands — events, the slot roster, slot approvals, game roles, embeds and the logs: an optional web interface with Discord login, running inside the same bot process. See [Web UI](#web-ui).
 
 ---
 
@@ -45,7 +45,8 @@ Operation slot requests, approvals and the live ORBAT board.
 - **📋 Request a Slot** button — persistent button on the live ORBAT embed, so no command is needed
 - Slots show 🟢 available, 🟡 pending (also requested — compete for it) or 🔴 filled, in real time
 - Several members can request the same slot; the approver picks, and the rest are auto-denied and notified
-- Approvals happen in `#slot-approvals` with **Approve / Deny** buttons and a denial modal for an optional reason
+- Approvals happen in `#slot-approvals` with **Approve / Deny** buttons and a denial modal for an optional reason —
+  or on the [web interface](#slot-requests), which does exactly the same thing
 - Actioned requests leave `#slot-approvals` and are archived as a compact embed in `#approval-archive`
 - Cancelling voids the approval message automatically (greyed out, buttons removed)
 - Members are DMed on submission, approval and denial
@@ -113,7 +114,7 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 - **Buttons survive restarts** — approval buttons, the ORBAT request button, the game-role panel and event sign-ups are all persistent views
 - **Commands sync automatically** on startup and when the bot joins a server; `/sync` is only for when something looks missing
 - **Role-based access control** — Unit Leaders get extra commands scoped to their own unit
-- **Optional [web interface](#web-ui)** — manage events from the browser, signed in with Discord, running inside the same process
+- **Optional [web interface](#web-ui)** — manage events, the ORBAT and slot approvals from the browser, signed in with Discord, running inside the same process
 
 ---
 
@@ -389,7 +390,8 @@ Presents a dropdown of active slots. Select one to remove the member and free th
 
 Unit Leaders only see slots belonging to members of their own unit.
 
-Unit Leaders can also **Approve / Deny** requests in `#slot-approvals` for members of their own unit.
+Unit Leaders can also **Approve / Deny** requests for members of their own unit — in `#slot-approvals`, or on the
+**📋 Slot requests** page of the [web interface](#slot-requests).
 
 ---
 
@@ -780,7 +782,7 @@ No privileged intents are needed for this feature.
 
 ## Web UI
 
-An optional browser interface for **events**: create them, edit them, cancel them, delete them and see who signed up — without touching a slash command. You sign in with your Discord account, and everything you do produces the same message, with the same buttons, in the same channel as `/event-create` would.
+An optional browser interface for most of what the bot does — events, the slot roster and its approvals, game roles, embeds and the logs — without touching a slash command. You sign in with your Discord account, and everything you do goes through the same code as the slash commands, so it produces the same messages, in the same channels, with the same buttons.
 
 It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` and `WEB_SECRET_KEY` unset, the bot starts exactly as it always did and opens no HTTP port. The startup log says which of the three is missing.
 
@@ -795,6 +797,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
+| Slot requests | Approve or deny the pending requests for the live operation, and see who already holds a slot |
 | ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, a preview of the board, and a one-way export to a Google Sheet |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
@@ -804,7 +807,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 Who may do what is **read live from your Discord roles**, not from the login:
 
 - **Any member of the server** — view events, RSVP, pick their own game roles, see the voice leaderboard
-- **Unit Leader or Manage Server** — create events
+- **Unit Leader or Manage Server** — create events; approve and deny slot requests (Unit Leaders for their own unit only)
 - **The organiser, or an admin** — edit, cancel and delete that event
 - **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, build ORBATs, configure the member log and voice tracking
 
@@ -909,6 +912,21 @@ Two details worth knowing about the numbers:
 - **A hard crash costs at most five minutes.** Open sessions carry a heartbeat that is refreshed every five minutes; on the next start, anything left open is closed at its last heartbeat. The time is never rounded up — an interval with no heartbeat counts zero.
 
 Voice state updates need no privileged intent and no extra permission, so unlike the member log this works the moment you switch it on.
+
+### Slot requests
+
+**📋 Slot requests** shows the pending requests for the operation that is running right now, with **✅ Approve** and **❌ Deny** next to each one and a field for an optional denial reason. Below them, who already holds a slot.
+
+Deciding here does **exactly** what the buttons in `#slot-approvals` do — it is the same code: the member is DMed, the request leaves `#slot-approvals` and is archived in `#approval-archive`, the live ORBAT board refreshes, and anyone else who wanted that slot is denied and told. You can work through a queue in Discord and finish it in the browser without anything noticing.
+
+Two things to know:
+
+- **Unit Leaders see every request but can only decide their own unit's.** A row you may not action says so (*“CNTO only”*) instead of showing the buttons — you can still see how many people are waiting. Admins can action everything.
+- **A slot two people want is marked `contested`.** That is the case where approving is a choice rather than a formality, and it is not otherwise visible: in Discord it is simply two separate messages.
+
+Taking somebody **off** the roster is still `/clear-slot` in Discord. Requesting a slot is still Discord-side too — this page is for deciding requests, not making them.
+
+---
 
 ### ORBATs
 
