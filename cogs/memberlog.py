@@ -82,6 +82,9 @@ class MemberLogCog(commands.Cog):
         self._inviters: dict = {}
         # invite code -> (guild id, when it went), for the same reason.
         self._deleted: dict = {}
+        # Codes already credited to a join, so the second half of the race can't
+        # hand the same consumed link to the next person through the door.
+        self._spent: dict = {}
 
     # -- settings -----------------------------------------------------------
 
@@ -172,7 +175,14 @@ class MemberLogCog(commands.Cog):
             gone |= self._recently_deleted(guild)
             if len(gone) == 1:
                 code = gone.pop()
-                return Attribution(code, self._inviters.get(code), 'consumed', None)
+                inviter = self._inviters.get(code)
+                # Spent, so nothing credits it twice. Both halves of the race
+                # can still see it — the diff above found it before its
+                # INVITE_DELETE arrived, and that event lands moments later —
+                # and without this the next join inside the window would be
+                # credited to a link that is already accounted for.
+                self._spend(code)
+                return Attribution(code, inviter, 'consumed', None)
 
         # No counter moved: either a vanity URL, or the member was added by a
         # bot, or the snapshot was stale.
@@ -229,10 +239,18 @@ class MemberLogCog(commands.Cog):
         cached = self._invites.get(invite.guild.id)
         if cached is not None:
             cached.pop(invite.code, None)
+        if invite.code in self._spent:
+            return
         # Remembered briefly: dropping it from the snapshot alone is what made a
         # used-up single-use link unattributable, because the join it let in is
         # handled moments later.
         self._deleted[invite.code] = (invite.guild.id, discord.utils.utcnow())
+
+    def _spend(self, code: str):
+        """Mark a consumed code as accounted for, so no later join reuses it."""
+        self._deleted.pop(code, None)
+        self._inviters.pop(code, None)
+        self._spent[code] = discord.utils.utcnow()
 
     def _recently_deleted(self, guild: discord.Guild) -> set:
         """Codes this guild lost in the last few seconds, pruning the older ones."""
@@ -241,6 +259,9 @@ class MemberLogCog(commands.Cog):
             if now - when > CONSUMED_WINDOW:
                 del self._deleted[code]
                 self._inviters.pop(code, None)
+        for code, when in list(self._spent.items()):
+            if now - when > CONSUMED_WINDOW:
+                del self._spent[code]
         return {
             code for code, (guild_id, _) in self._deleted.items()
             if guild_id == guild.id
