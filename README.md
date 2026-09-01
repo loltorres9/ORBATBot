@@ -1,6 +1,8 @@
 # ORBATBot
 
-A Discord bot for managing Arma 3 operation slot requests. Members request slots via a two-step squad → slot picker or the **📋 Request a Slot** button on the ORBAT embed; admins and Unit Leaders approve or deny requests with a button click, and the Google Sheet is updated automatically.
+A Discord bot for managing Arma 3 operation slot requests. Members request slots via a two-step squad → slot picker or the **📋 Request a Slot** button on the ORBAT embed; admins and Unit Leaders approve or deny requests with a button click.
+
+The roster an operation runs on lives **either in the bot's own database** — built and edited in the browser under [ORBATs](#orbats) — **or in a Google Sheet**, the way it always did. You pick one per operation; everything else behaves the same.
 
 It also manages **self-assignable game roles** — permission-free tag roles for games like Minecraft or DCS that members opt into themselves, so you can `@mention` everyone who plays a given game. See [Game Roles](#game-roles).
 
@@ -12,13 +14,13 @@ Events can also be managed from a **browser** instead of slash commands: an opti
 
 ## Features
 
-Three independent feature areas plus maintenance commands. **ORBAT & Slots** is the Arma operation system backed by a Google Sheet; **Events** and **Game Roles** work on their own with no sheet involved.
+Three independent feature areas plus maintenance commands. **ORBAT & Slots** is the Arma operation system, running on an ORBAT you build in the browser or on a Google Sheet; **Events** and **Game Roles** work on their own and never involve either.
 
 In the **Who** column, *Unit Leader+* means Unit Leaders and Admins, and Unit Leaders are scoped to their own unit. See [Role-Based Access](#role-based-access) for the full matrix.
 
 ### 🗺️ ORBAT & Slots
 
-Operation slot requests, approvals and the live ORBAT board, driven from a Google Sheet.
+Operation slot requests, approvals and the live ORBAT board.
 
 | Command | Who | What |
 |---|---|---|
@@ -27,13 +29,13 @@ Operation slot requests, approvals and the live ORBAT board, driven from a Googl
 | `/change-slot` | Everyone | Forfeit your current slot and pick a new one |
 | `/leave-operation` | Everyone | Remove yourself from the operation entirely (pending or approved) |
 | `/assign-slot <member>` | Unit Leader+ | Assign a member to a slot directly, bypassing approval |
-| `/clear-slot` | Unit Leader+ | Remove a member from a slot; restores the sheet cell and strips the unit tag |
+| `/clear-slot` | Unit Leader+ | Remove a member from a slot; on a sheet-backed operation the cell is restored and the unit tag stripped |
 | `/setup-slots` | Admin | Start an operation from an ORBAT or a Google Sheet; optional event time and reminder; auto-posts the ORBAT to `#orbat` |
 | `/post-orbat [channel]` | Admin | Post or re-post the live ORBAT board |
 | `/set-event-time <time>` | Admin | Update the operation's start time and reminder |
 | `/post-event [channel] [mission_name] [event_time]` | Admin | Post an announcement embed for the operation, pointing at `#orbat` for sign-ups |
 | `/clear-requests` | Admin | Cancel all pending requests for the current operation |
-| `/current-operation` | Admin | Show which operation is active and link to its sheet |
+| `/current-operation` | Admin | Show which operation is active, and which ORBAT or sheet it runs on |
 
 > `/post-event` only *announces* the active operation — sign-up still happens through ORBAT slots. For a standalone event with its own attendee list, use [`/event-create`](#events) instead.
 
@@ -49,7 +51,8 @@ Operation slot requests, approvals and the live ORBAT board, driven from a Googl
 - Members are DMed on submission, approval and denial
 - Operation reminders DM every approved member and ping `#orbat` before the start
 - Availability is re-validated at selection time, so two people can't take the same slot
-- A squad called **Reservists** is shown on the ORBAT but left out of the open / pending / filled counts, so a reserve bench doesn't make the operation look under-strength
+- A squad left out of the counts is still shown on the board, so a reserve bench doesn't make the operation look under-strength. On an ORBAT that is the `nocount` option; on a sheet it is a squad called **Reservists**
+- On an ORBAT-backed operation the board also shows each squad's unit and radio channel, and the shared radio nets underneath
 
 ### 📅 Events
 
@@ -100,7 +103,7 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 | `/set-timezone <tz>` | Admin | Server timezone used when reading any time you type — operations and events alike (default UTC) |
 | `/sync` | Admin | Force-sync slash commands with Discord and refresh the ORBAT embed |
 | `/restart` | Admin | Restart the bot container on Railway |
-| `/debug-slots [squad]` | Admin | Show the raw slot data the bot reads from the sheet, for diagnosing missing slots |
+| `/debug-slots [squad]` | Admin | Show the raw slot data the bot reads, whichever roster is in use, for diagnosing missing slots |
 | `/archive-old-approvals` | Admin | One-time migration of pre-existing approved messages into `#approval-archive` |
 | `/purge [amount] [since]` | Manage Messages | Delete messages in the channel it is run in — the last *N*, everything since a date or an age, or both |
 
@@ -161,6 +164,9 @@ The unit roles and `Unit Leader` can never be turned into game roles — the bot
 
 ## Sheet Format
 
+Only relevant for **sheet-backed** operations. If your roster is an
+[ORBAT](#orbats), skip this section.
+
 The bot reads **ORBAT-style sheets**, where each slot is a cell rather than a row
 under column headers. It reads the **first tab only**, and the operation name is
 the spreadsheet's title.
@@ -193,6 +199,8 @@ the spreadsheet's title.
 >
 > Share the sheet with your service account email before running `/setup-slots`.
 
+**None of this applies if you use an ORBAT.** Building the roster in the browser under [ORBATs](#orbats) needs no spreadsheet, no service account and no particular cell format — see [Running an operation on an ORBAT](#running-an-operation-on-an-orbat).
+
 ---
 
 ## Setup
@@ -210,7 +218,9 @@ the spreadsheet's title.
 
 > **Important — command visibility:** After the bot joins, go to **Server Settings → Integrations → ORBATBot → Manage**. Make sure `@everyone` is set to ✅ (allow). If it is set to ❌, all commands will be hidden from regular members regardless of what the bot configures. Admin-only commands are restricted automatically by the bot — you do not need to configure those manually.
 
-### 2. Google Sheets API
+### 2. Google Sheets API — optional
+
+Only needed if you want to run operations from a Google Sheet. If you build your rosters as [ORBATs](#orbats) in the browser instead, skip this step entirely — the bot starts and runs without any Google credentials, and only complains if you actually pass a `sheet_url` to `/setup-slots`.
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com) → **New Project**
 2. Enable the **Google Sheets API** and **Google Drive API**
@@ -220,12 +230,17 @@ the spreadsheet's title.
 
 ### 3. Environment Variables
 
-Copy `.env.example` to `.env` and fill in the three required values:
+Copy `.env.example` to `.env` and fill in the two required values:
 
 ```
 DISCORD_TOKEN=your_bot_token
-GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
 DB_PASSWORD=choose_a_secure_password
+```
+
+`GOOGLE_CREDENTIALS` is optional and only needed for sheet-backed operations:
+
+```
+GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
 ```
 
 > `DATABASE_URL` is constructed automatically by docker-compose from `DB_PASSWORD`. On Railway it is injected automatically — you do not set it manually in either case. The only time you fill it in yourself is [running the bot outside Docker](#local-development), which is why `.env.example` carries a commented example of it.
@@ -334,13 +349,13 @@ Cancels your pending slot request and frees it for others.
 /change-slot
 ```
 
-Forfeits your current slot (pending or approved) and lets you pick a new one via the squad → slot picker. If your slot was approved, it is also cleared from the sheet.
+Forfeits your current slot (pending or approved) and lets you pick a new one via the squad → slot picker. An approved slot is released either way; on a sheet-backed operation the cell is cleared too.
 
 ```
 /leave-operation
 ```
 
-Removes you from the operation entirely. Works for both pending and approved slots. If you were approved, your slot is also cleared from the sheet. Shows a confirmation prompt before acting.
+Removes you from the operation entirely. Works for both pending and approved slots, and on a sheet-backed operation the cell is cleared as well. Shows a confirmation prompt before acting.
 
 ```
 /game-roles
@@ -364,13 +379,13 @@ Available to members with the **Unit Leader** Discord role. Scoped to their own 
 /assign-slot @member
 ```
 
-Directly assigns a member of your unit to a slot — no approval message, no waiting. Uses the same squad → slot picker. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
+Directly assigns a member of your unit to a slot — no approval message, no waiting. Uses the same squad → slot picker. On a sheet-backed operation the sheet is updated immediately; the member gets a DM either way. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
 
 ```
 /clear-slot
 ```
 
-Presents a dropdown of active slots. Select one to remove the member and free the slot. The sheet cell is restored to `[] <Insert Name>` (unit tag removed). The member receives a DM.
+Presents a dropdown of active slots. Select one to remove the member and free the slot. On a sheet-backed operation the cell is restored to `[] <Insert Name>` and the unit tag removed. The member receives a DM.
 
 Unit Leaders only see slots belonging to members of their own unit.
 
@@ -439,13 +454,13 @@ One-time migration command. Scans `#slot-approvals` for old bot-posted approved 
 /debug-slots [squad]
 ```
 
-Shows the raw slot data the bot reads from the current sheet. Useful for diagnosing why a slot isn't appearing in the picker. Optionally filter by squad name.
+Shows the raw slot data the bot reads from the current roster, each slot with the identifier it is booked against — `db:412` for an ORBAT slot, `sheet:r12c4` for a spreadsheet cell. Useful for diagnosing why a slot isn't appearing in the picker. Optionally filter by squad name.
 
 ```
 /current-operation
 ```
 
-Shows which sheet is currently loaded and links to it.
+Shows the active operation and where its roster comes from — the ORBAT's name, or a link to the sheet.
 
 ```
 /sync
@@ -497,7 +512,7 @@ Either way the bot is back online in ~30–60 seconds. Slots, buttons, and data 
 1. Requested slots appear in `#slot-approvals` (created automatically if it doesn't exist)
 2. An admin or Unit Leader from the same unit clicks **✅ Approve** or **❌ Deny**
 3. On approval:
-   - The Google Sheet is updated
+   - On a sheet-backed operation the Google Sheet is updated. On an ORBAT there is nothing to write — the approved request *is* the booking, which is why an approval there can't fail halfway and need repeating
    - The request is deleted from `#slot-approvals`
    - A compact record is posted to `#approval-archive` (created automatically if it doesn't exist)
    - The ORBAT board refreshes
@@ -780,7 +795,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
-| ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, and a preview of the board |
+| ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, a preview of the board, and a one-way export to a Google Sheet |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
 | Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
@@ -943,6 +958,16 @@ A line starting with `-` is a net that exists in the plan but is not in use this
 **Preview** shows the board exactly as Discord would render it, without saving. It also warns you before you hit a limit Discord enforces silently: more than 8 rows of squads, a squad too long for one field, or an embed over 6000 characters. **Save** writes it.
 
 Editing an ORBAT never quietly drops anyone. Renaming a slot keeps whoever is booked into it; reordering lines changes nothing at all. Anything that would take someone off the roster — or move them onto a differently named role — stops at a confirmation page that names them and which operation they are in, and you have to click **Save anyway**.
+
+### Exporting to a Google Sheet
+
+At the bottom of the editor there is an **Export to a Google Sheet** form. Paste the sheet's URL and the roster is written into a **new tab**, named after the ORBAT and the time. An existing tab is never touched, so you cannot overwrite a sheet another operation is running on; a second export with the same name gets a `(2)` suffix instead of replacing the first.
+
+Tick **Include who is booked in** to export the current operation's board rather than the empty roster. That only works while the active operation actually runs on this ORBAT.
+
+The layout is the one the bot itself understands — squad header, `1. Squad Leader` beside `[] <Insert Name>` — so the tab looks like the sheets you already keep by hand, and if you ever move it to first position the bot can read it as a sheet-backed operation again.
+
+It is strictly one-way: nothing is read back, no link is stored, and there is no sync. The sheet has to be shared with the service account as an editor, which means this is the one ORBAT feature that does need `GOOGLE_CREDENTIALS`.
 
 ### Running an operation on an ORBAT
 
