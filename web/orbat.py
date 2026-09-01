@@ -174,6 +174,27 @@ async def apply(orbat_id: int, text: str, nets_text: str, checked: dict) -> str:
     return f"Saved — {checked['summary']}."
 
 
+async def delete(record) -> str:
+    """Remove an ORBAT, unless it is the one a live operation runs on.
+
+    Deleting takes its squads and slots with it, so anyone booked into it comes
+    off the roster — `database.delete_orbat()` releases those bookings rather
+    than leaving them pointing at slots that no longer exist. That is the right
+    thing for a finished operation and the wrong thing for the one running
+    tonight, which would silently lose its whole board, so the live one is
+    refused outright.
+    """
+    for operation in await database.orbat_operations(record['id']):
+        if operation['is_active']:
+            raise ValueError(
+                f"\u201c{record['name']}\u201d is running operation "
+                f"\u201c{operation['name']}\u201d. Start another operation with "
+                "/setup-slots first, then delete this one."
+            )
+    await database.delete_orbat(record['id'])
+    return f"Deleted \u201c{record['name']}\u201d."
+
+
 async def stored_board(orbat_id: int):
     """The board as stored, with whatever is actually booked into it."""
     squads = await database.get_orbat_structure(orbat_id)

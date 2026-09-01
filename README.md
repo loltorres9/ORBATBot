@@ -128,7 +128,7 @@ Grouped by the same four feature areas as [Features](#features) above, so the tw
 |---|---|---|---|
 | `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
 | `/assign-slot`, `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
-| Approve / Deny in `#slot-approvals` | ❌ | ✅ (own unit only) | ✅ |
+| Approve / Deny — in `#slot-approvals` or on the web | ❌ | ✅ (own unit only) | ✅ |
 | `/setup-slots`, `/post-orbat`, `/set-event-time`, `/post-event`, `/clear-requests`, `/current-operation` | ❌ | ❌ | ✅ |
 
 ### 📅 Events
@@ -523,7 +523,7 @@ Either way the bot is back online in ~30–60 seconds. Slots, buttons, and data 
 4. On denial: admin optionally provides a reason; member gets a DM and can request again
 5. If a member cancels their request, the approval message is automatically updated to show it was cancelled (greyed out, buttons removed)
 
-**Unit role gating:** Unit Leaders (and admins with a unit role) can only approve/deny requests from members of their own unit. Admins without a unit role can approve any request.
+**Unit role gating:** deciding a request needs the **Unit Leader** role, and Unit Leaders can only approve or deny requests from members of their own unit. Admins can action any request, with or without a unit role. Having a unit role alone is not enough — the buttons sit in a channel everybody can read, and without that rule any member of a unit could approve their own request.
 
 ### Approval archive
 
@@ -933,6 +933,8 @@ Taking somebody **off** the roster is still `/clear-slot` in Discord. Requesting
 The slot roster, written out on a page instead of kept in a Google Sheet. **Manage Server** only, under the **🗺️ ORBATs** tab.
 
 An ORBAT is a **template**: the same one is meant to back as many operation nights as you like, which is what duplicating the sheet used to be for. **Copy** takes the structure and none of the bookings.
+
+**Deleting one is refused while an operation is running on it** — say so with `/setup-slots` for the next operation first. Once it is no longer the live one, deleting takes its squads and slots with it and everybody booked into it comes off the roster, the same as deleting their slot in the editor would.
 
 You write the roster as indented text — squad at the left margin, its slots indented under it:
 

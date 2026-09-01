@@ -417,6 +417,20 @@ async def get_active_operation(guild_id: str):
         )
 
 
+async def get_operation(operation_id: int):
+    """One operation by id, active or not.
+
+    A request keeps pointing at the operation it was made for. Deciding it has
+    to read *that* one rather than whatever is running now, or a request left
+    over from last week is written into this week's roster.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow(
+            'SELECT * FROM operations WHERE id = $1', operation_id
+        )
+
+
 async def create_operation(guild_id: str, name: str, sheet_url: str = None,
                            sheet_id: str = None, squad_col: int = None,
                            role_col: int = None, status_col: int = None,
@@ -1472,10 +1486,43 @@ async def rename_orbat(orbat_id: int, name: str, description: str = None):
         )
 
 
-async def delete_orbat(orbat_id: int) -> bool:
+async def orbat_operations(orbat_id: int) -> list:
+    """The operations running on this ORBAT, newest first."""
     pool = await get_pool()
     async with pool.acquire() as db:
-        result = await db.execute('DELETE FROM orbats WHERE id = $1', orbat_id)
+        return await db.fetch(
+            '''SELECT * FROM operations WHERE orbat_id = $1
+               ORDER BY is_active DESC, created_at DESC''',
+            orbat_id,
+        )
+
+
+async def delete_orbat(orbat_id: int) -> bool:
+    """Delete an ORBAT, taking everyone booked into it off the roster first.
+
+    The cascade removes the squads and slots; `requests.slot_id` carries no
+    foreign key, so without releasing the bookings here an approved request
+    would survive pointing at a slot that no longer exists — the same orphan
+    `apply_orbat_structure()` goes out of its way to avoid on an edit.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            await db.execute(
+                """UPDATE requests
+                      SET status = 'cancelled',
+                          slot_id = NULL,
+                          denial_reason = COALESCE(denial_reason,
+                                                   'ORBAT deleted'),
+                          updated_at = CURRENT_TIMESTAMP
+                    WHERE status IN ('pending', 'approved')
+                      AND slot_id IN (
+                            SELECT s.id FROM orbat_slots s
+                              JOIN orbat_squads q ON q.id = s.squad_id
+                             WHERE q.orbat_id = $1)""",
+                orbat_id,
+            )
+            result = await db.execute('DELETE FROM orbats WHERE id = $1', orbat_id)
         return result.endswith('1')
 
 

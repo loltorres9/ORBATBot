@@ -153,7 +153,12 @@ class ORBATBot(commands.Bot):
             print("ℹ️ Web UI dependencies missing (pip install -r requirements.txt) — skipped.")
             return
 
-        config = load_config()
+        try:
+            config = load_config()
+        except Exception:
+            print("❌ Web UI configuration is invalid — skipped:")
+            traceback.print_exc()
+            return
         if config.disabled:
             print("ℹ️ Web UI switched off with WEB_ENABLED=0.")
             return
