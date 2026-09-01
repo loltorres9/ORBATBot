@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Slot requests{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'slots' %}{% include '_nav.html' %}{% endwith %}
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if not operation %}
+  <h2>Slot requests</h2>
+  <p class="empty">No operation is running. An admin starts one with
+    <code>/setup-slots</code>.</p>
+{% else %}
+  <h2>{{ operation.name }}</h2>
+  <p class="hint">{{ source }} · deciding here does exactly what the buttons in
+    <code>#slot-approvals</code> do: the member is DMed, the request is archived,
+    the board refreshes, and anyone else who wanted the same slot is denied.</p>
+
+  <h3 style="margin-top:22px">Waiting for a decision
+    <span class="chip">{{ pending|length }}</span></h3>
+  {% if pending %}
+    <ul class="cards">
+      {% for req in pending %}
+        <li class="card pad">
+          <div class="pagehead" style="margin:0">
+            <div>
+              <strong>{{ req.slot_label }}</strong>
+              {% if req.contested %}<span class="chip contested">contested</span>{% endif %}
+              <p class="muted nospace">
+                {{ req.member_name }}
+                {%- if req.unit_role %} · {{ req.unit_role }}{% endif %}
+                · asked {{ relative(req.created_at) }}
+              </p>
+            </div>
+            {% if req.may_action %}
+              <div class="rowactions">
+                <form method="post" action="/g/{{ guild.id }}/slots/{{ req.id }}/approve">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
+                  <button class="button primary" type="submit">✅ Approve</button>
+                </form>
+              </div>
+            {% else %}
+              <span class="muted">{{ req.unit_role }} only</span>
+            {% endif %}
+          </div>
+          {% if req.may_action %}
+            <form method="post" action="/g/{{ guild.id }}/slots/{{ req.id }}/deny"
+                  class="denyrow">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input name="reason" maxlength="200" placeholder="Reason for denial (optional)">
+              <button class="button danger" type="submit">❌ Deny</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">Nothing waiting.</p>
+  {% endif %}
+
+  <h3 style="margin-top:28px">Already on the roster
+    <span class="chip">{{ approved|length }}</span></h3>
+  {% if approved %}
+    <div class="card pad">
+      {% for req in approved %}
+        <div class="slotrow">
+          <span><strong>{{ req.slot_label }}</strong>
+            <span class="muted">— {{ req.member_name }}
+              {%- if req.unit_role %} [{{ req.unit_role }}]{% endif %}</span></span>
+        </div>
+      {% endfor %}
+      <p class="hint" style="margin-bottom:0">Taking somebody off the roster is
+        still <code>/clear-slot</code> in Discord.</p>
+    </div>
+  {% else %}
+    <p class="empty">Nobody is booked in yet.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

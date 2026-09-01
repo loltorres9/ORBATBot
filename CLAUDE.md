@@ -17,9 +17,9 @@ request *is* the booking. See
 
 **Current state:** Fully operational bot deployed on Railway, plus an optional
 web UI (`web/`) with Discord OAuth2 login for events, game roles, embeds, the
-member log, voice time and the ORBAT editor.
-**Next phase:** requesting and approving slots is still Discord-side. The
-remaining steps are listed under
+member log, voice time, the ORBAT editor and the slot-approval queue.
+**Next phase:** *requesting* a slot is still Discord-side; approving one is not.
+The remaining steps are listed under
 [Slots on the web](#slots-on-the-web--what-is-done-and-what-is-left).
 
 ---
@@ -399,7 +399,7 @@ Indexes on `(guild_id, started_at)` and a partial one on the open rows.
 | `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
 | `/clear-slot` | ❌ | ✅ own unit | ✅ |
 | `/assign-slot` | ❌ | ✅ own unit | ✅ |
-| Approve / Deny in `#slot-approvals` | ❌ | ✅ own unit | ✅ |
+| Approve / Deny — in `#slot-approvals` or on the web | ❌ | ✅ own unit | ✅ |
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone`, `/post-event` | ❌ | ❌ | ✅ |
 | `/setup-slots`, `/current-operation`, `/sync`, `/restart`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
 | `/purge` | ❌ | ❌ | ✅ — anyone with **Manage Messages** in that channel |
@@ -547,10 +547,28 @@ Nothing is lost either way: state lives in PostgreSQL and every view is re-regis
 
 ## Approval & Denial Flow
 
+**`approve_slot_request()` and `deny_slot_request()` in `cogs/slots.py` are the
+whole implementation.** The Discord buttons and the web page are both thin
+callers: the button defers, calls one of them, and reports what came back. That
+is what keeps the two surfaces from drifting — a decision made in the browser
+does exactly what a decision made in `#slot-approvals` does, down to the
+competitor denials and the archive record.
+
+Both raise `ActionError` for everything a person can get wrong (the request is
+gone, someone already actioned it, the approver's unit does not match). The
+button renders it as an ephemeral `⚠️`, the web route as a flash message on the
+queue page. They return a dict, so the caller can say how many competing
+requests went with the approval without re-querying.
+
+`_dm()`, `_archive_channel()` and `_drop_approval_message()` came out of the
+button callbacks in the same move. **None of them takes an `Interaction`** —
+they take a `discord.Guild` and ids, which is the only reason the web can reach
+them at all.
+
 ### Approval
 1. Member submits → `requests` row created with `status = pending`
 2. Embed posted to `#slot-approvals` — description: `**Op Name**  ·  @UnitRole\n@Member → **Slot**`. Footer: `Request ID: {id}`. Unit role is a Discord role mention (pings Unit Leaders).
-3. Approver clicks **✅ Approve**:
+3. Approver clicks **✅ Approve** in Discord, or on `/g/{guild}/slots`:
    - `_can_action_request()` checks unit gating
    - DB updated to `approved`
    - `roster.assign()` — writes the sheet on a sheet-backed operation, and does
@@ -565,7 +583,9 @@ Nothing is lost either way: state lives in PostgreSQL and every view is re-regis
    - ORBAT refreshed (fire-and-forget)
 
 ### Denial
-1. Approver clicks **❌ Deny** → `DenialModal` shown (optional reason, max 200 chars)
+1. Approver clicks **❌ Deny** → `DenialModal` shown (optional reason, max 200
+   chars). On the web the reason is a text field next to the button, with the
+   same cap
 2. On submit:
    - DB updated to `denied`
    - Message deleted from `#slot-approvals`
@@ -907,6 +927,7 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
 | Build and post embeds, configure the member log and voice tracking | admin | `is_admin()` — `manage_guild` or `administrator` |
 | Build and edit ORBATs | admin | `is_admin()` |
+| Approve / deny slot requests | Unit Leader (own unit) or admin | `_can_action_request()` |
 | See the voice leaderboard | any member of the guild | — |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
@@ -941,6 +962,9 @@ POST /g/{guild}/roles                   set your game roles to what is ticked
 POST /g/{guild}/roles/add               admin — register/create a game role
 POST /g/{guild}/roles/remove            admin — unregister, optionally delete
 POST /g/{guild}/roles/panel             admin — post the self-assign panel
+GET  /g/{guild}/slots                   the approval queue for the live operation
+POST /g/{guild}/slots/{id}/approve      exactly what the ✅ button does
+POST /g/{guild}/slots/{id}/deny         optional reason, exactly what ❌ does
 GET  /g/{guild}/orbats                  admin — ORBAT list, POST to create
 GET  /g/{guild}/orbats/{id}             the roster editor
 POST /g/{guild}/orbats/{id}             action=preview | save | confirm
@@ -1017,12 +1041,43 @@ alone instead of a broken image. The URL carries the file's mtime so a replaced
 logo isn't served from a browser cache. Both are Jinja globals; they don't vary
 per request.
 
+### The approval queue (`web/slots.py`)
+
+`/g/{guild}/slots` lists the live operation's requests: the pending ones with an
+**Approve** button and a denial-reason field, the approved ones as a plain list
+of who holds what. It is the same decision as the buttons in `#slot-approvals`,
+taken through the same two functions — see
+[Approval & Denial Flow](#approval--denial-flow).
+
+Three things about the page are deliberate:
+
+- **A Unit Leader sees the whole queue but can only act on their own unit.**
+  `may_action` is re-computed per row from `_can_action_request()`, and a row
+  they may not decide shows *"CNTO only"* instead of the buttons. Hiding those
+  rows entirely would make the page lie about how many people are waiting.
+- **Competing requests are marked `contested`.** Two people wanting the same
+  slot is the one case where approving is a choice rather than a rubber stamp,
+  and the request rows give no hint of it on their own — in Discord they are
+  simply two messages. Approving one still auto-denies the other, as it always
+  did.
+- **Nothing is removed from the roster here.** `/clear-slot` stays in Discord:
+  the page is for deciding requests, and taking someone off the roster is a
+  different action with a different audience.
+
+`queue()` returns the source line (*ORBAT: Zug-ORBAT*, or *Google Sheet*), so it
+is obvious which backend the operation runs on without opening the ORBAT tab.
+
+`approve()` and `deny()` translate `ActionError` into `ValueError`, which is the
+convention the rest of `web/` already uses for "this is a message for the user";
+the route renders it as a flash on the same page. The denial reason is capped at
+`MAX_REASON = 200`, matching `DenialModal`.
+
 ### Deliberately not covered yet
 
-- **Booking a slot from the web** — an ORBAT can back a live operation, but the
-  requesting itself is still Discord-side (`/request-slot` and the board's
-  button). Clicking a slot on the web page is the next step.
-- **Approving slot requests** — still Discord-side.
+- **Booking a slot from the web** — an ORBAT can back a live operation, and
+  approving is on the web now, but the *requesting* itself is still
+  Discord-side (`/request-slot` and the board's button). Clicking a slot on the
+  web page is the next step.
 - **Moving an event to another channel** — the message would have to be deleted
   and reposted, losing the sign-up history's continuity; cancel and recreate.
 - **Per-user input timezones** — display is already per-user via Discord
@@ -1039,8 +1094,9 @@ What remains, in the order it makes sense to do it:
 - Booking someone who is not on Discord — `requests.member_id` is a snowflake in
   six places (the `<@…>` mentions, four `fetch_member()` DM calls, and the
   reminder loop), so it needs to become nullable with each of those guarded
-- Click-a-slot-to-request on the web, posting to `#slot-approvals` as today,
-  then approve/deny from the web
+- Click-a-slot-to-request on the web, posting to `#slot-approvals` as today —
+  approve/deny from the web is done, see
+  [the approval queue](#the-approval-queue-webslotspy)
 - Importing an existing sheet into an ORBAT once, via `sheets.load_all_slots()`,
   mapping live requests onto the new slots by `slot_label`
 - An operation archive
