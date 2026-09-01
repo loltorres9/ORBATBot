@@ -916,11 +916,13 @@ Reservists  | right, nocount
   Reserve
 ```
 
-Everything after the pipe belongs to the **squad**:
+Everything after the pipe belongs to the **squad**, and several options are **separated by commas** — `| left, unit:TFP, radio:343 CHN:3`:
 
 - `left` / `right` put it in that column of the board
 - `unit:TFP` marks the whole squad as one unit's — the tag is the unit's role name, and you get a warning if it matches none of them
 - `radio:343 CHN:3` is the channel that squad talks on internally, shown under its name on the board
+
+Leaving a comma out still works — `| left unit:TFP` is read as both — but the comma is the form to rely on.
 - `nocount` leaves it out of the open/filled counts (what `Reservists` gets today)
 
 A line starting with `#` is a comment, and a leading number — `1. Rifleman` — is removed, so lines pasted straight out of a sheet work.

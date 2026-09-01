@@ -111,25 +111,33 @@ def _as_net_input(parsed_nets: list) -> list:
             for net in parsed_nets]
 
 
-def _check_units(result) -> None:
-    """Warn about a unit tag that is not one of the unit roles.
+# Written however the roles are actually spelled in Discord, so "2nd USC" comes
+# back as "2nd USC" whatever case it was typed in.
+_UNIT_TAGS = {role.casefold(): role for role in UNIT_ROLES}
 
-    `utils/orbat.py` knows nothing about units on purpose, and this is a warning
-    rather than an error: a unit could be renamed in Discord tomorrow, and a
-    roster that stops saving because of it would be worse than a typo. The point
-    is that a tag which matches nothing silently means nothing.
+
+def _resolve_units(result) -> None:
+    """Spell a unit tag the way its role is spelled, and warn when it matches none.
+
+    `utils/orbat.py` knows nothing about units on purpose, so this is where a
+    typed "tfp" becomes "TFP" and "2ND USC" becomes "2nd USC". An unrecognised
+    tag is left as typed and warned about rather than refused: a unit could be
+    renamed in Discord tomorrow, and a roster that stops saving because of it
+    would be worse than a typo. The point is only that a tag matching nothing
+    should not silently mean nothing.
     """
     for squad in result.squads:
-        if squad.reserved_unit and squad.reserved_unit not in _UNIT_TAGS:
+        if not squad.reserved_unit:
+            continue
+        canonical = _UNIT_TAGS.get(squad.reserved_unit.casefold())
+        if canonical:
+            squad.reserved_unit = canonical
+        else:
             result.warnings.append((
                 squad.line,
                 f'"{squad.reserved_unit}" is not one of the unit roles '
                 f'({", ".join(sorted(UNIT_ROLES))}).',
             ))
-
-
-# Matched case-insensitively, since the editor upper-cases what is typed.
-_UNIT_TAGS = {role.upper() for role in UNIT_ROLES}
 
 
 async def review(orbat_id: int, text: str, nets_text: str) -> dict:
@@ -139,7 +147,7 @@ async def review(orbat_id: int, text: str, nets_text: str) -> dict:
     the roster and line 3 of the net list are different places.
     """
     result = orbat.parse(text)
-    _check_units(result)
+    _resolve_units(result)
     nets = orbat.parse_nets(nets_text)
     checked = {'result': result, 'nets': nets, 'diff': None, 'board': None,
                'summary': None, 'ok': result.ok and nets.ok}
