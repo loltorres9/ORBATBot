@@ -28,6 +28,7 @@ cogs/
 utils/
   database.py           # All PostgreSQL queries (asyncpg)
   sheets.py             # Google Sheets read/write (gspread)
+  roster.py             # One normalised slot, from a sheet or from an ORBAT
   orbat.py              # DB-held ORBATs: the text format, the safe edit, the board
   embeds.py             # Builder-made rich messages → discord.Embed, post and edit
 web/                    # Optional browser UI — Discord OAuth2 login + event management
@@ -99,8 +100,9 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 | `id` | SERIAL PK | |
 | `guild_id` | TEXT | Discord guild (server) ID |
 | `name` | TEXT | Operation name (from sheet) |
-| `sheet_url` | TEXT | Full Google Sheets URL |
-| `sheet_id` | TEXT | Extracted sheet ID |
+| `sheet_url` | TEXT | Full Google Sheets URL. **NULL on an ORBAT-backed operation** |
+| `sheet_id` | TEXT | Extracted sheet ID. NULL likewise |
+| `orbat_id` | INTEGER | → `orbats.id`. NULL on a sheet-backed operation. Exactly one of this and `sheet_url` is set, and `utils/roster.py` is the only thing that looks |
 | `squad_col` | INTEGER | **Always NULL** — see [Google Sheets Integration](#google-sheets-integration-utilssheetspy) |
 | `role_col` | INTEGER | **Always NULL** |
 | `status_col` | INTEGER | **Always NULL** |
@@ -120,7 +122,7 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 | `member_id` | TEXT | Discord user ID |
 | `member_name` | TEXT | Display name at time of request |
 | `slot_label` | TEXT | Human-readable label e.g. "1-2 (TFP) – Rifleman" |
-| `sheet_row` | INTEGER | Row index in the sheet |
+| `sheet_row` | INTEGER | Row index in the sheet. NULL on an ORBAT-backed request |
 | `sheet_col` | INTEGER | Column index (ORBAT-style sheets) |
 | `status` | TEXT | `pending` / `approved` / `denied` / `cancelled` |
 | `approval_message_id` | TEXT | Discord message ID in #slot-approvals |
@@ -128,7 +130,7 @@ All tables live in PostgreSQL. Managed via `utils/database.py`. Schema is create
 | `approved_by` | TEXT | Display name of approver/denier |
 | `denial_reason` | TEXT | Optional reason text |
 | `unit_role` | TEXT | Unit role of the requester at submission time |
-| `slot_id` | INTEGER | → `orbat_slots.id` for a DB-backed roster. **NULL on every request today** — `cogs/slots.py` still books against the sheet. No foreign key: `apply_orbat_structure()` releases the bookings itself when a slot goes, so the promise the confirmation page makes is kept |
+| `slot_id` | INTEGER | → `orbat_slots.id` on an ORBAT-backed operation; NULL on a sheet-backed one, where `sheet_row`/`sheet_col` identify the slot instead. No foreign key: `apply_orbat_structure()` releases the bookings itself when a slot goes, so the promise the confirmation page makes is kept |
 | `created_at` | TIMESTAMP | |
 | `updated_at` | TIMESTAMP | |
 
@@ -475,12 +477,16 @@ message ID to DB. **It lives in `slots.py`, not `admin.py`**, next to
 
 ### Admin/Unit Leader commands (`cogs/admin.py`)
 
-**`/setup-slots <sheet_url> [event_time] [reminder_minutes]`**
+**`/setup-slots [orbat] [sheet_url] [event_time] [reminder_minutes] [name]`**
+- Takes **either** an `orbat` (autocompleted over the guild's ORBATs) **or** a
+  `sheet_url` — giving both or neither is refused
 - Deactivates previous operation (`is_active = 0`)
-- Creates new operation record
+- Creates the operation record, with `orbat_id` or with the sheet columns
 - Parses event time in the guild's configured timezone → stores as naive UTC
-- Auto-posts live ORBAT embed to `#orbat`
+- Auto-posts the live ORBAT embed to `#orbat`
 - Reminder options: 15 / 30 / 60 minutes
+- `name` overrides the operation's name, which otherwise comes from the ORBAT
+  or from the spreadsheet's title
 
 **`/assign-slot @member`**
 Direct assignment — bypasses approval flow. Writes to sheet immediately. Blocked if member already holds a slot.
@@ -510,10 +516,14 @@ Copies each to `#approval-archive`, deletes from `#slot-approvals`.
 Shows active operation name and sheet link.
 
 **`/debug-slots [squad]`**
-Shows raw slot data from the sheet as the bot sees it. Useful for diagnosing missing slots.
+Shows the raw slot data as the bot sees it, whichever roster is in use, keyed by
+`db:…` or `sheet:…`. Useful for diagnosing missing slots.
 
 **`/sync`**
-Force-syncs slash commands with Discord. Also repairs stale `sheet_col` values on pending requests and refreshes the ORBAT.
+Force-syncs slash commands with Discord, and refreshes the ORBAT. It also repairs
+stale `sheet_col` values on pending requests — a sheet-only concern, since
+inserting a row in a spreadsheet moves every cell below it while a slot id never
+goes stale, so the repair is skipped outright on an ORBAT-backed operation.
 
 **`/restart`**
 Restarts the bot. Two paths, in order:
@@ -559,6 +569,10 @@ Nothing is lost either way: state lives in PostgreSQL and every view is re-regis
 
 ## Google Sheets Integration (`utils/sheets.py`)
 
+**This is one of two roster backends now** — see
+[the roster provider](#the-roster-provider-utilsrosterpy). An operation only
+comes here when it was created with a `sheet_url` rather than an ORBAT.
+
 **One format is implemented: the ORBAT-style sheet**, where slots are cell values
 rather than rows under column headers. There is no header detection anywhere in
 this module — a sheet without `<Insert Name>` markers makes `load_slots()` raise
@@ -592,20 +606,78 @@ meaning again.
 
 ---
 
+## The roster provider (`utils/roster.py`)
+
+**An operation is backed either by a Google Sheet or by an ORBAT.** This module
+is the only thing that knows which. Everything above it — `/request-slot`, the
+approval buttons, the live board, `/assign-slot`, `/clear-slot` — works on one
+normalised slot and never branches on the source.
+
+### The key is the slot's identity
+
+`db:412` for an ORBAT slot, `sheet:r12c4` for a spreadsheet cell. That replaced
+the `(sheet_row, sheet_col)` pair the whole flow used to compare on, and it is
+why one `requests` row can point at either kind without anything downstream
+caring. `slot_key()` builds it; `request_key(row)` reads it off a request.
+
+`get_pending_slots()`, `get_approved_slots()` and `get_competing_requests()`
+therefore all speak keys. The last one matches in Python rather than SQL,
+because the key is derived from two different columns and an operation only
+ever has a handful of open requests.
+
+### The normalised slot
+
+| Field | |
+|---|---|
+| `key` / `value` | the identity above; `value` is what a select menu returns |
+| `slot_id` | the ORBAT slot, or None |
+| `row`, `col` | the sheet cell, or None |
+| `squad`, `role`, `label` | what it is; `label` is what a request records |
+| `assigned_to` | who holds it, or None |
+| `col_idx` | layout hint — the sheet column, or the ORBAT's 0/1 |
+| `excluded` | left out of the counts: a `Reservists` squad, or `nocount` |
+| `unit`, `radio` | the squad's unit tag and internal channel, ORBAT only |
+
+`col_idx` is what lets `_build_orbat_embed()` draw both: the midpoint split it
+already did on sheet geometry works unchanged on a 0/1 column side.
+
+### Writing is nothing on the ORBAT side
+
+`assign()` and `clear()` write to the sheet for a sheet-backed operation and do
+**nothing** for an ORBAT-backed one — the approved `requests` row *is* the
+booking, and there is no second copy to keep in step.
+
+That is what removes the approve path's rollback. `ApprovalView._approve_callback`
+still has the branch that resets a request to `denied` when the write fails, but
+it can now only fire on a sheet: a failed network call is the only thing it was
+ever protecting against. The same goes for the 30 s sheet read that used to run
+on **every** board refresh.
+
+---
+
 ## ORBAT Embed
 
-Built by `_build_orbat_embed()` in `slots.py`:
+Built by `_build_orbat_embed()` in `slots.py`, from `utils/roster.py`'s
+normalised slots — so a sheet-backed and an ORBAT-backed operation render
+identically:
+
 - Title: `🗺️ ORBAT — {operation_name}`
 - Description: open / pending / filled counts + optional event timestamp
-- Two-column layout (left/right squads by sheet column position) with spacer fields
+- Two-column layout by `col_idx`, with spacer fields
+- The squad's unit in the field name (`1-1 Alpha  [TFP]`) and its internal
+  channel as the first line of the value (`📻 343 CHN:3`), both ORBAT only
 - Slot indicators: 🟢 open, 🟡 pending, 🔴 filled
-- Max 25 embed fields (Discord limit); capped at 8 rows in two-column layout
-- Updated by `_update_orbat()` — fetches stored message ID, re-reads sheet, edits message
+- The shared net list as one final field, struck through where a net is not in
+  use — which is why the squads get **7** rows instead of 8 when there is one:
+  7 × 3 + 1 = 22, and 8 × 3 + 1 = 25 is the ceiling
+- Updated by `_update_orbat()` — fetches the stored message id, re-reads the
+  roster through `roster.load_all()`, edits the message
 
-**A squad named `Reservists` is displayed but left out of every count.** The
-header line counts the slots people are expected to fill, and a reserve bench
-would otherwise make the operation look permanently under-strength. The match is
-case-insensitive on the exact squad name.
+**A squad left out of the counts is displayed anyway.** The header counts the
+slots people are expected to fill, and a reserve bench would otherwise make the
+operation look permanently under-strength. An ORBAT says so with `nocount`; on a
+sheet it is still the case-insensitive `Reservists` name match, which is all
+that side has to go on.
 
 ---
 
@@ -932,10 +1004,9 @@ per request.
 
 ### Deliberately not covered yet
 
-- **Booking a slot from the board** — the roster is editable on the web (see
-  [ORBATs](#orbats-utilsorbatpy--weborbatpy)) but nothing books into it yet.
-  `cogs/slots.py` still reads the Google Sheet, so `requests.slot_id` is NULL on
-  every live request.
+- **Booking a slot from the web** — an ORBAT can back a live operation, but the
+  requesting itself is still Discord-side (`/request-slot` and the board's
+  button). Clicking a slot on the web page is the next step.
 - **Approving slot requests** — still Discord-side.
 - **Moving an event to another channel** — the message would have to be deleted
   and reposted, losing the sign-up history's continuity; cancel and recreate.
@@ -944,19 +1015,22 @@ per request.
 
 ### Slots on the web — what is done and what is left
 
-The tables and the builder exist now (`orbats` / `orbat_squads` / `orbat_slots`,
-and the editor at `/g/{guild}/orbats`). What remains, in the order it makes sense
-to do it:
+Done: the tables, the editor at `/g/{guild}/orbats`, `operations.orbat_id`, and
+the provider that makes `cogs/slots.py` blind to where the roster came from. An
+operation runs on an ORBAT today.
 
-- Point an operation at an ORBAT — `operations.orbat_id`, nullable, so
-  sheet-backed and DB-backed operations coexist during the migration
-- Import an existing sheet into an ORBAT once, via `sheets.load_all_slots()`,
+What remains, in the order it makes sense to do it:
+
+- Booking someone who is not on Discord — `requests.member_id` is a snowflake in
+  six places (the `<@…>` mentions, four `fetch_member()` DM calls, and the
+  reminder loop), so it needs to become nullable with each of those guarded
+- Click-a-slot-to-request on the web, posting to `#slot-approvals` as today,
+  then approve/deny from the web
+- A one-way export of an ORBAT into a Google Sheet, writing a new tab so it can
+  never overwrite one the bot reads
+- Importing an existing sheet into an ORBAT once, via `sheets.load_all_slots()`,
   mapping live requests onto the new slots by `slot_label`
-- Teach `cogs/slots.py` to read a DB-backed operation: a provider that returns
-  the same normalised slot either way, so the request, approval and ORBAT-embed
-  paths stop caring where the roster came from
-- Then click-a-slot-to-request on the web (posting to `#slot-approvals` as
-  today), then approve/deny from the web, then an operation archive
+- An operation archive
 - Live updates were sketched as Server-Sent Events; running in-process makes that
   straightforward, since the request handler already sees every change
 
@@ -967,11 +1041,12 @@ to do it:
 The slot roster, built and maintained in the browser instead of in a Google
 Sheet. Admin-only, one tab on the guild page.
 
-**Nothing books into it yet.** `cogs/slots.py` still reads the sheet, so
-`requests.slot_id` is NULL on every live request and the boards render empty.
-The editor, the tables and the safe-edit machinery are what shipped; wiring the
-request flow to a DB-backed operation is the next step (see
-[Slots on the web](#slots-on-the-web--what-is-done-and-what-is-left)).
+**An operation can be run on one.** `/setup-slots orbat:<name>` starts an
+operation against an ORBAT instead of a sheet, and from there the whole flow —
+requesting, approving, the live board, `/assign-slot`, `/clear-slot` — works
+against the database. See
+[the roster provider](#the-roster-provider-utilsrosterpy) for how the two
+backends meet.
 
 ### Why a text field and not a slot editor
 

@@ -28,7 +28,7 @@ Operation slot requests, approvals and the live ORBAT board, driven from a Googl
 | `/leave-operation` | Everyone | Remove yourself from the operation entirely (pending or approved) |
 | `/assign-slot <member>` | Unit Leader+ | Assign a member to a slot directly, bypassing approval |
 | `/clear-slot` | Unit Leader+ | Remove a member from a slot; restores the sheet cell and strips the unit tag |
-| `/setup-slots <url>` | Admin | Load a Google Sheet as the current operation; optional event time and reminder; auto-posts the ORBAT to `#orbat` |
+| `/setup-slots` | Admin | Start an operation from an ORBAT or a Google Sheet; optional event time and reminder; auto-posts the ORBAT to `#orbat` |
 | `/post-orbat [channel]` | Admin | Post or re-post the live ORBAT board |
 | `/set-event-time <time>` | Admin | Update the operation's start time and reminder |
 | `/post-event [channel] [mission_name] [event_time]` | Admin | Post an announcement embed for the operation, pointing at `#orbat` for sign-ups |
@@ -386,16 +386,18 @@ Available to members with the **Manage Server** permission. Full access with no 
 /assign-slot @member
 ```
 
-Directly assigns any member to any slot — no approval message, no waiting. Uses the same squad → slot picker. The sheet is updated immediately and the member gets a DM. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
+Directly assigns any member to any slot — no approval message, no waiting. Uses the same squad → slot picker. On a sheet-backed operation the sheet is updated immediately; the member gets a DM either way. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
 
 ```
-/setup-slots https://docs.google.com/spreadsheets/d/.../edit
+/setup-slots orbat:Platoon ORBAT
+/setup-slots sheet_url:https://docs.google.com/spreadsheets/d/.../edit
 ```
 
-Run this once per operation. The previous operation is archived automatically. A live ORBAT embed is posted to `#orbat` (created if it doesn't exist). Optional parameters:
+Run this once per operation. Give **either** an `orbat` — one you built under the **🗺️ ORBATs** tab on the website, autocompleted as you type — **or** a `sheet_url`, never both. The previous operation is archived automatically, and a live ORBAT embed is posted to `#orbat` (created if it doesn't exist). Optional parameters:
 
 - `event_time` — operation start time in `DD/MM/YYYY HH:MM` or `YYYY-MM-DD HH:MM` format (uses the server's configured timezone)
 - `reminder_minutes` — how many minutes before the event to send reminders (default: 30)
+- `name` — overrides the operation name, which otherwise comes from the ORBAT or the spreadsheet title
 
 ```
 /set-timezone Europe/Berlin
@@ -778,7 +780,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
-| ORBATs | Build and edit the slot roster in the browser — squads, slots, and a preview of the board |
+| ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, and a preview of the board |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
 | Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
@@ -942,11 +944,25 @@ A line starting with `-` is a net that exists in the plan but is not in use this
 
 Editing an ORBAT never quietly drops anyone. Renaming a slot keeps whoever is booked into it; reordering lines changes nothing at all. Anything that would take someone off the roster — or move them onto a differently named role — stops at a confirmation page that names them and which operation they are in, and you have to click **Save anyway**.
 
-> **Not connected to slot requests yet.** You can build and maintain ORBATs here, but `/request-slot` and the live board in `#orbat` still read the Google Sheet. Wiring the two together is the next step.
+### Running an operation on an ORBAT
+
+Once the roster is written, start an operation on it from Discord:
+
+```
+/setup-slots orbat:Platoon ORBAT event_time:14/09/2026 19:00
+```
+
+`orbat` autocompletes over the ORBATs on your server. From there everything works as it always did — `/request-slot`, the **📋 Request a Slot** button, the approval buttons in `#slot-approvals`, `/assign-slot`, `/clear-slot` — except that no Google Sheet is involved anywhere. The board in `#orbat` shows each squad's unit and radio channel and the shared net list underneath.
+
+The old way still works: give `sheet_url` instead of `orbat` and the operation is sheet-backed exactly as before. You give one or the other, never both.
+
+Two things get better on the ORBAT side. Approving is instant, because there is no spreadsheet to write to and therefore nothing that can fail halfway and need re-approving. And the board no longer re-reads a Google Sheet on every refresh.
+
+> **Still Discord-side:** requesting and approving slots. Clicking a slot on the web page is not built yet, and neither is entering somebody who is not on your Discord.
 
 ### Limits
 
-- ORBATs can be built here, but booking a slot into one is not wired up — `/request-slot` and the `#orbat` board still use the sheet
+- ORBATs can be built here and an operation can run on one, but requesting and approving slots is still Discord-side
 - An event can't be moved to another channel after posting; cancel it and create a new one
 - Approving slot requests is unchanged and still happens in `#slot-approvals`
 
