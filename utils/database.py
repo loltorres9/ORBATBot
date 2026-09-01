@@ -388,6 +388,18 @@ async def init_db():
         await db.execute('''
             ALTER TABLE orbats ADD COLUMN IF NOT EXISTS nets_text TEXT
         ''')
+        # An operation is backed either by a Google Sheet or by an ORBAT held
+        # here. Both stay possible: the sheet columns lose their NOT NULL so a
+        # DB-backed operation can exist without one, and orbat_id is NULL on
+        # every sheet-backed operation.
+        await db.execute('''
+            ALTER TABLE operations ADD COLUMN IF NOT EXISTS orbat_id INTEGER
+        ''')
+        await db.execute('ALTER TABLE operations ALTER COLUMN sheet_url DROP NOT NULL')
+        await db.execute('ALTER TABLE operations ALTER COLUMN sheet_id DROP NOT NULL')
+        # A request against an ORBAT slot has no sheet row.
+        await db.execute('ALTER TABLE requests ALTER COLUMN sheet_row DROP NOT NULL')
+
         # Which ORBAT slot a request is for. NULL on every sheet-backed request,
         # which is all of them until slots can be booked from the board — the
         # column exists now so an ORBAT knows who its slots are promised to.
@@ -405,8 +417,15 @@ async def get_active_operation(guild_id: str):
         )
 
 
-async def create_operation(guild_id: str, name: str, sheet_url: str, sheet_id: str,
-                           squad_col: int, role_col: int, status_col: int, assigned_col: int) -> int:
+async def create_operation(guild_id: str, name: str, sheet_url: str = None,
+                           sheet_id: str = None, squad_col: int = None,
+                           role_col: int = None, status_col: int = None,
+                           assigned_col: int = None, orbat_id: int = None) -> int:
+    """Start an operation, deactivating whatever was running before.
+
+    Either sheet_url/sheet_id or orbat_id identifies the roster; `utils/roster.py`
+    is what decides which, and nothing above it needs to care.
+    """
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -415,32 +434,41 @@ async def create_operation(guild_id: str, name: str, sheet_url: str, sheet_id: s
         )
         row = await db.fetchrow(
             '''INSERT INTO operations
-               (guild_id, name, sheet_url, sheet_id, squad_col, role_col, status_col, assigned_col)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               (guild_id, name, sheet_url, sheet_id, squad_col, role_col,
+                status_col, assigned_col, orbat_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                RETURNING id''',
-            guild_id, name, sheet_url, sheet_id, squad_col, role_col, status_col, assigned_col,
+            guild_id, name, sheet_url, sheet_id, squad_col, role_col,
+            status_col, assigned_col, orbat_id,
         )
         return row['id']
 
 
 async def get_pending_slots(operation_id: int) -> list:
+    """The slot identifiers of every pending request, in `utils/roster.py`'s
+    key form so a sheet-backed and an ORBAT-backed operation read alike."""
+    from utils.roster import request_key
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
-            "SELECT sheet_row, sheet_col FROM requests WHERE operation_id = $1 AND status = 'pending'",
+            """SELECT slot_id, sheet_row, sheet_col FROM requests
+                WHERE operation_id = $1 AND status = 'pending'""",
             operation_id,
         )
-        return [(row['sheet_row'], row['sheet_col']) for row in rows]
+        return [request_key(row) for row in rows]
 
 
 async def get_approved_slots(operation_id: int) -> list:
+    """Same, for approved requests."""
+    from utils.roster import request_key
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
-            "SELECT sheet_row, sheet_col FROM requests WHERE operation_id = $1 AND status = 'approved'",
+            """SELECT slot_id, sheet_row, sheet_col FROM requests
+                WHERE operation_id = $1 AND status = 'approved'""",
             operation_id,
         )
-        return [(row['sheet_row'], row['sheet_col']) for row in rows]
+        return [request_key(row) for row in rows]
 
 
 async def get_member_active_request(guild_id: str, operation_id: int, member_id: str):
@@ -455,16 +483,21 @@ async def get_member_active_request(guild_id: str, operation_id: int, member_id:
 
 
 async def create_request(guild_id: str, operation_id: int, member_id: str,
-                         member_name: str, slot_label: str, sheet_row: int,
-                         sheet_col: int = None, unit_role: str = None) -> int:
+                         member_name: str, slot_label: str, sheet_row: int = None,
+                         sheet_col: int = None, unit_role: str = None,
+                         slot_id: int = None) -> int:
+    """One booking. `sheet_row`/`sheet_col` identify the slot on a sheet-backed
+    operation, `slot_id` on an ORBAT-backed one — never both."""
     pool = await get_pool()
     async with pool.acquire() as db:
         row = await db.fetchrow(
             '''INSERT INTO requests
-               (guild_id, operation_id, member_id, member_name, slot_label, sheet_row, sheet_col, unit_role)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               (guild_id, operation_id, member_id, member_name, slot_label,
+                sheet_row, sheet_col, unit_role, slot_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                RETURNING id''',
-            guild_id, operation_id, member_id, member_name, slot_label, sheet_row, sheet_col, unit_role,
+            guild_id, operation_id, member_id, member_name, slot_label,
+            sheet_row, sheet_col, unit_role, slot_id,
         )
         return row['id']
 
@@ -644,16 +677,22 @@ async def mark_reminder_fired(operation_id: int):
         )
 
 
-async def get_competing_requests(operation_id: int, sheet_row: int, sheet_col: int, exclude_request_id: int) -> list:
-    """Return all other pending requests for the same slot cell (row + col)."""
+async def get_competing_requests(operation_id: int, key: str, exclude_request_id: int) -> list:
+    """Every other pending request for the same slot.
+
+    Matched on the roster key rather than in SQL, because the key is derived
+    from either a slot id or a pair of sheet coordinates and there are only ever
+    a handful of open requests on one operation.
+    """
+    from utils.roster import request_key
     pool = await get_pool()
     async with pool.acquire() as db:
-        return await db.fetch(
+        rows = await db.fetch(
             """SELECT * FROM requests
-               WHERE operation_id = $1 AND sheet_row = $2 AND sheet_col = $3
-               AND id != $4 AND status = 'pending'""",
-            operation_id, sheet_row, sheet_col, exclude_request_id,
+               WHERE operation_id = $1 AND id != $2 AND status = 'pending'""",
+            operation_id, exclude_request_id,
         )
+    return [row for row in rows if request_key(row) == key]
 
 
 async def add_game_role(guild_id: str, role_id: str, name: str,
@@ -1440,12 +1479,16 @@ async def delete_orbat(orbat_id: int) -> bool:
         return result.endswith('1')
 
 
-async def get_orbat_structure(orbat_id: int) -> list:
+async def get_orbat_structure(orbat_id: int, operation_id: int = None) -> list:
     """Squads with their slots, in order, each slot carrying its bookings.
 
     A booking is a row in `requests` pointing at the slot. They are read here
     rather than stored on the slot so the same ORBAT can back several operations
     at once — and so an edit can say who it would unseat.
+
+    `bookings` is always every operation's, which is what the editor's
+    confirmation page needs. `booking` and `pending` are the one operation's
+    when *operation_id* is given, so a board shows that night and no other.
     """
     pool = await get_pool()
     async with pool.acquire() as db:
@@ -1470,8 +1513,8 @@ async def get_orbat_structure(orbat_id: int) -> list:
         bookings: dict = {}
         if slots:
             rows = await db.fetch(
-                '''SELECT r.slot_id, r.member_name, r.unit_role, r.status,
-                          o.name AS operation_name
+                '''SELECT r.id AS request_id, r.slot_id, r.member_name, r.unit_role,
+                          r.status, r.operation_id, o.name AS operation_name
                      FROM requests r
                      JOIN operations o ON o.id = r.operation_id
                     WHERE r.slot_id = ANY($1::int[])
@@ -1485,8 +1528,10 @@ async def get_orbat_structure(orbat_id: int) -> list:
             slot = dict(row)
             here = bookings.get(slot['id'], [])
             slot['bookings'] = here
-            slot['booking'] = next((b for b in here if b['status'] == 'approved'), None)
-            slot['pending'] = any(b['status'] == 'pending' for b in here)
+            mine = ([b for b in here if b['operation_id'] == operation_id]
+                    if operation_id is not None else here)
+            slot['booking'] = next((b for b in mine if b['status'] == 'approved'), None)
+            slot['pending'] = any(b['status'] == 'pending' for b in mine)
             by_id[slot['squad_id']]['slots'].append(slot)
 
         return squads
