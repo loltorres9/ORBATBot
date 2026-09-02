@@ -596,6 +596,9 @@ tr.netoff td { text-decoration: line-through; opacity: .55; }
 /* -- slot approvals ------------------------------------------------------ */
 
 .chip.contested { border-color: var(--warn); color: var(--warn); }
+
+/* The ORBAT backing the operation running right now. */
+.chip.live { border-color: var(--err); color: var(--err); }
 .denyrow { display: flex; gap: 8px; margin-top: 10px; }
 .denyrow input { flex: 1; }
 
