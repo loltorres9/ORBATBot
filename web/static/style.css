@@ -598,3 +598,14 @@ tr.netoff td { text-decoration: line-through; opacity: .55; }
 .chip.contested { border-color: var(--warn); color: var(--warn); }
 .denyrow { display: flex; gap: 8px; margin-top: 10px; }
 .denyrow input { flex: 1; }
+
+/* One booked slot, with its Release button pushed to the far edge. */
+.slotrow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.slotrow:last-of-type { border-bottom: 0; }

@@ -10,7 +10,7 @@ from discord.ext import commands
 
 from utils import database, roster, sheets
 from cogs.slots import (_build_orbat_embed, _get_unit_role, _update_orbat,
-                       _void_approval_message, OrbatRequestButton,
+                       ActionError, clear_slot_request, OrbatRequestButton,
                        SquadSelectView, UNIT_LEADER_ROLE)
 
 
@@ -362,50 +362,24 @@ class AdminCog(commands.Cog):
         bot_ref = self.bot
 
         async def _select_callback(sel_interaction: discord.Interaction):
-            request_id = int(sel_interaction.data['values'][0])
-            req = await database.get_request_by_id(request_id)
-            if not req or req['status'] not in ('pending', 'approved'):
-                await sel_interaction.response.send_message(
-                    "❌ That request is no longer active.", ephemeral=True
+            # Deferred first: the shared path writes the sheet, DMs the member
+            # and redraws the board, which is well past Discord's three seconds.
+            await sel_interaction.response.defer(ephemeral=True)
+            try:
+                result = await clear_slot_request(
+                    bot_ref, sel_interaction.guild,
+                    int(sel_interaction.data['values'][0]), sel_interaction.user,
                 )
+            except ActionError as e:
+                await sel_interaction.followup.send(f"⚠️ {e}", ephemeral=True)
                 return
 
-            # Only clear the sheet cell for approved slots (sheet is only written on approval)
-            if req['status'] == 'approved':
-                try:
-                    await roster.clear(op, req)
-                except Exception as e:
-                    await sel_interaction.response.send_message(
-                        f"⚠️ Could not update the sheet: `{e}`\nPlease clear it manually.",
-                        ephemeral=True,
-                    )
-                    return
-
-            await database.cancel_request_by_id(request_id)
-
-            status_word = 'approved slot' if req['status'] == 'approved' else 'pending request'
-            await sel_interaction.response.send_message(
+            req = result['request']
+            status_word = 'approved slot' if result['was_approved'] else 'pending request'
+            await sel_interaction.followup.send(
                 f"✅ Cleared {status_word} **{req['slot_label']}** for **{req['member_name']}**.",
                 ephemeral=True,
             )
-
-            # DM the member
-            try:
-                member = await sel_interaction.guild.fetch_member(int(req['member_id']))
-                await member.send(
-                    f"ℹ️ **Slot Cleared**\n"
-                    f"An admin has removed you from **{req['slot_label']}**.\n"
-                    f"You can request a different slot with `/request-slot`."
-                )
-            except (discord.Forbidden, discord.NotFound):
-                pass
-
-            # Void the approval message if it exists (for pending requests)
-            if req['status'] == 'pending':
-                asyncio.create_task(_void_approval_message(bot_ref, sel_interaction.guild, req))
-
-            # Refresh ORBAT
-            asyncio.create_task(_update_orbat(bot_ref, sel_interaction.guild, op))
 
         select.callback = _select_callback
         view = discord.ui.View(timeout=120)

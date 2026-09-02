@@ -401,7 +401,7 @@ Indexes on `(guild_id, started_at)` and a partial one on the open rows.
 | Action | Member | Unit Leader | Admin |
 |---|---|---|---|
 | `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
-| `/clear-slot` | ❌ | ✅ own unit | ✅ |
+| `/clear-slot` — or **Release** / **Withdraw** on the web | ❌ | ✅ own unit | ✅ |
 | `/assign-slot` | ❌ | ✅ own unit | ✅ |
 | Approve / Deny — in `#slot-approvals` or on the web | ❌ | ✅ own unit | ✅ |
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone`, `/post-event` | ❌ | ❌ | ✅ |
@@ -507,7 +507,11 @@ message ID to DB. **It lives in `slots.py`, not `admin.py`**, next to
 Direct assignment — bypasses the approval flow, recording the request as already approved. `roster.assign()` writes the sheet on a sheet-backed operation. Blocked if the member already holds a slot.
 
 **`/clear-slot`**
-Dropdown of active (pending + approved) slots. On select: `roster.clear()` for an approved one, cancels the DB record, DMs the member. Unit Leaders scoped to own unit.
+Dropdown of active (pending + approved) slots. On select it calls
+`clear_slot_request()`, the same function the web queue's Release and Withdraw
+buttons call: `roster.clear()` for an approved one, cancels the DB record, DMs
+the member, greys out a pending request's approval message, refreshes the board.
+Unit Leaders scoped to own unit.
 
 **`/clear-requests`**
 Cancels all pending requests for the active operation.
@@ -551,9 +555,10 @@ Nothing is lost either way: state lives in PostgreSQL and every view is re-regis
 
 ## Approval & Denial Flow
 
-**`approve_slot_request()` and `deny_slot_request()` in `cogs/slots.py` are the
-whole implementation.** The Discord buttons and the web page are both thin
-callers: the button defers, calls one of them, and reports what came back. That
+**`approve_slot_request()`, `deny_slot_request()` and `clear_slot_request()` in
+`cogs/slots.py` are the whole implementation.** The Discord buttons, the
+`/clear-slot` dropdown and the web page are all thin callers: each defers, calls
+one of the three, and reports what came back. That
 is what keeps the two surfaces from drifting — a decision made in the browser
 does exactly what a decision made in `#slot-approvals` does, down to the
 competitor denials and the archive record.
@@ -564,8 +569,9 @@ button renders it as an ephemeral `⚠️`, the web route as a flash message on 
 queue page. They return a dict, so the caller can say how many competing
 requests went with the approval without re-querying.
 
-`_dm()`, `_archive_channel()` and `_drop_approval_message()` came out of the
-button callbacks in the same move. **None of them takes an `Interaction`** —
+`_dm()`, `_archive_channel()`, `_drop_approval_message()` and
+`_void_approval_message()` came out of the button and dropdown callbacks in the
+same move. **None of them takes an `Interaction`** —
 they take a `discord.Guild` and ids, which is the only reason the web can reach
 them at all.
 
@@ -609,7 +615,25 @@ is the active one; a decision on a finished one must not redraw it.
    - ORBAT refreshed
 
 ### Cancellation
-`_void_approval_message()` — edits the approval message to grey with "📋 Slot Request — Cancelled" title, removes buttons. Does not delete.
+`_void_approval_message()` — edits the approval message to grey with "📋 Slot Request — Cancelled" title, removes buttons. Does not delete. Its footer names
+who did it: the member withdrew, or a Unit Leader cleared it out from under them.
+
+### Clearing
+`clear_slot_request()` — the third decision, reached from `/clear-slot` and from
+**Release** / **Withdraw** on the web queue. It gives the slot back
+(`roster.clear()`, which is nothing at all on an ORBAT), cancels the row, DMs the
+member naming who removed them, and refreshes the board when that operation is
+the live one. A **pending** request also has its `#slot-approvals` message voided,
+so it stops being clickable; an **approved** one had that message deleted when it
+was approved, and its `#approval-archive` record is left alone — the archive says
+what was decided, and this is a later decision rather than a correction. A failed
+sheet write removes nobody: the `ActionError` comes back before anything is
+cancelled, so the sheet and the roster still agree.
+
+**`database.cancel_request_by_id()` matches `pending` as well as `approved`.**
+It used to be `approved`-only, which meant clearing a pending request DMed the
+member and greyed out the approval message while the row stayed pending — the
+board kept showing 🟡 and nobody could action the request any more.
 
 ### Persistence after restart
 `bot.py` `setup_hook()` re-registers `ApprovalView` for every `pending` request and `OrbatRequestButton` as a global persistent view. custom_ids: `orbat_approve:{id}`, `orbat_deny:{id}`, `orbat_request_slot`.
@@ -942,7 +966,7 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
 | Build and post embeds, configure the member log and voice tracking | admin | `is_admin()` — `manage_guild` or `administrator` |
 | Build and edit ORBATs | admin | `is_admin()` |
-| Approve / deny slot requests | Unit Leader (own unit) or admin | `_can_action_request()` |
+| Approve, deny or release slot requests | Unit Leader (own unit) or admin | `_can_action_request()` |
 | See the voice leaderboard | any member of the guild | — |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
@@ -980,6 +1004,7 @@ POST /g/{guild}/roles/panel             admin — post the self-assign panel
 GET  /g/{guild}/slots                   the approval queue for the live operation
 POST /g/{guild}/slots/{id}/approve      exactly what the ✅ button does
 POST /g/{guild}/slots/{id}/deny         optional reason, exactly what ❌ does
+POST /g/{guild}/slots/{id}/clear        exactly what /clear-slot does
 GET  /g/{guild}/orbats                  admin — ORBAT list, POST to create
 GET  /g/{guild}/orbats/{id}             the roster editor
 POST /g/{guild}/orbats/{id}             action=preview | save | confirm
@@ -1046,9 +1071,13 @@ messages keep using `<t:…>` timestamps and localise themselves.
 
 Server-rendered Jinja2 plus one hand-written stylesheet. No build step, no CDN
 and no script files — the page has to work from a fresh container with nothing
-but the bot's own dependencies installed. The one exception is a single inline
-`confirm()` on the ORBAT delete button, which degrades to deleting without the
-prompt if scripting is off; nothing else on the site depends on JavaScript.
+but the bot's own dependencies installed. The one exception is a handful of
+inline `confirm()`s — the ORBAT delete button, and Release/Withdraw on the slot
+queue — each of which degrades to acting without the prompt if scripting is off;
+nothing else on the site depends on JavaScript. Keep them free of interpolated
+data: a display name with an apostrophe in it would end the JavaScript string,
+and Jinja's HTML escaping does not reach inside an attribute the browser hands
+to the script parser.
 
 **Branding is data, not markup.** The name comes from `config.brand` (`WEB_BRAND`,
 default `TFP BOT`) and the logo from `_logo_url()`, which looks for
@@ -1060,11 +1089,11 @@ per request.
 
 ### The approval queue (`web/slots.py`)
 
-`/g/{guild}/slots` lists the live operation's requests: the pending ones with an
-**Approve** button and a denial-reason field, the approved ones as a plain list
-of who holds what. It is the same decision as the buttons in `#slot-approvals`,
-taken through the same two functions — see
-[Approval & Denial Flow](#approval--denial-flow).
+`/g/{guild}/slots` — the **Slot Approvals** tab — lists the live operation's
+requests: the pending ones with **Approve**, a denial-reason field and
+**Withdraw**, the approved ones with **Release**. It is the same decision as the
+buttons in `#slot-approvals` and as `/clear-slot`, taken through the same three
+functions — see [Approval & Denial Flow](#approval--denial-flow).
 
 Three things about the page are deliberate:
 
@@ -1077,15 +1106,19 @@ Three things about the page are deliberate:
   and the request rows give no hint of it on their own — in Discord they are
   simply two messages. Approving one still auto-denies the other, as it always
   did.
-- **Nothing is removed from the roster here.** `/clear-slot` stays in Discord:
-  the page is for deciding requests, and taking someone off the roster is a
-  different action with a different audience.
+- **Releasing is offered on both lists, and is one action, not two.**
+  **Release** on an approved row and **Withdraw** on a pending one are the same
+  `POST …/clear` and the same `clear_slot_request()`; they read differently
+  because giving a booking back and taking an undecided request out of the queue
+  feel like different things to whoever clicks. That is exactly the pair
+  `/clear-slot` already offered in one dropdown. Both carry a `confirm()`,
+  because neither can be undone and both DM the member.
 
 `queue()` returns the source line (*ORBAT: Zug-ORBAT*, or *Google Sheet*), so it
 is obvious which backend the operation runs on without opening the ORBAT tab.
 
-`approve()` and `deny()` translate `ActionError` into `ValueError`, which is the
-convention the rest of `web/` already uses for "this is a message for the user";
+`approve()`, `deny()` and `clear()` translate `ActionError` into `ValueError`,
+which is the convention the rest of `web/` already uses for "this is a message for the user";
 the route renders it as a flash on the same page. The denial reason is capped at
 `MAX_REASON = 200`, matching `DenialModal`.
 

@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}{{ guild.name }} · Slot requests{% endblock %}
+{% block title %}{{ guild.name }} · Slot Approvals{% endblock %}
 
 {% block content %}
 <div class="pagehead">
@@ -14,14 +14,15 @@
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 
 {% if not operation %}
-  <h2>Slot requests</h2>
+  <h2>Slot Approvals</h2>
   <p class="empty">No operation is running. An admin starts one with
     <code>/setup-slots</code>.</p>
 {% else %}
   <h2>{{ operation.name }}</h2>
   <p class="hint">{{ source }} · deciding here does exactly what the buttons in
     <code>#slot-approvals</code> do: the member is DMed, the request is archived,
-    the board refreshes, and anyone else who wanted the same slot is denied.</p>
+    the board refreshes, and anyone else who wanted the same slot is denied.
+    Releasing is <code>/clear-slot</code>, likewise.</p>
 
   <h3 style="margin-top:22px">Waiting for a decision
     <span class="chip">{{ pending|length }}</span></h3>
@@ -44,6 +45,12 @@
                 <form method="post" action="/g/{{ guild.id }}/slots/{{ req.id }}/approve">
                   <input type="hidden" name="csrf" value="{{ csrf }}">
                   <button class="button primary" type="submit">✅ Approve</button>
+                </form>
+                <form method="post" action="/g/{{ guild.id }}/slots/{{ req.id }}/clear">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
+                  <button class="button" type="submit"
+                          onclick="return confirm('Withdraw this request? The member is told, and nothing is recorded as a denial.')"
+                          >🧹 Withdraw</button>
                 </form>
               </div>
             {% else %}
@@ -74,10 +81,20 @@
           <span><strong>{{ req.slot_label }}</strong>
             <span class="muted">— {{ req.member_name }}
               {%- if req.unit_role %} [{{ req.unit_role }}]{% endif %}</span></span>
+          {% if req.may_action %}
+            <form method="post" action="/g/{{ guild.id }}/slots/{{ req.id }}/clear">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <button class="button danger" type="submit"
+                      onclick="return confirm('Release this slot? The member comes off the roster and is told so.')"
+                      >🧹 Release</button>
+            </form>
+          {% else %}
+            <span class="muted">{{ req.unit_role }} only</span>
+          {% endif %}
         </div>
       {% endfor %}
-      <p class="hint" style="margin-bottom:0">Taking somebody off the roster is
-        still <code>/clear-slot</code> in Discord.</p>
+      <p class="hint" style="margin-bottom:0">Releasing frees the slot for
+        somebody else and DMs the member — the same as <code>/clear-slot</code>.</p>
     </div>
   {% else %}
     <p class="empty">Nobody is booked in yet.</p>

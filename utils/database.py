@@ -579,11 +579,19 @@ async def get_active_requests(operation_id: int) -> list:
 
 
 async def cancel_request_by_id(request_id: int) -> bool:
+    """Cancel one request, whether it was approved or still waiting.
+
+    Both are cleared the same way — `/clear-slot` and the web queue offer it on
+    a pending request too — so restricting this to `approved` left the pending
+    ones cancelled everywhere except in the database: the member was DMed and
+    the approval message went grey, while the row stayed pending and the board
+    kept showing it as 🟡 forever.
+    """
     pool = await get_pool()
     async with pool.acquire() as db:
         result = await db.execute(
             """UPDATE requests SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
-               WHERE id = $1 AND status = 'approved'""",
+               WHERE id = $1 AND status IN ('pending', 'approved')""",
             request_id,
         )
         return int(result.split()[-1]) > 0
