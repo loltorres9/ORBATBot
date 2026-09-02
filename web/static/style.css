@@ -599,6 +599,22 @@ tr.netoff td { text-decoration: line-through; opacity: .55; }
 .denyrow { display: flex; gap: 8px; margin-top: 10px; }
 .denyrow input { flex: 1; }
 
+/* -- the operation page -------------------------------------------------- */
+
+/* The raw slot dump can be wider than the column; it scrolls on its own rather
+   than making the whole page scroll sideways. */
+.tablewrap { overflow-x: auto; margin-top: 10px; }
+
+table.rawslots { border-collapse: collapse; font-size: 13px; width: 100%; }
+table.rawslots th, table.rawslots td {
+  padding: 5px 14px 5px 0;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+table.rawslots th { color: var(--muted); font-weight: 600; }
+table.rawslots tr:last-child td { border-bottom: 0; }
+
 /* One booked slot, with its Release button pushed to the far edge. */
 .slotrow {
   display: flex;
@@ -609,3 +625,7 @@ tr.netoff td { text-decoration: line-through; opacity: .55; }
   border-bottom: 1px solid var(--line);
 }
 .slotrow:last-of-type { border-bottom: 0; }
+
+/* The Assign form: who, which slot, go — on one line where there is room. */
+.assignrow { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.assignrow .field { flex: 1 1 220px; }

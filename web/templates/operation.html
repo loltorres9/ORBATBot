@@ -1,0 +1,313 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Operation{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'operation' %}{% include '_nav.html' %}{% endwith %}
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if operation %}
+  <div class="pagehead">
+    <div>
+      <h2>{{ operation.name }}</h2>
+      <p class="muted nospace">{{ source }} ·
+        {% if operation.event_time %}
+          starts {{ fmt_dt(operation.event_time, timezone) }},
+          reminder {{ operation.reminder_minutes }} min before
+        {% else %}
+          no start time set
+        {% endif %}
+      </p>
+    </div>
+    <a class="button" href="/g/{{ guild.id }}/slots">📋 Slot Approvals</a>
+  </div>
+  {% if counts.error %}
+    <p class="hint bad">The roster could not be read, so the counts below are unknown.</p>
+  {% else %}
+    <p class="hint">🟢 {{ counts.open }} open · 🟡 {{ counts.pending }} pending ·
+      🔴 {{ counts.filled }} filled, of {{ counts.total }} counted slot(s).</p>
+  {% endif %}
+{% else %}
+  <h2>No operation is running</h2>
+  <p class="hint">Start one below. Everything else on this page needs a live
+    operation to act on.</p>
+{% endif %}
+
+<!-- Start an operation -------------------------------------------------- -->
+<h2 style="margin-top:28px">Start an operation</h2>
+<p class="hint">The same thing as <code>/setup-slots</code>: the operation
+  running now is archived, the new roster is loaded, and the live board is
+  posted to the ORBAT channel.</p>
+
+<form class="form" method="post" action="/g/{{ guild.id }}/operation/start">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <fieldset class="field">
+    <legend>Roster</legend>
+    <label class="check">
+      <input type="radio" name="backing" value="orbat" checked>
+      <span>An <strong>ORBAT</strong> built on this site</span>
+    </label>
+    <label class="field" style="margin-left:26px">
+      <select name="orbat_id">
+        {% if orbats %}
+          {% for record in orbats %}
+            <option value="{{ record.id }}">{{ record.name }}</option>
+          {% endfor %}
+        {% else %}
+          <option value="">No ORBATs yet — build one on the ORBATs tab</option>
+        {% endif %}
+      </select>
+    </label>
+    <label class="check">
+      <input type="radio" name="backing" value="sheet">
+      <span>A <strong>Google Sheet</strong></span>
+    </label>
+    <label class="field" style="margin-left:26px">
+      <input type="text" name="sheet_url" placeholder="https://docs.google.com/spreadsheets/d/…">
+      <span class="hint">Must be shared with the service account. Reading it can
+        take a few seconds.</span>
+    </label>
+  </fieldset>
+
+  <div class="row">
+    <label class="field">
+      <span>Name</span>
+      <input type="text" name="name" maxlength="100"
+             placeholder="Defaults to the ORBAT or spreadsheet name">
+    </label>
+    <label class="field">
+      <span>Start time</span>
+      <input type="datetime-local" name="event_time">
+      <span class="hint">Optional. In {{ timezone }} — change it below.</span>
+    </label>
+  </div>
+
+  <label class="field">
+    <span>Reminder</span>
+    <select name="reminder_minutes">
+      {% for minutes in reminder_choices %}
+        <option value="{{ minutes }}" {% if minutes == 30 %}selected{% endif %}>{{ minutes }} minutes before</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div class="rowactions">
+    <button class="button primary" type="submit"
+            onclick="return confirm('Start this operation? The one running now is archived.')"
+            >🎖️ Start</button>
+  </div>
+</form>
+
+{% if operation %}
+  <!-- Time, board, announcement ----------------------------------------- -->
+  <h2 style="margin-top:32px">{{ operation.name }}</h2>
+
+  <ul class="cards">
+    <li class="card pad">
+      <h3>Start time</h3>
+      <p class="hint">Moving it re-arms the reminder, so it fires again for the
+        new time — <code>/set-event-time</code>.</p>
+      <form class="form" method="post" action="/g/{{ guild.id }}/operation/time"
+            style="margin-top:10px">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="row">
+          <label class="field">
+            <span>Starts at ({{ timezone }})</span>
+            <input type="datetime-local" name="event_time" required
+                   value="{{ fmt_input(operation.event_time, timezone) }}">
+          </label>
+          <label class="field">
+            <span>Reminder</span>
+            <select name="reminder_minutes">
+              {% for minutes in reminder_choices %}
+                <option value="{{ minutes }}"
+                  {% if operation.reminder_minutes == minutes %}selected{% endif %}>{{ minutes }} minutes before</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <div class="rowactions">
+          <button class="button primary" type="submit">Save the time</button>
+        </div>
+      </form>
+    </li>
+
+    <li class="card pad">
+      <h3>Post the live board</h3>
+      <p class="hint">A fresh board that updates itself as slots are decided —
+        <code>/post-orbat</code>. The one posted before it stops updating.</p>
+      <form class="form" method="post" action="/g/{{ guild.id }}/operation/board"
+            style="margin-top:10px">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="field">
+          <span>Channel</span>
+          <select name="channel_id" required>
+            {% for channel in channels_choices %}
+              <option value="{{ channel.id }}">#{{ channel.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="rowactions">
+          <button class="button" type="submit">📋 Post the board</button>
+        </div>
+      </form>
+    </li>
+
+    <li class="card pad">
+      <h3>Post an announcement</h3>
+      <p class="hint">The "we play at 19:00, sign up here" message —
+        <code>/post-event</code>. It links to the ORBAT channel.</p>
+      <form class="form" method="post" action="/g/{{ guild.id }}/operation/announce"
+            style="margin-top:10px">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="row">
+          <label class="field">
+            <span>Channel</span>
+            <select name="channel_id" required>
+              {% for channel in channels_choices %}
+                <option value="{{ channel.id }}">#{{ channel.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="field">
+            <span>Mission name</span>
+            <input type="text" name="mission_name" maxlength="100"
+                   placeholder="{{ operation.name }}">
+          </label>
+        </div>
+        <label class="field">
+          <span>Start time ({{ timezone }})</span>
+          <input type="datetime-local" name="event_time"
+                 value="{{ fmt_input(operation.event_time, timezone) }}">
+          <span class="hint">Leave as it is to announce the operation's own time.</span>
+        </label>
+        <div class="rowactions">
+          <button class="button" type="submit">📣 Post it</button>
+        </div>
+      </form>
+    </li>
+
+    <li class="card pad">
+      <h3>Empty the queue</h3>
+      <p class="hint">Cancels every request still waiting for a decision —
+        <code>/clear-requests</code>. Nobody is DMed and nothing is archived:
+        this resets a queue, it does not turn people down. Turning one person
+        down is <strong>Deny</strong> on the
+        <a href="/g/{{ guild.id }}/slots">Slot Approvals</a> tab.</p>
+      <form method="post" action="/g/{{ guild.id }}/operation/clear-requests">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="button danger" type="submit"
+                onclick="return confirm('Cancel every request that is still waiting?')"
+                >🧹 Clear all pending requests</button>
+      </form>
+    </li>
+  </ul>
+{% endif %}
+
+<!-- Channels ------------------------------------------------------------ -->
+<h2 style="margin-top:32px">Channels</h2>
+<p class="hint">Where the bot posts. Leave one on <em>Default</em> and it keeps
+  using the channel of that name, creating it if it is missing — which is what
+  every server did before this setting existed.</p>
+
+<form class="form" method="post" action="/g/{{ guild.id }}/operation/channels">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% for row in channels %}
+    <label class="field">
+      <span>{{ row.title }}</span>
+      <select name="channel_{{ row.kind }}">
+        <option value="">Default — #{{ row.default_name }}</option>
+        {% for channel in channels_choices %}
+          <option value="{{ channel.id }}"
+            {% if row.value == channel.id|string %}selected{% endif %}>#{{ channel.name }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint">
+        {{ row.hint }}
+        {% if row.missing %}<strong class="bad">The channel you picked no longer
+          exists, so #{{ row.default_name }} is being used.</strong>{% endif %}
+      </span>
+    </label>
+  {% endfor %}
+  <div class="rowactions">
+    <button class="button primary" type="submit">Save the channels</button>
+  </div>
+</form>
+
+{% if operation %}
+  <!-- Raw slots --------------------------------------------------------- -->
+  <h2 style="margin-top:32px">The roster as the bot reads it</h2>
+  <p class="hint"><code>/debug-slots</code> — every slot with the key it is
+    booked against. Use it when a slot is missing from the board.</p>
+
+  <form class="form" method="post" action="/g/{{ guild.id }}/operation/slots">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="row">
+      <label class="field">
+        <span>Squad filter</span>
+        <input type="text" name="squad" maxlength="100"
+               value="{{ debug.squad if debug else '' }}"
+               placeholder="Leave empty for all of them">
+      </label>
+      <div class="rowactions" style="align-self:end">
+        <button class="button" type="submit">Show the slots</button>
+      </div>
+    </div>
+  </form>
+
+  {% if debug %}
+    <div class="card pad" style="margin-top:14px">
+      <p class="muted nospace">{{ debug.slots|length }} slot(s) read from the
+        {{ debug.source }}{% if debug.squad %}, matching “{{ debug.squad }}”{% endif %}.</p>
+      {% if debug.slots %}
+        <div class="tablewrap">
+          <table class="rawslots">
+            <thead><tr><th>Key</th><th>Squad</th><th>Role</th><th>Held by</th></tr></thead>
+            <tbody>
+              {% for slot in debug.slots %}
+                <tr>
+                  <td><code>{{ slot.key }}</code></td>
+                  <td>{{ slot.squad }}{% if slot.excluded %} <span class="chip">not counted</span>{% endif %}</td>
+                  <td>{{ slot.role }}</td>
+                  <td>{{ slot.assigned_to or '—' }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">Nothing matched.</p>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endif %}
+
+<!-- Timezone ------------------------------------------------------------ -->
+<h2 style="margin-top:32px">Timezone</h2>
+<p class="hint">What a time typed anywhere on this site or into a slash command
+  means — <code>/set-timezone</code>. The Discord messages localise themselves
+  for each reader either way.</p>
+
+<form class="form" method="post" action="/g/{{ guild.id }}/operation/timezone">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="field">
+    <span>Server timezone</span>
+    <select name="timezone">
+      {% for value, label in timezone_choices %}
+        <option value="{{ value }}" {% if value == timezone %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="rowactions">
+    <button class="button primary" type="submit">Save the timezone</button>
+  </div>
+</form>
+{% endblock %}

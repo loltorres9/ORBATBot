@@ -9,6 +9,44 @@ from utils import database, roster
 
 APPROVAL_CHANNEL_NAME = 'slot-approvals'
 
+# The topic a freshly created channel gets, per kind. The names themselves and
+# the settings columns live in `database.CHANNEL_KINDS`.
+CHANNEL_TOPICS = {
+    'orbat': 'Live ORBAT for the current operation',
+    'approvals': 'Slot approval requests for Arma 3 operations',
+    'archive': None,
+}
+
+
+async def guild_channel(guild: discord.Guild, kind: str, *, create: bool = True):
+    """The channel this guild uses for *kind* — 'orbat', 'approvals' or 'archive'.
+
+    An admin can point each one somewhere else on the web, and that choice wins.
+    With nothing chosen — which is every guild until somebody changes it — the
+    channel is found by its conventional name and created when it is missing,
+    exactly as it always was.
+
+    A configured channel that has since been deleted falls back to the name
+    rather than returning None: losing the channel should not stop the bot
+    posting, and an admin who deleted it will see a fresh one appear.
+    """
+    _, name = database.CHANNEL_KINDS[kind]
+    chosen = (await database.get_guild_channels(str(guild.id))).get(kind)
+    if chosen:
+        channel = guild.get_channel(int(chosen))
+        if isinstance(channel, discord.TextChannel):
+            return channel
+
+    channel = discord.utils.get(guild.text_channels, name=name)
+    if channel is None and create:
+        try:
+            channel = await guild.create_text_channel(
+                name, topic=CHANNEL_TOPICS.get(kind)
+            )
+        except discord.Forbidden:
+            channel = None
+    return channel
+
 # Roles that gate who can approve/deny a request. A request submitted by a
 # member with one of these roles can only be actioned by someone who shares
 # that same role (or has manage_guild / administrator permissions).
@@ -264,18 +302,10 @@ async def _process_slot_selection(
         ephemeral=True,
     )
 
-    # Post to #slot-approvals
-    approval_channel = discord.utils.get(
-        interaction.guild.text_channels, name=APPROVAL_CHANNEL_NAME
-    )
+    # Post to the approvals channel — #slot-approvals unless an admin moved it.
+    approval_channel = await guild_channel(interaction.guild, 'approvals')
     if not approval_channel:
-        try:
-            approval_channel = await interaction.guild.create_text_channel(
-                APPROVAL_CHANNEL_NAME,
-                topic='Slot approval requests for Arma 3 operations',
-            )
-        except discord.Forbidden:
-            return
+        return
 
     op = await database.get_active_operation(str(interaction.guild_id))
 
@@ -541,13 +571,7 @@ ARCHIVE_CHANNEL_NAME = 'approval-archive'
 
 
 async def _archive_channel(guild: discord.Guild):
-    channel = discord.utils.get(guild.text_channels, name=ARCHIVE_CHANNEL_NAME)
-    if channel is None:
-        try:
-            channel = await guild.create_text_channel(ARCHIVE_CHANNEL_NAME)
-        except discord.Forbidden:
-            channel = None
-    return channel
+    return await guild_channel(guild, 'archive')
 
 
 async def _drop_approval_message(guild: discord.Guild, req) -> None:
@@ -964,6 +988,144 @@ class OrbatRequestButton(discord.ui.View):
 
 
 # ---------------------------------------------------------------------------
+# Posting the board, and assigning a slot outright
+# ---------------------------------------------------------------------------
+
+async def publish_board(bot: commands.Bot, guild: discord.Guild, channel, op):
+    """Post a fresh live board into *channel* and remember where it went.
+
+    The only place a board is *first* posted — `/post-orbat`, the auto-post at
+    the end of starting an operation, and the web's Post the board button all
+    come here, so all three produce the same message with the same persistent
+    button. `_update_orbat()` is the other half: it edits the message this one
+    recorded.
+
+    Send failures are left to the caller: the command explains them, the web
+    form shows them on the page.
+    """
+    data = await roster.load_all(op)
+    pending = set(await database.get_pending_slots(op['id']))
+    embed = _build_orbat_embed(
+        data['operation_name'], data['slots'], pending, op['event_time'], data['nets'],
+    )
+    msg = await channel.send(embed=embed, view=OrbatRequestButton(bot))
+    await database.save_orbat_message(str(guild.id), str(channel.id), str(msg.id))
+    return msg
+
+
+async def clear_pending_queue(bot: commands.Bot, guild: discord.Guild, op) -> int:
+    """Cancel every undecided request on *op*, and return how many there were.
+
+    Deliberately quieter than clearing them one at a time: nobody is DMed and
+    nothing is archived, because this empties a queue that was never going to be
+    decided rather than turning anyone down. The messages in #slot-approvals are
+    still greyed out, or a request cancelled here would keep its buttons and
+    read as actionable to whoever finds it next.
+
+    `/clear-requests` and the Operation page both call this.
+    """
+    waiting = [row for row in await database.get_active_requests(op['id'])
+               if row['status'] == 'pending']
+    count = await database.clear_pending_requests(op['id'])
+    for row in waiting:
+        await _void_approval_message(bot, guild, row, note='Queue cleared by an admin')
+    if op['is_active']:
+        asyncio.create_task(_update_orbat(bot, guild, op))
+    return count
+
+
+def check_can_assign(actor: discord.Member, member: discord.Member) -> None:
+    """Raise ActionError unless *actor* may put *member* on a slot.
+
+    Stricter than `_can_action_request()` on purpose, and unchanged from what
+    `/assign-slot` always did: a Unit Leader must have a unit of their own and
+    the member must share it. Deciding a request that carries no unit is a
+    judgement any Unit Leader may make, but *choosing* who goes on the roster
+    is not the same thing.
+    """
+    perms = actor.guild_permissions
+    if perms.manage_guild or perms.administrator:
+        return
+    if not any(r.name == UNIT_LEADER_ROLE for r in actor.roles):
+        raise ActionError(
+            f"You need the {UNIT_LEADER_ROLE} role or admin permissions to assign a slot."
+        )
+    leader_unit = _get_unit_role(actor)
+    if not leader_unit:
+        raise ActionError(
+            f"You need a unit role (e.g. 2nd USC) alongside {UNIT_LEADER_ROLE} to assign a slot."
+        )
+    member_unit = _get_unit_role(member)
+    if member_unit != leader_unit:
+        raise ActionError(
+            f"You can only assign members from your own unit ({leader_unit}). "
+            f"{member.display_name} belongs to {member_unit or 'no unit'}."
+        )
+
+
+async def assign_slot_request(bot: commands.Bot, guild: discord.Guild,
+                              actor: discord.Member, member: discord.Member,
+                              slot: dict) -> dict:
+    """Put *member* straight onto *slot*, with no request and no approval.
+
+    Recorded as an already-approved request, which is what makes it show up on
+    the board and in every count like any other booking. `/assign-slot` and the
+    Assign form on the web queue both come here.
+
+    Raises ActionError with a message for *actor*.
+    """
+    check_can_assign(actor, member)
+
+    op = await database.get_active_operation(str(guild.id))
+    if not op:
+        raise ActionError('No active operation.')
+
+    existing = await database.get_member_active_request(
+        str(guild.id), op['id'], str(member.id)
+    )
+    if existing:
+        raise ActionError(
+            f"{member.display_name} already has a {existing['status']} slot: "
+            f"{existing['slot_label']}. Release it first if you want to reassign them."
+        )
+
+    # Re-checked here rather than only where the slot was picked: the list the
+    # caller chose from may be a page-load or a dropdown old.
+    if slot['key'] in set(await database.get_approved_slots(op['id'])):
+        raise ActionError('That slot was just filled. Please pick another.')
+
+    unit_role = _get_unit_role(member)
+    try:
+        await roster.assign(op, slot, member.display_name, unit_role)
+    except Exception as e:
+        raise ActionError(
+            f"Sheet update failed: {e}. Nobody was assigned, so the sheet and "
+            "the roster still agree — please try again."
+        )
+
+    request_id = await database.create_request(
+        guild_id=str(guild.id),
+        operation_id=op['id'],
+        member_id=str(member.id),
+        member_name=member.display_name,
+        slot_label=slot['label'],
+        sheet_row=slot['row'],
+        sheet_col=slot.get('col'),
+        slot_id=slot.get('slot_id'),
+        unit_role=unit_role,
+    )
+    await database.approve_request(request_id, actor.display_name)
+
+    await _dm(guild, member.id,
+              f"✅ **Slot Assigned**\n"
+              f"**{actor.display_name}** has assigned you to **{slot['label']}** "
+              f"for operation **{op['name']}**.")
+
+    asyncio.create_task(_update_orbat(bot, guild, op))
+    return {'request_id': request_id, 'slot': slot, 'operation': op}
+
+
+# ---------------------------------------------------------------------------
 # Cog
 # ---------------------------------------------------------------------------
 
@@ -1316,22 +1478,17 @@ class SlotsCog(commands.Cog):
         target = channel or interaction.channel
 
         try:
-            data = await roster.load_all(op)
-        except Exception as e:
+            await publish_board(self.bot, interaction.guild, target, op)
+        except discord.Forbidden:
             await interaction.followup.send(
-                f"❌ Failed to load the roster: `{e}`", ephemeral=True
+                f"❌ I can't post in {target.mention}.", ephemeral=True
             )
             return
-
-        pending_rows = set(await database.get_pending_slots(op['id']))
-        embed = _build_orbat_embed(
-            data['operation_name'], data['slots'], pending_rows, op['event_time'], data['nets']
-        )
-
-        msg = await target.send(embed=embed, view=OrbatRequestButton(self.bot))
-        await database.save_orbat_message(
-            str(interaction.guild_id), str(target.id), str(msg.id)
-        )
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Failed to post the board: `{e}`", ephemeral=True
+            )
+            return
 
         await interaction.followup.send(
             f"✅ ORBAT posted to {target.mention}. It will update automatically when slots are approved.",

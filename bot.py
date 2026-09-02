@@ -7,7 +7,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 from utils import database
-from cogs.slots import ApprovalView, OrbatRequestButton
+from cogs.slots import ApprovalView, OrbatRequestButton, guild_channel
 from cogs.gameroles import GameRolePanelView
 from cogs.events import EventRsvpView, load_responses
 
@@ -241,8 +241,9 @@ class ORBATBot(commands.Bot):
             except (discord.Forbidden, discord.NotFound):
                 pass
 
-        # Ping all approved members in #orbat
-        orbat_channel = discord.utils.get(guild.text_channels, name='orbat')
+        # Ping all approved members where the board lives — #orbat unless an
+        # admin pointed it somewhere else. Not created just to send a reminder.
+        orbat_channel = await guild_channel(guild, 'orbat', create=False)
         if orbat_channel:
             mentions = ' '.join(
                 f'<@{member_id}>' for member_id, _ in members
