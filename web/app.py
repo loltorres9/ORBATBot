@@ -18,6 +18,7 @@ from utils import database
 from utils import embeds as embedlib
 from web import (
     auth,
+    nav as nav_service,
     embeds as embed_service,
     invites as invite_service,
     operations as operation_service,
@@ -137,6 +138,12 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'may_create': can_create_events(member),
             'may_action_slots': can_action_slots(member),
             'is_admin': is_admin(member),
+            # The tab bar, built from what this member may open — see web/nav.py.
+            'nav': nav_service.build(
+                guild.id,
+                is_admin=is_admin(member),
+                may_action_slots=can_action_slots(member),
+            ),
         }
 
     async def event_context(request: Request, guild_id: str, event_id: int) -> dict:
@@ -570,29 +577,60 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         return context
 
     async def operation_page(request: Request, context: dict, error: str = None,
-                             status: int = 200, debug: dict = None):
+                             status: int = 200, debug: dict = None,
+                             panel: str = None):
+        """The operation page. *panel* names a collapsed section to re-open,
+        so a form that comes back with an error is not folded away with what
+        the person typed still in it."""
         return render(request, 'operation.html', {
             **context,
             **await operation_service.overview(context['guild'], context['tz']),
             'channels_choices': postable_channels(context['guild']),
             'debug': debug,
+            'panel': panel,
             'error': error,
         }, status=status)
 
-    async def operation_action(request: Request, guild_id: str, run):
-        """Every form on the page: check CSRF, run one service call, flash it.
+    async def operation_settings_page(request: Request, context: dict,
+                                      error: str = None, status: int = 200):
+        return render(request, 'operation_settings.html', {
+            **context,
+            'channels': await operation_service.channel_settings(context['guild']),
+            'channels_choices': postable_channels(context['guild']),
+            'timezone': context['tz'],
+            'timezone_choices': operation_service.TIMEZONE_CHOICES,
+            'error': error,
+        }, status=status)
+
+    async def operation_action(request: Request, guild_id: str, run,
+                               panel: str = None, settings: bool = False):
+        """Every form on both pages: check CSRF, run one service call, flash it.
 
         `run(context, form)` returns the message, or raises ValueError with one
         for the person who submitted — the convention the rest of `web/` uses.
+        *panel* re-opens the section the error came from; *settings* sends the
+        answer back to the settings page instead of the operation page.
         """
         context = await operation_context(request, guild_id)
         form = await request.form()
         auth.check_csrf(context['session'], form.get('csrf'))
+        page = f"/g/{guild_id}/operation" + ('/settings' if settings else '')
         try:
             note = await run(context, form)
         except ValueError as e:
-            return await operation_page(request, context, error=str(e), status=400)
-        return redirect(request, f"/g/{guild_id}/operation", 'ok', note)
+            if settings:
+                return await operation_settings_page(
+                    request, context, error=str(e), status=400
+                )
+            return await operation_page(request, context, error=str(e),
+                                        status=400, panel=panel)
+        return redirect(request, page, 'ok', note)
+
+    @app.get('/g/{guild_id}/operation/settings', response_class=HTMLResponse)
+    async def operation_settings(request: Request, guild_id: str):
+        return await operation_settings_page(
+            request, await operation_context(request, guild_id)
+        )
 
     @app.get('/g/{guild_id}/operation', response_class=HTMLResponse)
     async def operation_overview(request: Request, guild_id: str):
@@ -601,7 +639,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
     @app.post('/g/{guild_id}/operation/start', response_class=HTMLResponse)
     async def operation_start(request: Request, guild_id: str):
         return await operation_action(request, guild_id, lambda context, form:
-            operation_service.start(bot, context['guild'], form, context['tz']))
+            operation_service.start(bot, context['guild'], form, context['tz']),
+            panel='start')
 
     @app.post('/g/{guild_id}/operation/time', response_class=HTMLResponse)
     async def operation_time(request: Request, guild_id: str):
@@ -615,19 +654,19 @@ def create_app(bot, config: WebConfig) -> FastAPI:
     @app.post('/g/{guild_id}/operation/timezone', response_class=HTMLResponse)
     async def operation_timezone(request: Request, guild_id: str):
         return await operation_action(request, guild_id, lambda context, form:
-            operation_service.set_timezone(context['guild'], form))
+            operation_service.set_timezone(context['guild'], form), settings=True)
 
     @app.post('/g/{guild_id}/operation/channels', response_class=HTMLResponse)
     async def operation_channels(request: Request, guild_id: str):
         return await operation_action(request, guild_id, lambda context, form:
-            operation_service.save_channels(context['guild'], form))
+            operation_service.save_channels(context['guild'], form), settings=True)
 
     @app.post('/g/{guild_id}/operation/board', response_class=HTMLResponse)
     async def operation_board(request: Request, guild_id: str):
         async def run(context, form):
             op = await database.get_active_operation(str(context['guild'].id))
             return await operation_service.post_board(bot, context['guild'], op, form)
-        return await operation_action(request, guild_id, run)
+        return await operation_action(request, guild_id, run, panel='board')
 
     @app.post('/g/{guild_id}/operation/announce', response_class=HTMLResponse)
     async def operation_announce(request: Request, guild_id: str):
@@ -636,7 +675,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             return await operation_service.post_announcement(
                 bot, context['guild'], context['member'], op, form, context['tz']
             )
-        return await operation_action(request, guild_id, run)
+        return await operation_action(request, guild_id, run, panel='announce')
 
     @app.post('/g/{guild_id}/operation/clear-requests', response_class=HTMLResponse)
     async def operation_clear_requests(request: Request, guild_id: str):

@@ -40,7 +40,14 @@ def _reminder(raw, fallback: int = 30) -> int:
 
 
 async def overview(guild, tz: str) -> dict:
-    """Everything the page renders before anyone touches a form."""
+    """Everything the Operation page renders before anyone touches a form.
+
+    The channel and timezone settings are deliberately not in here: they belong
+    to the server rather than to an operation, they are set once, and having
+    them on the same page as the weekly work made three channel dropdowns visible
+    at the same time. They live on `/operation/settings` and read
+    `channel_settings()` directly.
+    """
     op = await database.get_active_operation(str(guild.id))
     source, orbat_name = None, None
     counts = {'total': 0, 'open': 0, 'pending': 0, 'filled': 0}
@@ -60,9 +67,10 @@ async def overview(guild, tz: str) -> dict:
         'orbat_name': orbat_name,
         'counts': counts,
         'orbats': await database.get_guild_orbats(str(guild.id)),
-        'channels': await channel_settings(guild),
+        # So "Post the live board" opens on the channel the board already goes
+        # to, rather than on whichever channel happens to sort first.
+        'orbat_channel_id': (await database.get_guild_channels(str(guild.id))).get('orbat'),
         'timezone': tz,
-        'timezone_choices': TIMEZONE_CHOICES,
         'reminder_choices': REMINDER_CHOICES,
     }
 

@@ -799,9 +799,11 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
-| Slot Approvals | Approve, deny or withdraw the pending requests for the live operation, release a booked slot, or put somebody on one outright |
-| Operation | Start an operation, set its start time, post the board and the announcement, empty the queue, and choose which channels the bot posts into |
-| ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, a preview of the board, and a one-way export to a Google Sheet |
+| **Operations** | One group holding the three pages that are always about the same evening: |
+| · Operation | Start an operation, set its start time, post the board and the announcement, empty the queue, read the raw roster |
+| · Slot Approvals | Approve, deny or withdraw the pending requests, release a booked slot, or put somebody on one outright |
+| · ORBATs | Build and edit the slot roster |
+| · Settings | Which channels the bot posts into, and the server timezone |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
 | Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
@@ -941,7 +943,9 @@ Requesting a slot is still Discord-side — this page is for deciding requests, 
 
 ### Operation
 
-**🎖️ Operation** is the admin half of the slot system, and everything on it has a slash command behind it doing exactly the same thing.
+**🎖️ Operations** is a group of four pages, with a second row of tabs under the main one. **Operation** is the admin half of the slot system, and everything on it has a slash command behind it doing exactly the same thing.
+
+The page opens on what matters most weeks — which operation is running, how full it is, and when it starts. Everything else is a row you click to unfold, so the page stays short:
 
 | On the page | Same as | What it does |
 |---|---|---|
@@ -951,9 +955,14 @@ Requesting a slot is still Discord-side — this page is for deciding requests, 
 | **Post an announcement** | `/post-event` | The "we play at 19:00, sign up here" message, linking to the ORBAT channel |
 | **Empty the queue** | `/clear-requests` | Cancels every request still waiting. Nobody is DMed and nothing is archived — this resets a queue, it does not turn people down |
 | **The roster as the bot reads it** | `/debug-slots` | Every slot with the key it is booked against — for when one is missing from the board |
-| **Timezone** | `/set-timezone` | What a time typed anywhere on this site or into a command means |
 
-The page header is `/current-operation`: which operation is live, whether it runs on an ORBAT or a sheet, when it starts, and how many slots are open, pending and filled.
+The header is `/current-operation`: which operation is live, whether it runs on an ORBAT or a sheet, and how many slots are open, pending and filled.
+
+### Settings
+
+The last tab in the group, for the two things you set once rather than every week.
+
+**Timezone** — `/set-timezone`. What a time typed anywhere on this site or into a command means. The Discord messages localise themselves for each reader either way, so this is about *input* only.
 
 #### Channels
 

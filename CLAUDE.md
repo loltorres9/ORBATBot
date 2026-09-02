@@ -54,6 +54,7 @@ web/                    # Optional browser UI — Discord OAuth2 login, events, 
   orbat.py              # ORBAT editor forms, on top of utils/orbat.py
   slots.py              # The approval queue, on top of cogs/slots.py
   operations.py         # Starting and steering an operation, on top of cogs/admin.py
+  nav.py                # The two-level tab bar, built once rather than per template
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
@@ -1078,7 +1079,8 @@ POST /g/{guild}/slots/{id}/approve      exactly what the ✅ button does
 POST /g/{guild}/slots/{id}/deny         optional reason, exactly what ❌ does
 POST /g/{guild}/slots/{id}/clear        exactly what /clear-slot does
 POST /g/{guild}/slots/assign            admin/UL — exactly what /assign-slot does
-GET  /g/{guild}/operation               admin — the operation, and everything below
+GET  /g/{guild}/operation               admin — the running operation and its actions
+GET  /g/{guild}/operation/settings      admin — the channels and the timezone
 POST /g/{guild}/operation/start         /setup-slots
 POST /g/{guild}/operation/time          /set-event-time
 POST /g/{guild}/operation/timezone      /set-timezone
@@ -1220,15 +1222,46 @@ which is the convention the rest of `web/` already uses for "this is a message f
 the route renders it as a flash on the same page. The denial reason is capped at
 `MAX_REASON = 200`, matching `DenialModal`.
 
+### The tab bar (`web/nav.py`)
+
+Eight flat tabs stopped saying anything: nothing showed that Operation, Slot
+Approvals and ORBATs are three views of the same evening. The bar is now two
+levels, and `build()` returns the whole structure — the top row, the second row
+per group, and the page-key → group map, so a page names only itself and
+`_nav.html` works out where that sits.
+
+Three things about it are deliberate:
+
+- **Permissions decide what is in the structure, not what the template hides.**
+  A group whose every page is out of reach is not built at all, and the group's
+  own link is its *first reachable page* — an admin lands on Operation, a Unit
+  Leader on the queue.
+- **A group of one renders no second row**, where it would only repeat the tab
+  above it. That is exactly the Unit Leader's view.
+- **It is built in Python.** The shape of the bar — which groups exist, who sees
+  what, where each lands — is precisely what goes wrong when it is spread across
+  template conditionals in nine files.
+
 ### The Operation page (`web/operations.py`)
 
-`/g/{guild}/operation` — the **Operation** tab, admin only. The admin half of
-the slot system in one page: what is running now, then a form each for starting
-an operation, moving its start time, posting the board, posting the
-announcement, emptying the queue, choosing the channels, dumping the raw roster
-and setting the timezone.
+`/g/{guild}/operation` — admin only, under the **Operations** group. What is
+running now, its start time, and then one collapsed panel each for posting the
+board, posting the announcement, emptying the queue, reading the raw roster, and
+starting a different operation.
 
-Like the approval queue, it owns **no rules** — every form calls into
+**The panels are `<details>`.** Native, so they work with scripting off like
+everything else here, and they are what keeps the page short: the status and the
+start time are the only things anybody looks at most weeks. `operation_page()`
+takes a `panel` argument so a form that comes back with an error re-opens the
+section it came from, rather than folding away with what the person typed still
+in it.
+
+**The channels and the timezone are on `/operation/settings` instead.** They
+belong to the server rather than to an operation and are set once; having them
+here put three channel dropdowns on one screen, which is what made the page read
+as repeating itself. `overview()` therefore no longer returns them.
+
+Like the approval queue, the page owns **no rules** — every form calls into
 `cogs/admin.py` or `cogs/slots.py` (see
 [Running an operation](#running-an-operation-cogsadminpy)) and turns an
 `ActionError` into the `ValueError` the route flashes. `operation_action()` in

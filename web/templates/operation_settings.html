@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Operation settings{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'opsettings' %}{% include '_nav.html' %}{% endwith %}
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+<h2>Settings</h2>
+<p class="hint">Two things you set once and forget. They apply to the whole
+  server, not to one operation, which is why they are not on the Operation
+  page with the things you change every week.</p>
+
+<h3 style="margin-top:24px">Channels</h3>
+<p class="hint">Where the bot posts. Leave one on <em>Default</em> and it keeps
+  using the channel of that name, creating it if it is missing — which is what
+  every server did before this setting existed.</p>
+
+<form class="form" method="post" action="/g/{{ guild.id }}/operation/channels">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% for row in channels %}
+    <label class="field">
+      <span>{{ row.title }}</span>
+      <select name="channel_{{ row.kind }}">
+        <option value="">Default — #{{ row.default_name }}</option>
+        {% for channel in channels_choices %}
+          <option value="{{ channel.id }}"
+            {% if row.value == channel.id|string %}selected{% endif %}>#{{ channel.name }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint">
+        {{ row.hint }}
+        {% if row.missing %}<strong class="bad">The channel you picked no longer
+          exists, so #{{ row.default_name }} is being used.</strong>{% endif %}
+      </span>
+    </label>
+  {% endfor %}
+  <div class="rowactions">
+    <button class="button primary" type="submit">Save the channels</button>
+  </div>
+</form>
+
+<h3 style="margin-top:32px">Timezone</h3>
+<p class="hint">What a time typed anywhere on this site or into a slash command
+  means. The Discord messages localise themselves for each reader either way,
+  so this is about <em>input</em> only.</p>
+
+<form class="form" method="post" action="/g/{{ guild.id }}/operation/timezone">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="field">
+    <span>Server timezone</span>
+    <select name="timezone">
+      {% for value, label in timezone_choices %}
+        <option value="{{ value }}" {% if value == timezone %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="rowactions">
+    <button class="button primary" type="submit">Save the timezone</button>
+  </div>
+</form>
+{% endblock %}
