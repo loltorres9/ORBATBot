@@ -53,6 +53,7 @@ web/                    # Optional browser UI — Discord OAuth2 login, events, 
   embeds.py             # Embed builder forms, on top of utils/embeds.py
   orbat.py              # ORBAT editor forms, on top of utils/orbat.py
   slots.py              # The approval queue, on top of cogs/slots.py
+  operations.py         # Starting and steering an operation, on top of cogs/admin.py
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
@@ -220,6 +221,16 @@ list wholesale — there is no identity for an edit to lose.
 |---|---|---|
 | `guild_id` | TEXT PK | |
 | `timezone` | TEXT | IANA timezone string, default `UTC` |
+| `orbat_channel_id` | TEXT | Where the live board and the reminder ping go |
+| `approvals_channel_id` | TEXT | Where a new request goes to be decided |
+| `archive_channel_id` | TEXT | Where every decided request is recorded |
+
+**All three channel columns are NULL until an admin picks something**, and NULL
+means the channel *named* `#orbat` / `#slot-approvals` / `#approval-archive`,
+created when it is missing — which is exactly what every guild did before the
+columns existed, so an upgrade changes nothing. `cogs/slots.guild_channel()` is
+the only thing that reads them; `database.CHANNEL_KINDS` maps each kind to its
+column and its fallback name.
 
 ### `game_roles`
 Self-assignable cosmetic roles (Minecraft, DCS, …) — see Game Roles below.
@@ -387,6 +398,14 @@ Indexes on `(guild_id, started_at)` and a partial one on the open rows.
 | `#slot-approvals` | First slot request | Pending approval embeds with Approve/Deny buttons |
 | `#approval-archive` | First approval or denial | Compact record of every actioned request |
 
+These are the **defaults**, not the only option: an admin can point each one at
+an existing channel from the Operation page. `guild_channel(guild, kind)` in
+`cogs/slots.py` is the single resolver — a stored id wins, a stored id whose
+channel has since been deleted falls back to the name rather than posting
+nowhere, and nothing stored behaves exactly as it always did. **Anything that
+needs one of these three channels must go through it**; a fresh
+`discord.utils.get(..., name='orbat')` would ignore the admin's choice.
+
 ---
 
 ## Unit Roles & Access Control
@@ -402,10 +421,12 @@ Indexes on `(guild_id, started_at)` and a partial one on the open rows.
 |---|---|---|---|
 | `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
 | `/clear-slot` — or **Release** / **Withdraw** on the web | ❌ | ✅ own unit | ✅ |
-| `/assign-slot` | ❌ | ✅ own unit | ✅ |
+| `/assign-slot` — or **Assign** on the web | ❌ | ✅ own unit | ✅ |
 | Approve / Deny — in `#slot-approvals` or on the web | ❌ | ✅ own unit | ✅ |
-| `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone`, `/post-event` | ❌ | ❌ | ✅ |
-| `/setup-slots`, `/current-operation`, `/sync`, `/restart`, `/debug-slots`, `/archive-old-approvals` | ❌ | ❌ | ✅ |
+| `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone`, `/post-event` — all on the web's **Operation** tab | ❌ | ❌ | ✅ |
+| `/setup-slots`, `/current-operation`, `/debug-slots` — likewise | ❌ | ❌ | ✅ |
+| Choosing the ORBAT / approvals / archive channels — web only | ❌ | ❌ | ✅ |
+| `/sync`, `/restart`, `/archive-old-approvals` — Discord only, bot maintenance rather than slot work | ❌ | ❌ | ✅ |
 | `/purge` | ❌ | ❌ | ✅ — anyone with **Manage Messages** in that channel |
 | `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
@@ -493,6 +514,8 @@ message ID to DB. **It lives in `slots.py`, not `admin.py`**, next to
 ### Admin/Unit Leader commands (`cogs/admin.py`)
 
 **`/setup-slots [orbat] [sheet_url] [event_time] [reminder_minutes] [name]`**
+Parses the time, then hands everything to `start_operation()` — see
+[Running an operation](#running-an-operation-cogsadminpy).
 - Takes **either** an `orbat` (autocompleted over the guild's ORBATs) **or** a
   `sheet_url` — giving both or neither is refused
 - Deactivates previous operation (`is_active = 0`)
@@ -504,7 +527,16 @@ message ID to DB. **It lives in `slots.py`, not `admin.py`**, next to
   or from the spreadsheet's title
 
 **`/assign-slot @member`**
-Direct assignment — bypasses the approval flow, recording the request as already approved. `roster.assign()` writes the sheet on a sheet-backed operation. Blocked if the member already holds a slot.
+Direct assignment — bypasses the approval flow, recording the request as already
+approved. The picker is the command's own; the decision itself is
+`assign_slot_request()`, shared with the web. `roster.assign()` writes the sheet
+on a sheet-backed operation. Blocked if the member already holds a slot.
+
+**`check_can_assign()` is stricter than `_can_action_request()`, on purpose.** A
+Unit Leader needs a unit of their own *and* the member must share it, so a
+member with no unit cannot be assigned by just any Unit Leader — unlike deciding
+a request that carries no unit, which any of them may do. Choosing who goes on
+the roster is not the same act as answering someone who asked.
 
 **`/clear-slot`**
 Dropdown of active (pending + approved) slots. On select it calls
@@ -514,7 +546,11 @@ the member, greys out a pending request's approval message, refreshes the board.
 Unit Leaders scoped to own unit.
 
 **`/clear-requests`**
-Cancels all pending requests for the active operation.
+Cancels all pending requests for the active operation, through
+`clear_pending_queue()`. Nobody is DMed and nothing is archived — this empties a
+queue that was never going to be decided rather than turning anyone down — but
+the messages in `#slot-approvals` are greyed out, or a request cancelled here
+would keep its buttons and read as actionable to whoever found it next.
 
 **`/set-timezone <tz>`**
 Stores IANA timezone in `guild_settings`. Used when parsing all event time inputs.
@@ -637,6 +673,40 @@ board kept showing 🟡 and nobody could action the request any more.
 
 ### Persistence after restart
 `bot.py` `setup_hook()` re-registers `ApprovalView` for every `pending` request and `OrbatRequestButton` as a global persistent view. custom_ids: `orbat_approve:{id}`, `orbat_deny:{id}`, `orbat_request_slot`.
+
+---
+
+## Running an operation (`cogs/admin.py`)
+
+`start_operation()`, `set_operation_time()` and `build_announcement_embed()` are
+to `/setup-slots`, `/set-event-time` and `/post-event` what
+`approve_slot_request()` is to the ✅ button: the command parses its arguments
+and calls one of them, and so does the web's Operation page. They raise
+`ActionError` for everything a person can get wrong and know nothing about
+interactions or forms.
+
+**Neither surface parses a date in here.** `start_operation()` takes
+`event_time` already parsed to naive UTC, because a slash command reads
+`25/06/2025 19:00` and a browser sends `2026-06-25T19:00` — two different
+readers of the same guild timezone, and the shared function should see neither.
+
+Three details worth keeping:
+
+- **The board post is non-fatal.** A guild where the bot cannot create or post
+  to the ORBAT channel still gets its operation; `start_operation()` returns
+  `channel=None` and the caller says so. Failing the whole thing over a message
+  would leave the roster loaded and the admin thinking it wasn't.
+- **The operation is re-read before the board is drawn.** `create_operation()`
+  deactivates the predecessor and `set_event_time()` may have written a time, so
+  the row that goes to `publish_board()` has to be the one that now exists.
+- **`publish_board()` in `cogs/slots.py` is the only place a board is first
+  posted** — `/post-orbat`, the auto-post above, and the web button all call it,
+  so all three produce the same message with the same persistent button.
+  `_update_orbat()` is the other half: it edits the message this one recorded.
+
+`/setup-slots` and `/set-event-time` used to render their timestamps with
+`int(naive.timestamp())`, which reads a naive datetime as **process-local** time
+— correct only because Railway runs in UTC. Both now stamp `timezone.utc` first.
 
 ---
 
@@ -966,6 +1036,8 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
 | Build and post embeds, configure the member log and voice tracking | admin | `is_admin()` — `manage_guild` or `administrator` |
 | Build and edit ORBATs | admin | `is_admin()` |
+| Start an operation, move its time, post the board or the announcement, empty the queue, choose the channels, set the timezone | admin | `is_admin()` |
+| Assign somebody to a slot outright | Unit Leader (own unit, and must have one) or admin | `check_can_assign()` |
 | Approve, deny or release slot requests | Unit Leader (own unit) or admin | `_can_action_request()` |
 | See the voice leaderboard | any member of the guild | — |
 
@@ -1005,6 +1077,16 @@ GET  /g/{guild}/slots                   the approval queue for the live operatio
 POST /g/{guild}/slots/{id}/approve      exactly what the ✅ button does
 POST /g/{guild}/slots/{id}/deny         optional reason, exactly what ❌ does
 POST /g/{guild}/slots/{id}/clear        exactly what /clear-slot does
+POST /g/{guild}/slots/assign            admin/UL — exactly what /assign-slot does
+GET  /g/{guild}/operation               admin — the operation, and everything below
+POST /g/{guild}/operation/start         /setup-slots
+POST /g/{guild}/operation/time          /set-event-time
+POST /g/{guild}/operation/timezone      /set-timezone
+POST /g/{guild}/operation/board         /post-orbat
+POST /g/{guild}/operation/announce      /post-event
+POST /g/{guild}/operation/clear-requests  /clear-requests
+POST /g/{guild}/operation/channels      which channels the bot posts into
+POST /g/{guild}/operation/slots         /debug-slots — rendered in place
 GET  /g/{guild}/orbats                  admin — ORBAT list, POST to create
 GET  /g/{guild}/orbats/{id}             the roster editor
 POST /g/{guild}/orbats/{id}             action=preview | save | confirm
@@ -1117,17 +1199,59 @@ Three things about the page are deliberate:
 `queue()` returns the source line (*ORBAT: Zug-ORBAT*, or *Google Sheet*), so it
 is obvious which backend the operation runs on without opening the ORBAT tab.
 
-`approve()`, `deny()` and `clear()` translate `ActionError` into `ValueError`,
+**Assign is on the same page**, because it is the same audience: it puts
+somebody on a slot with no request and no approval, exactly as `/assign-slot`
+does. Two things about it are worth knowing:
+
+- **Who** is a free-text box taking a Discord ID, a mention or a name, because
+  `Intents.default()` cannot list a guild's members and so there is no dropdown
+  to offer. An id or a mention is a `fetch_member()`; a name goes through
+  `guild.query_members()`, which is a gateway *search* and needs no privileged
+  intent (only listing everybody does). More than one match is reported with
+  their ids rather than guessed at — assigning the wrong person means a DM to
+  the wrong person and a slot held by somebody who does not know they hold it.
+- **The free-slot list is loaded with the queue, and its failure is contained.**
+  On a sheet-backed operation that is a network read; if it fails, the assign
+  form says so and the queue itself still renders. The queue is the reason to be
+  on this page.
+
+`approve()`, `deny()`, `clear()` and `assign()` translate `ActionError` into `ValueError`,
 which is the convention the rest of `web/` already uses for "this is a message for the user";
 the route renders it as a flash on the same page. The denial reason is capped at
 `MAX_REASON = 200`, matching `DenialModal`.
 
+### The Operation page (`web/operations.py`)
+
+`/g/{guild}/operation` — the **Operation** tab, admin only. The admin half of
+the slot system in one page: what is running now, then a form each for starting
+an operation, moving its start time, posting the board, posting the
+announcement, emptying the queue, choosing the channels, dumping the raw roster
+and setting the timezone.
+
+Like the approval queue, it owns **no rules** — every form calls into
+`cogs/admin.py` or `cogs/slots.py` (see
+[Running an operation](#running-an-operation-cogsadminpy)) and turns an
+`ActionError` into the `ValueError` the route flashes. `operation_action()` in
+`web/app.py` is the shape every form shares: check CSRF, run one service call,
+flash what came back or re-render with the error.
+
+`/debug-slots` is the one exception to that shape — it renders **in place**
+rather than redirecting, because a flash message is the wrong container for
+forty lines of output.
+
+**The channel form's empty option is "Default", not blank.** Nothing chosen and
+"chosen, and it happens to be #orbat" mean different things the day somebody
+renames a channel, so the page says which one is in force; a stored channel that
+has since been deleted is called out rather than quietly showing the default.
+
 ### Deliberately not covered yet
 
-- **Booking a slot from the web** — an ORBAT can back a live operation, and
-  approving is on the web now, but the *requesting* itself is still
-  Discord-side (`/request-slot` and the board's button). Clicking a slot on the
-  web page is the next step.
+- **Booking a slot from the web** — an ORBAT can back a live operation, and the
+  whole admin half is on the web now, but the *requesting* itself is still
+  Discord-side (`/request-slot`, `/change-slot`, `/cancel-request`,
+  `/leave-operation` and the board's button), and is meant to stay there.
+- **`/sync`, `/restart` and `/archive-old-approvals`** — bot maintenance and a
+  one-time migration rather than slot work, so they stayed slash commands.
 - **Moving an event to another channel** — the message would have to be deleted
   and reposted, losing the sign-up history's continuity; cancel and recreate.
 - **Per-user input timezones** — display is already per-user via Discord

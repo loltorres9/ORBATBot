@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiohttp
@@ -9,9 +9,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import database, roster, sheets
-from cogs.slots import (_build_orbat_embed, _get_unit_role, _update_orbat,
-                       ActionError, clear_slot_request, OrbatRequestButton,
-                       SquadSelectView, UNIT_LEADER_ROLE)
+from cogs.slots import (_get_unit_role, _update_orbat, ActionError,
+                       assign_slot_request, check_can_assign,
+                       clear_pending_queue, clear_slot_request, guild_channel,
+                       publish_board, SquadSelectView, UNIT_LEADER_ROLE)
 
 
 def _is_unit_leader_or_admin(member: discord.Member) -> bool:
@@ -63,6 +64,145 @@ def _parse_event_time(raw: str, tz_name: str = 'UTC') -> datetime:
     )
 
 ORBAT_CHANNEL_NAME = 'orbat'
+
+
+# ---------------------------------------------------------------------------
+# Running an operation
+#
+# `/setup-slots`, `/set-event-time` and `/post-event` are thin callers of the
+# three functions below, and so is the Operation page on the web. Everything
+# these do — reading the roster, deactivating the previous operation, posting
+# the board, re-arming the reminder — therefore happens once, wherever it was
+# asked for. `ActionError` carries the reasons a person can get wrong.
+# ---------------------------------------------------------------------------
+
+REMINDER_CHOICES = (15, 30, 60)
+
+
+async def start_operation(bot, guild: discord.Guild, *, orbat_id: int = None,
+                          sheet_url: str = None, name: str = None,
+                          event_time=None, reminder_minutes: int = 30) -> dict:
+    """Load a roster and make it this guild's active operation.
+
+    Exactly one of *orbat_id* and *sheet_url* — the two rosters an operation can
+    run on. *event_time* is naive UTC, already parsed: the two surfaces read a
+    date very differently and neither should be doing it in here.
+
+    Returns the new operation, its slot count, and the channel the board was
+    posted to (None when there was nowhere to post it — non-fatal, the same as
+    it always was, because the operation itself is loaded either way).
+    """
+    if bool(orbat_id) == bool(sheet_url):
+        raise ActionError('Give either an ORBAT or a sheet URL — not both, not neither.')
+    if reminder_minutes not in REMINDER_CHOICES:
+        raise ActionError(
+            f"Reminder must be one of {', '.join(str(m) for m in REMINDER_CHOICES)} minutes."
+        )
+
+    new_operation = dict(guild_id=str(guild.id))
+    if orbat_id:
+        record = await database.get_orbat(orbat_id)
+        if record is None or record['guild_id'] != str(guild.id):
+            raise ActionError('No such ORBAT on this server.')
+        squads = await database.get_orbat_structure(orbat_id)
+        slot_count = sum(len(squad['slots']) for squad in squads)
+        if not slot_count:
+            raise ActionError(
+                f"{record['name']} has no slots yet — write the roster on the website first."
+            )
+        new_operation.update(name=(name or '').strip() or record['name'],
+                             orbat_id=orbat_id)
+    else:
+        try:
+            loop = asyncio.get_event_loop()
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, sheets.load_slots, sheet_url), timeout=30,
+            )
+        except asyncio.TimeoutError:
+            raise ActionError(
+                'Timed out reading the sheet (30s). Make sure it is shared with '
+                'the service account.'
+            )
+        except ValueError as e:
+            raise ActionError(str(e))
+        except Exception as e:
+            raise ActionError(
+                f"Failed to read the sheet: {e}. Make sure you have shared it "
+                'with the service account.'
+            )
+        slot_count = len(data['slots'])
+        new_operation.update(
+            name=(name or '').strip() or data['operation_name'],
+            sheet_url=sheet_url, sheet_id=data['sheet_id'],
+            squad_col=data['squad_col'], role_col=data['role_col'],
+            status_col=data['status_col'], assigned_col=data['assigned_col'],
+        )
+
+    try:
+        op_id = await database.create_operation(**new_operation)
+        if event_time:
+            await database.set_event_time(op_id, event_time, reminder_minutes)
+    except Exception as e:
+        raise ActionError(f"Database error: {e}")
+
+    # Re-read rather than reuse what went in: `create_operation()` deactivated
+    # the previous operation and `set_event_time()` may have written a time, and
+    # the board has to be drawn from the row as it now stands.
+    op = await database.get_operation(op_id)
+
+    channel = await guild_channel(guild, 'orbat')
+    if channel:
+        try:
+            await publish_board(bot, guild, channel, op)
+        except Exception:
+            channel = None      # Non-fatal: the operation is loaded regardless.
+
+    return {'operation': op, 'slot_count': slot_count, 'channel': channel}
+
+
+async def set_operation_time(bot, guild: discord.Guild, op, event_time,
+                             reminder_minutes: int = 30):
+    """Move an operation's start time and re-arm its reminder.
+
+    `set_event_time()` resets `reminder_fired`, which is the point: a time that
+    moved has to be announced again.
+    """
+    if reminder_minutes not in REMINDER_CHOICES:
+        raise ActionError(
+            f"Reminder must be one of {', '.join(str(m) for m in REMINDER_CHOICES)} minutes."
+        )
+    await database.set_event_time(op['id'], event_time, reminder_minutes)
+    # Re-read so the redrawn board carries the new time.
+    op = await database.get_operation(op['id'])
+    asyncio.create_task(_update_orbat(bot, guild, op))
+    return op
+
+
+async def build_announcement_embed(guild: discord.Guild, mission_name: str,
+                                   event_time, posted_by: str) -> discord.Embed:
+    """The `/post-event` announcement — a mission name, when it starts, and
+    where to sign up. *event_time* may be naive UTC or aware; None omits the row.
+    """
+    embed = discord.Embed(title=f"🎖️ {mission_name}", color=discord.Color.dark_red())
+
+    if event_time is not None:
+        when = event_time
+        if getattr(when, 'tzinfo', None) is None:
+            when = when.replace(tzinfo=timezone.utc)
+        ts = int(when.timestamp())
+        embed.add_field(name='🕐 Operation starts',
+                        value=f"<t:{ts}:F>  (<t:{ts}:R>)", inline=False)
+
+    orbat_channel = await guild_channel(guild, 'orbat', create=False)
+    orbat_ref = orbat_channel.mention if orbat_channel else '`#orbat`'
+    embed.add_field(
+        name='📋 Sign up',
+        value=f'Head to {orbat_ref} to view available slots and request your position.',
+        inline=False,
+    )
+    embed.set_footer(text=f'Posted by {posted_by}')
+    embed.timestamp = discord.utils.utcnow()
+    return embed
 
 _RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2'
 
@@ -186,13 +326,6 @@ class AdminCog(commands.Cog):
         """
         await interaction.response.defer(ephemeral=True)
 
-        if bool(orbat) == bool(sheet_url):
-            await interaction.followup.send(
-                "❌ Give either an **orbat** or a **sheet_url** — not both, not neither.",
-                ephemeral=True,
-            )
-            return
-
         parsed_event_time = None
         if event_time:
             try:
@@ -202,105 +335,33 @@ class AdminCog(commands.Cog):
                 await interaction.followup.send(f"❌ {e}", ephemeral=True)
                 return
 
-        new_operation = dict(guild_id=str(interaction.guild_id))
-        if orbat:
-            record = await database.get_orbat(orbat)
-            if record is None or record['guild_id'] != str(interaction.guild_id):
-                await interaction.followup.send("❌ No such ORBAT on this server.", ephemeral=True)
-                return
-            squads = await database.get_orbat_structure(orbat)
-            slot_count = sum(len(s['slots']) for s in squads)
-            if not slot_count:
-                await interaction.followup.send(
-                    f"❌ **{record['name']}** has no slots yet — write the roster on the website first.",
-                    ephemeral=True,
-                )
-                return
-            new_operation.update(name=(name or '').strip() or record['name'], orbat_id=orbat)
-        else:
-            try:
-                loop = asyncio.get_event_loop()
-                data = await asyncio.wait_for(
-                    loop.run_in_executor(None, sheets.load_slots, sheet_url),
-                    timeout=30,
-                )
-            except asyncio.TimeoutError:
-                await interaction.followup.send(
-                    "❌ Timed out reading the sheet (30s). Make sure it's shared with the service account.",
-                    ephemeral=True,
-                )
-                return
-            except ValueError as e:
-                await interaction.followup.send(f"❌ {e}", ephemeral=True)
-                return
-            except Exception as e:
-                await interaction.followup.send(
-                    f"❌ Failed to read the sheet. Make sure you've shared it with the service account.\n`{e}`",
-                    ephemeral=True,
-                )
-                return
-            slot_count = len(data['slots'])
-            new_operation.update(
-                name=(name or '').strip() or data['operation_name'],
-                sheet_url=sheet_url, sheet_id=data['sheet_id'],
-                squad_col=data['squad_col'], role_col=data['role_col'],
-                status_col=data['status_col'], assigned_col=data['assigned_col'],
-            )
-
         try:
-            op_id = await database.create_operation(**new_operation)
-            if parsed_event_time:
-                await database.set_event_time(op_id, parsed_event_time, reminder_minutes)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Database error: `{e}`", ephemeral=True)
+            result = await start_operation(
+                self.bot, interaction.guild, orbat_id=orbat, sheet_url=sheet_url,
+                name=name, event_time=parsed_event_time,
+                reminder_minutes=reminder_minutes,
+            )
+        except ActionError as e:
+            await interaction.followup.send(f"❌ {e}", ephemeral=True)
             return
 
-        operation_name = new_operation['name']
         event_line = (
-            f"\n🕐 Event time: <t:{int(parsed_event_time.timestamp())}:F> "
+            f"\n🕐 Event time: <t:{int(parsed_event_time.replace(tzinfo=timezone.utc).timestamp())}:F> "
             f"(reminder {reminder_minutes} min before)"
             if parsed_event_time else ""
         )
         confirm_embed = discord.Embed(
             title='✅ Operation Loaded',
             description=(
-                f"**{operation_name}**\n"
-                f"Found **{slot_count}** slot(s).\n"
+                f"**{result['operation']['name']}**\n"
+                f"Found **{result['slot_count']}** slot(s)."
                 f"{event_line}\n\n"
                 f"Members can now use `/request-slot` to sign up."
             ),
             color=discord.Color.green(),
         )
-
-        # Auto-post ORBAT to #orbat (create channel if needed)
-        orbat_channel = discord.utils.get(
-            interaction.guild.text_channels, name=ORBAT_CHANNEL_NAME
-        )
-        if not orbat_channel:
-            try:
-                orbat_channel = await interaction.guild.create_text_channel(
-                    ORBAT_CHANNEL_NAME,
-                    topic='Live ORBAT for the current operation',
-                )
-            except discord.Forbidden:
-                orbat_channel = None
-
-        if orbat_channel:
-            try:
-                op = await database.get_active_operation(str(interaction.guild_id))
-                all_data = await roster.load_all(op)
-                pending_rows = set(await database.get_pending_slots(op['id']))
-                orbat_embed = _build_orbat_embed(
-                    all_data['operation_name'], all_data['slots'], pending_rows,
-                    parsed_event_time, all_data['nets'],
-                )
-                msg = await orbat_channel.send(embed=orbat_embed, view=OrbatRequestButton(self.bot))
-                await database.save_orbat_message(
-                    str(interaction.guild_id), str(orbat_channel.id), str(msg.id)
-                )
-                confirm_embed.description += f"\n\n📋 ORBAT posted to {orbat_channel.mention}."
-            except Exception:
-                pass  # ORBAT post failure is non-fatal
+        if result['channel']:
+            confirm_embed.description += f"\n\n📋 ORBAT posted to {result['channel'].mention}."
 
         await interaction.followup.send(embed=confirm_embed, ephemeral=True)
 
@@ -468,12 +529,12 @@ class AdminCog(commands.Cog):
             )
             return
 
-        count = await database.clear_pending_requests(op['id'])
-        await interaction.response.send_message(
+        await interaction.response.defer(ephemeral=True)
+        count = await clear_pending_queue(self.bot, interaction.guild, op)
+        await interaction.followup.send(
             f"✅ Cleared **{count}** pending request(s) for **{op['name']}**.",
             ephemeral=True,
         )
-        asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
 
 
     @app_commands.command(
@@ -519,18 +580,15 @@ class AdminCog(commands.Cog):
         try:
             tz_name = await database.get_guild_timezone(str(interaction.guild_id))
             parsed = _parse_event_time(event_time, tz_name)
-        except ValueError as e:
+            await set_operation_time(self.bot, interaction.guild, op, parsed,
+                                     reminder_minutes)
+        except (ValueError, ActionError) as e:
             await interaction.response.send_message(f"❌ {e}", ephemeral=True)
             return
 
-        await database.set_event_time(op['id'], parsed, reminder_minutes)
-
-        # Re-fetch so _update_orbat picks up the new event_time
-        op = await database.get_active_operation(str(interaction.guild_id))
-        asyncio.create_task(_update_orbat(self.bot, interaction.guild, op))
-
+        ts = int(parsed.replace(tzinfo=timezone.utc).timestamp())
         await interaction.response.send_message(
-            f"✅ Event time set to <t:{int(parsed.timestamp())}:F> "
+            f"✅ Event time set to <t:{ts}:F> "
             f"with a **{reminder_minutes}-minute** reminder.",
             ephemeral=True,
         )
@@ -543,38 +601,19 @@ class AdminCog(commands.Cog):
     async def assign_slot(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
 
-        if not _is_unit_leader_or_admin(interaction.user):
-            await interaction.followup.send(
-                "🚫 You need the **Unit Leader** role or admin permissions to use this command.",
-                ephemeral=True,
-            )
+        try:
+            check_can_assign(interaction.user, member)
+        except ActionError as e:
+            await interaction.followup.send(f"🚫 {e}", ephemeral=True)
             return
-
-        # Unit Leaders can only assign members of their own unit
-        is_admin = interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator
-        if not is_admin:
-            leader_unit = _get_unit_role(interaction.user)
-            if not leader_unit:
-                await interaction.followup.send(
-                    "🚫 You need a unit role (e.g. 2nd USC) alongside **Unit Leader** to use this command.",
-                    ephemeral=True,
-                )
-                return
-            member_unit = _get_unit_role(member)
-            if member_unit != leader_unit:
-                await interaction.followup.send(
-                    f"🚫 You can only assign members from your own unit (**{leader_unit}**).\n"
-                    f"**{member.display_name}** belongs to **{member_unit or 'no unit'}**.",
-                    ephemeral=True,
-                )
-                return
 
         op = await database.get_active_operation(str(interaction.guild_id))
         if not op:
             await interaction.followup.send("❌ No active operation.", ephemeral=True)
             return
 
-        # Check the member doesn't already have an active slot
+        # Checked here as well as inside `assign_slot_request()`, so somebody who
+        # already holds a slot is not found out only after picking one for them.
         existing = await database.get_member_active_request(
             str(interaction.guild_id), op['id'], str(member.id)
         )
@@ -614,57 +653,20 @@ class AdminCog(commands.Cog):
         bot_ref = self.bot
 
         async def _on_slot_selected(sel_interaction: discord.Interaction, slot: dict):
-            # Re-check at selection time
-            current_approved = set(await database.get_approved_slots(op['id']))
-            if slot['key'] in current_approved:
-                await sel_interaction.response.send_message(
-                    "❌ That slot was just filled. Please pick another.", ephemeral=True
-                )
-                return
-
+            # Deferred first: assigning writes the sheet, DMs the member and
+            # redraws the board, all well past Discord's three seconds.
             await sel_interaction.response.defer(ephemeral=True)
-
-            # Write the assignment out — nothing at all on an ORBAT-backed
-            # operation, where the approved request below is the booking.
-            unit_role = _get_unit_role(member)
             try:
-                await roster.assign(op, slot, member.display_name, unit_role)
-            except Exception as e:
-                await sel_interaction.followup.send(
-                    f"⚠️ Could not update the sheet: `{e}`\nPlease update it manually.",
-                    ephemeral=True,
+                await assign_slot_request(
+                    bot_ref, sel_interaction.guild, sel_interaction.user, member, slot,
                 )
+            except ActionError as e:
+                await sel_interaction.followup.send(f"⚠️ {e}", ephemeral=True)
                 return
-
-            # Record directly as approved
-            request_id = await database.create_request(
-                guild_id=str(sel_interaction.guild_id),
-                operation_id=op['id'],
-                member_id=str(member.id),
-                member_name=member.display_name,
-                slot_label=slot['label'],
-                sheet_row=slot['row'],
-                sheet_col=slot.get('col'),
-                slot_id=slot.get('slot_id'),
-                unit_role=unit_role,
-            )
-            await database.approve_request(request_id, sel_interaction.user.display_name)
-
             await sel_interaction.followup.send(
                 f"✅ Assigned **{member.display_name}** to **{slot['label']}**.",
                 ephemeral=True,
             )
-
-            try:
-                await member.send(
-                    f"✅ **Slot Assigned**\n"
-                    f"An admin has assigned you to **{slot['label']}** "
-                    f"for operation **{op['name']}**."
-                )
-            except (discord.Forbidden, discord.NotFound):
-                pass
-
-            asyncio.create_task(_update_orbat(bot_ref, sel_interaction.guild, op))
 
         view = SquadSelectView(
             squads=squads,
@@ -724,34 +726,13 @@ class AdminCog(commands.Cog):
             except ValueError as e:
                 await interaction.followup.send(f"❌ {e}", ephemeral=True)
                 return
-        elif op and op['event_time']:
-            from datetime import timezone as _tz
+        elif op:
             parsed_time = op['event_time']
-            if hasattr(parsed_time, 'tzinfo') and parsed_time.tzinfo is None:
-                parsed_time = parsed_time.replace(tzinfo=_tz.utc)
 
-        embed = discord.Embed(
-            title=f"🎖️ {mission_name}",
-            color=discord.Color.dark_red(),
+        embed = await build_announcement_embed(
+            interaction.guild, mission_name, parsed_time,
+            interaction.user.display_name,
         )
-
-        if parsed_time:
-            ts = int(parsed_time.timestamp() if hasattr(parsed_time, 'timestamp') else parsed_time)
-            embed.add_field(
-                name='🕐 Operation starts',
-                value=f"<t:{ts}:F>  (<t:{ts}:R>)",
-                inline=False,
-            )
-
-        orbat_channel = discord.utils.get(interaction.guild.text_channels, name='orbat')
-        orbat_ref = orbat_channel.mention if orbat_channel else '`#orbat`'
-        embed.add_field(
-            name='📋 Sign up',
-            value=f'Head to {orbat_ref} to view available slots and request your position.',
-            inline=False,
-        )
-        embed.set_footer(text=f'Posted by {interaction.user.display_name}')
-        embed.timestamp = discord.utils.utcnow()
 
         try:
             await target.send(embed=embed)
@@ -773,8 +754,8 @@ class AdminCog(commands.Cog):
     async def archive_old_approvals(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        approvals_channel = discord.utils.get(
-            interaction.guild.text_channels, name='slot-approvals'
+        approvals_channel = await guild_channel(
+            interaction.guild, 'approvals', create=False
         )
         if not approvals_channel:
             await interaction.followup.send(
@@ -782,18 +763,14 @@ class AdminCog(commands.Cog):
             )
             return
 
-        archive_channel = discord.utils.get(
-            interaction.guild.text_channels, name='approval-archive'
-        )
+        # Creates the archive when it is missing; None means it could not be.
+        archive_channel = await guild_channel(interaction.guild, 'archive')
         if archive_channel is None:
-            try:
-                archive_channel = await interaction.guild.create_text_channel('approval-archive')
-            except discord.Forbidden:
-                await interaction.followup.send(
-                    "❌ Cannot create `#approval-archive` — grant me **Manage Channels**.",
-                    ephemeral=True,
-                )
-                return
+            await interaction.followup.send(
+                "❌ Cannot create `#approval-archive` — grant me **Manage Channels**.",
+                ephemeral=True,
+            )
+            return
 
         moved = 0
         skipped = 0

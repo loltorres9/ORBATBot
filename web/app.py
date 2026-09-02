@@ -20,6 +20,7 @@ from web import (
     auth,
     embeds as embed_service,
     invites as invite_service,
+    operations as operation_service,
     orbat as orbat_service,
     roles as roles_service,
     service,
@@ -534,6 +535,19 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             return await slots_page(request, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/slots", 'ok', note)
 
+    @app.post('/g/{guild_id}/slots/assign', response_class=HTMLResponse)
+    async def slot_assign(request: Request, guild_id: str):
+        context = await slots_context(request, guild_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = await slots_service.assign(
+                bot, context['guild'], context['member'], form
+            )
+        except ValueError as e:
+            return await slots_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/slots", 'ok', note)
+
     @app.post('/g/{guild_id}/slots/{request_id}/clear', response_class=HTMLResponse)
     async def slot_clear(request: Request, guild_id: str, request_id: int):
         context = await slots_context(request, guild_id)
@@ -546,6 +560,105 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         except ValueError as e:
             return await slots_page(request, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/slots", 'ok', note)
+
+    # -- the operation ------------------------------------------------------
+
+    async def operation_context(request: Request, guild_id: str) -> dict:
+        context = await guild_context(request, guild_id)
+        if not context['is_admin']:
+            raise Forbidden('Only a server admin can run an operation.')
+        return context
+
+    async def operation_page(request: Request, context: dict, error: str = None,
+                             status: int = 200, debug: dict = None):
+        return render(request, 'operation.html', {
+            **context,
+            **await operation_service.overview(context['guild'], context['tz']),
+            'channels_choices': postable_channels(context['guild']),
+            'debug': debug,
+            'error': error,
+        }, status=status)
+
+    async def operation_action(request: Request, guild_id: str, run):
+        """Every form on the page: check CSRF, run one service call, flash it.
+
+        `run(context, form)` returns the message, or raises ValueError with one
+        for the person who submitted — the convention the rest of `web/` uses.
+        """
+        context = await operation_context(request, guild_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = await run(context, form)
+        except ValueError as e:
+            return await operation_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/operation", 'ok', note)
+
+    @app.get('/g/{guild_id}/operation', response_class=HTMLResponse)
+    async def operation_overview(request: Request, guild_id: str):
+        return await operation_page(request, await operation_context(request, guild_id))
+
+    @app.post('/g/{guild_id}/operation/start', response_class=HTMLResponse)
+    async def operation_start(request: Request, guild_id: str):
+        return await operation_action(request, guild_id, lambda context, form:
+            operation_service.start(bot, context['guild'], form, context['tz']))
+
+    @app.post('/g/{guild_id}/operation/time', response_class=HTMLResponse)
+    async def operation_time(request: Request, guild_id: str):
+        async def run(context, form):
+            op = await database.get_active_operation(str(context['guild'].id))
+            return await operation_service.set_time(
+                bot, context['guild'], op, form, context['tz']
+            )
+        return await operation_action(request, guild_id, run)
+
+    @app.post('/g/{guild_id}/operation/timezone', response_class=HTMLResponse)
+    async def operation_timezone(request: Request, guild_id: str):
+        return await operation_action(request, guild_id, lambda context, form:
+            operation_service.set_timezone(context['guild'], form))
+
+    @app.post('/g/{guild_id}/operation/channels', response_class=HTMLResponse)
+    async def operation_channels(request: Request, guild_id: str):
+        return await operation_action(request, guild_id, lambda context, form:
+            operation_service.save_channels(context['guild'], form))
+
+    @app.post('/g/{guild_id}/operation/board', response_class=HTMLResponse)
+    async def operation_board(request: Request, guild_id: str):
+        async def run(context, form):
+            op = await database.get_active_operation(str(context['guild'].id))
+            return await operation_service.post_board(bot, context['guild'], op, form)
+        return await operation_action(request, guild_id, run)
+
+    @app.post('/g/{guild_id}/operation/announce', response_class=HTMLResponse)
+    async def operation_announce(request: Request, guild_id: str):
+        async def run(context, form):
+            op = await database.get_active_operation(str(context['guild'].id))
+            return await operation_service.post_announcement(
+                bot, context['guild'], context['member'], op, form, context['tz']
+            )
+        return await operation_action(request, guild_id, run)
+
+    @app.post('/g/{guild_id}/operation/clear-requests', response_class=HTMLResponse)
+    async def operation_clear_requests(request: Request, guild_id: str):
+        async def run(context, form):
+            op = await database.get_active_operation(str(context['guild'].id))
+            return await operation_service.clear_pending(bot, context['guild'], op)
+        return await operation_action(request, guild_id, run)
+
+    @app.post('/g/{guild_id}/operation/slots', response_class=HTMLResponse)
+    async def operation_debug_slots(request: Request, guild_id: str):
+        """The raw roster — `/debug-slots`. Rendered in place, not redirected to,
+        because a flash message is the wrong shape for forty lines of output."""
+        context = await operation_context(request, guild_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        op = await database.get_active_operation(str(context['guild'].id))
+        try:
+            debug = await operation_service.raw_slots(op, form.get('squad'))
+        except ValueError as e:
+            return await operation_page(request, context, error=str(e), status=400)
+        debug['squad'] = (form.get('squad') or '').strip()
+        return await operation_page(request, context, debug=debug)
 
     # -- ORBATs -------------------------------------------------------------
 

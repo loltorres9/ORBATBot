@@ -6,6 +6,7 @@
     <a class="tab {{ 'active' if active == 'slots' else '' }}" href="/g/{{ guild.id }}/slots">📋 Slot Approvals</a>
   {% endif %}
   {% if is_admin %}
+    <a class="tab {{ 'active' if active == 'operation' else '' }}" href="/g/{{ guild.id }}/operation">🎖️ Operation</a>
     <a class="tab {{ 'active' if active == 'orbats' else '' }}" href="/g/{{ guild.id }}/orbats">🗺️ ORBATs</a>
     <a class="tab {{ 'active' if active == 'embeds' else '' }}" href="/g/{{ guild.id }}/embeds">📝 Embeds</a>
     <a class="tab {{ 'active' if active == 'logs' else '' }}" href="/g/{{ guild.id }}/logs">📋 Member log</a>

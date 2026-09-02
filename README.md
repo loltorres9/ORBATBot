@@ -48,6 +48,7 @@ Operation slot requests, approvals and the live ORBAT board.
 - Approvals happen in `#slot-approvals` with **Approve / Deny** buttons and a denial modal for an optional reason —
   or on the [web interface](#slot-approvals), which does exactly the same thing
 - Actioned requests leave `#slot-approvals` and are archived as a compact embed in `#approval-archive`
+- Those three channel names are the **defaults** — an admin can point each one somewhere else on the [Operation page](#channels)
 - Cancelling voids the approval message automatically (greyed out, buttons removed)
 - Members are DMed on submission, approval and denial
 - Operation reminders DM every approved member and ping `#orbat` before the start
@@ -127,7 +128,7 @@ Grouped by the same four feature areas as [Features](#features) above, so the tw
 | Command | Members | Unit Leaders | Admins |
 |---|---|---|---|
 | `/request-slot`, `/cancel-request`, `/change-slot`, `/leave-operation` | ✅ | ✅ | ✅ |
-| `/assign-slot`, `/clear-slot` | ❌ | ✅ (own unit only) | ✅ |
+| `/assign-slot`, `/clear-slot` — or **Assign** / **Release** on the web | ❌ | ✅ (own unit only) | ✅ |
 | Approve / Deny — in `#slot-approvals` or on the web | ❌ | ✅ (own unit only) | ✅ |
 | `/setup-slots`, `/post-orbat`, `/set-event-time`, `/post-event`, `/clear-requests`, `/current-operation` | ❌ | ❌ | ✅ |
 
@@ -380,7 +381,7 @@ Available to members with the **Unit Leader** Discord role. Scoped to their own 
 /assign-slot @member
 ```
 
-Directly assigns a member of your unit to a slot — no approval message, no waiting. Uses the same squad → slot picker. On a sheet-backed operation the sheet is updated immediately; the member gets a DM either way. Blocked if the member already holds a slot; use `/clear-slot` first to reassign.
+Directly assigns a member of your unit to a slot — no approval message, no waiting. Uses the same squad → slot picker. On a sheet-backed operation the sheet is updated immediately; the member gets a DM either way. Blocked if the member already holds a slot; use `/clear-slot` first to reassign. Also on the [**Slot Approvals** page](#slot-approvals).
 
 ```
 /clear-slot
@@ -411,7 +412,7 @@ Directly assigns any member to any slot — no approval message, no waiting. Use
 /setup-slots sheet_url:https://docs.google.com/spreadsheets/d/.../edit
 ```
 
-Run this once per operation. Give **either** an `orbat` — one you built under the **🗺️ ORBATs** tab on the website, autocompleted as you type — **or** a `sheet_url`, never both. The previous operation is archived automatically, and a live ORBAT embed is posted to `#orbat` (created if it doesn't exist). Optional parameters:
+Run this once per operation. Give **either** an `orbat` — one you built under the **🗺️ ORBATs** tab on the website, autocompleted as you type — **or** a `sheet_url`, never both. The previous operation is archived automatically, and a live ORBAT embed is posted to the [ORBAT channel](#channels) — `#orbat` unless you have moved it, created if it doesn't exist. The whole thing is also a form on the [Operation page](#operation). Optional parameters:
 
 - `event_time` — operation start time in `DD/MM/YYYY HH:MM` or `YYYY-MM-DD HH:MM` format (uses the server's configured timezone)
 - `reminder_minutes` — how many minutes before the event to send reminders (default: 30)
@@ -798,7 +799,8 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
-| Slot Approvals | Approve, deny or withdraw the pending requests for the live operation, and release a booked slot |
+| Slot Approvals | Approve, deny or withdraw the pending requests for the live operation, release a booked slot, or put somebody on one outright |
+| Operation | Start an operation, set its start time, post the board and the announcement, empty the queue, and choose which channels the bot posts into |
 | ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, a preview of the board, and a one-way export to a Google Sheet |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
@@ -929,7 +931,43 @@ Two things to know:
 
 Withdrawing is not a denial: nothing is written to `#approval-archive` and the member is not told a reason. Use **❌ Deny** when the answer is no, and **🧹 Withdraw** when the request should simply stop being in the queue.
 
+**Putting somebody on a slot outright** is the box at the top — the same as `/assign-slot`. Type who (a name, an `@mention`, or a Discord ID), pick a free slot, and they are on the roster with no request and no approval. There is no member dropdown because the bot deliberately does not hold a copy of your member list; a name is searched for when you submit, and if it matches more than one person you are told who, with their IDs.
+
+A Unit Leader can only assign members of their own unit, and needs a unit role themselves — slightly stricter than deciding a request, because choosing who goes on the roster is not the same as answering somebody who asked.
+
 Requesting a slot is still Discord-side — this page is for deciding requests, not making them.
+
+---
+
+### Operation
+
+**🎖️ Operation** is the admin half of the slot system, and everything on it has a slash command behind it doing exactly the same thing.
+
+| On the page | Same as | What it does |
+|---|---|---|
+| **Start an operation** | `/setup-slots` | Archives the operation running now, loads an ORBAT or a Google Sheet as the new one, and posts the live board |
+| **Start time** | `/set-event-time` | Moves the start and re-arms the reminder, so it fires again for the new time |
+| **Post the live board** | `/post-orbat` | A fresh board in the channel you pick. It becomes the one that updates; the previous one stops |
+| **Post an announcement** | `/post-event` | The "we play at 19:00, sign up here" message, linking to the ORBAT channel |
+| **Empty the queue** | `/clear-requests` | Cancels every request still waiting. Nobody is DMed and nothing is archived — this resets a queue, it does not turn people down |
+| **The roster as the bot reads it** | `/debug-slots` | Every slot with the key it is booked against — for when one is missing from the board |
+| **Timezone** | `/set-timezone` | What a time typed anywhere on this site or into a command means |
+
+The page header is `/current-operation`: which operation is live, whether it runs on an ORBAT or a sheet, when it starts, and how many slots are open, pending and filled.
+
+#### Channels
+
+**Where the bot posts is now yours to choose.** Three channels, each with a **Default** option that is selected until you change it:
+
+| Channel | Default | Used for |
+|---|---|---|
+| ORBAT board | `#orbat` | The live board, and the reminder ping before an operation starts |
+| Slot approvals | `#slot-approvals` | Where a new request goes to be decided |
+| Approval archive | `#approval-archive` | The record of every request that was decided |
+
+Leaving one on **Default** means exactly what the bot did before this setting existed: it uses the channel of that name and creates it if it is missing. Nothing changes for a server that never opens this form. If you pick a channel and later delete it, the bot falls back to the default name rather than posting nowhere — and the form says so.
+
+`/sync`, `/restart` and `/archive-old-approvals` stayed slash commands: they are bot maintenance and a one-off migration rather than parts of running an operation.
 
 ---
 
