@@ -1505,6 +1505,13 @@ async def set_voice_board_state(guild_id: str, message_id: str = None,
 # ---------------------------------------------------------------------------
 
 async def get_guild_orbats(guild_id: str) -> list:
+    """Every ORBAT on this guild, with its size and whether it is running.
+
+    `live_operation` is the name of the active operation backed by this ORBAT,
+    or NULL. Only one operation per guild is active at a time, so at most one
+    row can carry it — which is the point: with several ORBATs in the list,
+    that is the only thing that says which one tonight's board comes from.
+    """
     pool = await get_pool()
     async with pool.acquire() as db:
         return await db.fetch(
@@ -1513,11 +1520,31 @@ async def get_guild_orbats(guild_id: str) -> list:
                         AS squad_count,
                       (SELECT COUNT(*) FROM orbat_slots s
                          JOIN orbat_squads q ON q.id = s.squad_id
-                        WHERE q.orbat_id = o.id) AS slot_count
+                        WHERE q.orbat_id = o.id) AS slot_count,
+                      (SELECT op.name FROM operations op
+                        WHERE op.orbat_id = o.id AND op.is_active = 1
+                        ORDER BY op.created_at DESC LIMIT 1) AS live_operation
                  FROM orbats o
                 WHERE o.guild_id = $1
                 ORDER BY o.updated_at DESC''',
             guild_id,
+        )
+
+
+async def orbat_live_operation(orbat_id: int):
+    """The active operation running on this ORBAT, or None.
+
+    What `orbat_operations()` returns filtered down to the one that matters for
+    a warning: editing the roster under a live board is the case worth saying
+    something about.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow(
+            '''SELECT * FROM operations
+                WHERE orbat_id = $1 AND is_active = 1
+                ORDER BY created_at DESC LIMIT 1''',
+            orbat_id,
         )
 
 

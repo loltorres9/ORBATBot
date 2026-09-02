@@ -977,6 +977,8 @@ The slot roster, written out on a page instead of kept in a Google Sheet. **Mana
 
 An ORBAT is a **template**: the same one is meant to back as many operation nights as you like, which is what duplicating the sheet used to be for. **Copy** takes the structure and none of the bookings.
 
+**Which ORBAT is live** is marked in the list with a red 🔴 chip naming the operation running on it — only one can carry it, because a server has one active operation at a time. Opening that ORBAT in the editor says the same thing at the top, since an edit there changes tonight's board, and the **Start an operation** dropdown on the Operation tab marks it too.
+
 **Deleting one is refused while an operation is running on it** — say so with `/setup-slots` for the next operation first. Once it is no longer the live one, deleting takes its squads and slots with it and everybody booked into it comes off the roster, the same as deleting their slot in the editor would.
 
 You write the roster as indented text — squad at the left margin, its slots indented under it:

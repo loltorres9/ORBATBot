@@ -59,7 +59,8 @@
       <select name="orbat_id">
         {% if orbats %}
           {% for record in orbats %}
-            <option value="{{ record.id }}">{{ record.name }}</option>
+            <option value="{{ record.id }}">{{ record.name }}
+              {%- if record.live_operation %} — running now: {{ record.live_operation }}{% endif %}</option>
           {% endfor %}
         {% else %}
           <option value="">No ORBATs yet — build one on the ORBATs tab</option>

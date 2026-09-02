@@ -1350,6 +1350,24 @@ one thing to weigh if this ever gets reconsidered.
 `right`, reproducing what the sheet reader infers from column geometry. One
 explicit marker turns the guessing off for the whole ORBAT.
 
+### Which ORBAT is live
+
+An ORBAT is a template and a guild can hold several, so **which one backs the
+operation running now** is the first thing you need from the list.
+`get_guild_orbats()` carries `live_operation` — the active operation's name, or
+NULL — as a correlated subquery, and only one row can ever have it, because a
+guild has one active operation. It is said in three places, all of which are
+"you are about to act on tonight's board":
+
+- the ORBAT list, as a 🔴 chip naming the operation
+- the editor, as a banner, because an edit here changes the live board
+- the Operation page's start dropdown, so restarting on the same ORBAT is a
+  deliberate choice rather than a surprise
+
+`orbat_live_operation(orbat_id)` is the single-row form the editor uses.
+`web/orbat.delete()` already refused a live ORBAT; the banner means you know
+before you get there rather than after.
+
 ### The edit must never unseat anybody silently
 
 A slot's id is what a booking hangs off, so re-parsing the text cannot drop every

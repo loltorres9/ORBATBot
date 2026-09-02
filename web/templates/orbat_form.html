@@ -12,6 +12,15 @@
 <h1>{{ record.name }}</h1>
 {% if record.description %}<p class="muted">{{ record.description }}</p>{% endif %}
 
+{% if live_operation %}
+  <div class="flash warn">
+    🔴 This ORBAT is backing <strong>{{ live_operation.name }}</strong>, the
+    operation running right now. Editing it changes tonight's board — an edit
+    that removes or renames a booked slot will say who it affects before it
+    saves, and it cannot be deleted while this operation is live.
+  </div>
+{% endif %}
+
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 
 {% if pending %}

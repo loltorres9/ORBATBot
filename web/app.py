@@ -697,6 +697,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'summary': (checked or {}).get('summary'),
             'pending': pending,
             'stored': await orbat_service.stored_board(context['record']['id']),
+            'live_operation': await database.orbat_live_operation(context['record']['id']),
             'error': error,
         }, status=status)
 

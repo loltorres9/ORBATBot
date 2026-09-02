@@ -16,6 +16,9 @@
   The slot roster, held here instead of in a Google Sheet. An ORBAT is a
   template: the same one backs as many operations as you like, and the bookings
   belong to the operation rather than to the roster.
+  The one marked <span class="chip live">🔴 live</span> is backing the operation
+  running right now — see the <a href="/g/{{ guild.id }}/operation">Operation</a>
+  tab for the rest of it.
 </p>
 
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
@@ -32,6 +35,9 @@
             {% if item.created_by_name %} · by {{ item.created_by_name }}{% endif %}
           </span>
         </a>
+        {% if item.live_operation %}
+          <span class="chip live">🔴 live · {{ item.live_operation }}</span>
+        {% endif %}
         <span class="chip">{{ item.squad_count }} squads</span>
         <span class="chip">{{ item.slot_count }} slots</span>
       </li>
