@@ -1,10 +1,11 @@
-"""Approving and denying slot requests from the browser.
+"""Deciding slot requests from the browser: approve, deny, and release.
 
 Every rule about who may decide what, and everything a decision entails — the
 roster write, clearing #slot-approvals, the archive record, the DMs, the
 competing requests, the board refresh — lives in `cogs/slots.py` and is called
-from here. This module only reads the queue and translates errors, the way
-`web/service.py` does for events.
+from here. Releasing a slot is the same story with a third function: this page
+and `/clear-slot` both go through `clear_slot_request()`. This module only reads
+the queue and translates errors, the way `web/service.py` does for events.
 
 That matters more here than anywhere else on the site: an approval is the one
 action with consequences in four places at once, and a second implementation of
@@ -15,6 +16,7 @@ from cogs.slots import (
     ActionError,
     _can_action_request,
     approve_slot_request,
+    clear_slot_request,
     deny_slot_request,
 )
 from utils import database, roster
@@ -68,6 +70,23 @@ async def queue(guild, member) -> dict:
 
     return {'operation': operation, 'pending': pending,
             'approved': approved, 'source': source}
+
+
+async def clear(bot, guild, member, request_id: int) -> str:
+    """Take somebody off a slot — the page's half of `/clear-slot`.
+
+    Offered on the approved rows *and* on the pending ones, because both are
+    what that command lists: a request nobody wants to decide is withdrawn the
+    same way a booking is given back.
+    """
+    try:
+        result = await clear_slot_request(bot, guild, request_id, member)
+    except ActionError as e:
+        raise ValueError(str(e))
+    req = result['request']
+    if result['was_approved']:
+        return f"Released {req['slot_label']} — {req['member_name']} is off the roster."
+    return f"Withdrew {req['member_name']}'s request for {req['slot_label']}."
 
 
 async def approve(bot, guild, member, request_id: int) -> str:

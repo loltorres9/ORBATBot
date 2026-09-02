@@ -189,8 +189,8 @@ async def _update_orbat(bot: commands.Bot, guild: discord.Guild, op, raise_error
 
 def _can_action_request(approver: discord.Member, unit_role: Optional[str]) -> bool:
     """
-    Returns True if *approver* is allowed to approve/deny a request that
-    belongs to *unit_role*.
+    Returns True if *approver* is allowed to approve, deny or clear a request
+    that belongs to *unit_role*.
 
     Rules:
     - Admins (manage_guild or administrator) can always action any request.
@@ -335,8 +335,13 @@ async def _process_slot_selection(
         asyncio.create_task(_update_orbat(bot, interaction.guild, op))
 
 
-async def _void_approval_message(bot: commands.Bot, guild: discord.Guild, req):
-    """Edit the approval message to show the request was cancelled, and disable the buttons."""
+async def _void_approval_message(bot: commands.Bot, guild: discord.Guild, req,
+                                 note: str = 'Member cancelled their request'):
+    """Edit the approval message to show the request was cancelled, and disable the buttons.
+
+    *note* becomes the footer: the same grey message says "member cancelled" when
+    they withdrew and names the admin when one cleared it out from under them.
+    """
     if not req.get('approval_message_id') or not req.get('approval_channel_id'):
         return
     channel = guild.get_channel(int(req['approval_channel_id']))
@@ -356,7 +361,7 @@ async def _void_approval_message(bot: commands.Bot, guild: discord.Guild, req):
     if original:
         for field in original.fields:
             cancelled_embed.add_field(name=field.name, value=field.value, inline=field.inline)
-    cancelled_embed.set_footer(text='Member cancelled their request')
+    cancelled_embed.set_footer(text=note)
     cancelled_embed.timestamp = discord.utils.utcnow()
 
     try:
@@ -573,7 +578,8 @@ async def _dm(guild: discord.Guild, member_id, text: str) -> None:
         pass
 
 
-async def _load_for_action(guild: discord.Guild, request_id: int, approver, verb: str):
+async def _load_for_action(guild: discord.Guild, request_id: int, approver, verb: str,
+                           statuses=('pending',)):
     req = await database.get_request_by_id(request_id)
     if not req or req['guild_id'] != str(guild.id):
         raise ActionError('Request not found.')
@@ -582,7 +588,7 @@ async def _load_for_action(guild: discord.Guild, request_id: int, approver, verb
         raise ActionError(
             f"You can only {verb} requests from your own unit. This one is for {unit}."
         )
-    if req['status'] != 'pending':
+    if req['status'] not in statuses:
         raise ActionError(f"This request has already been {req['status']}.")
     return req
 
@@ -713,6 +719,62 @@ async def deny_slot_request(bot: commands.Bot, guild: discord.Guild, request_id:
         asyncio.create_task(_update_orbat(bot, guild, op))
 
     return {'request': req, 'operation': op, 'reason': reason}
+
+
+async def clear_slot_request(bot: commands.Bot, guild: discord.Guild, request_id: int,
+                             actor: discord.Member) -> dict:
+    """Take a member off a slot they hold, approved or still pending.
+
+    The third decision, alongside approving and denying, and the same kind of
+    thing: it writes the roster, tells the member and redraws the board. So it
+    lives here with the other two rather than inside the `/clear-slot` callback,
+    and both that command and the Release button on the web queue call it.
+
+    Raises ActionError with a message for *actor*.
+    """
+    req = await _load_for_action(guild, request_id, actor, 'clear',
+                                 statuses=('pending', 'approved'))
+
+    # The request's own operation, for the same reason approving reads it: an
+    # old request cleared while a newer operation is running must give its slot
+    # back to the sheet it was written into.
+    op = await database.get_operation(req['operation_id'])
+    was_approved = req['status'] == 'approved'
+
+    # Only an approved request ever reached the roster — the sheet is written on
+    # approval, never on request — so only that one has anything to hand back.
+    # On an ORBAT this is nothing at all; the row below *is* the booking.
+    if was_approved and op:
+        try:
+            await roster.clear(op, req)
+        except Exception as e:
+            raise ActionError(
+                f"Sheet update failed: {e}. Nobody was removed, so the sheet and "
+                "the roster still agree — please try again."
+            )
+
+    await database.cancel_request_by_id(request_id)
+
+    op_name = op['name'] if op else 'Unknown'
+    await _dm(guild, req['member_id'],
+              f"ℹ️ **Slot Cleared**\n"
+              f"Operation: **{op_name}**\n"
+              f"**{actor.display_name}** has removed you from **{req['slot_label']}**.\n"
+              f"You can request a different slot with `/request-slot`.")
+
+    # A pending request still has its message in #slot-approvals, and it has to
+    # stop being clickable. An approved one had that message deleted when it was
+    # approved, and its record in #approval-archive stays as it is: the archive
+    # says what was decided, and this is a later decision, not a correction.
+    if not was_approved:
+        asyncio.create_task(_void_approval_message(
+            bot, guild, req, note=f'Cleared by {actor.display_name}',
+        ))
+
+    if op and op['is_active']:
+        asyncio.create_task(_update_orbat(bot, guild, op))
+
+    return {'request': req, 'operation': op, 'was_approved': was_approved}
 
 
 class DenialModal(discord.ui.Modal, title='Deny Slot Request'):

@@ -46,7 +46,7 @@ Operation slot requests, approvals and the live ORBAT board.
 - Slots show 🟢 available, 🟡 pending (also requested — compete for it) or 🔴 filled, in real time
 - Several members can request the same slot; the approver picks, and the rest are auto-denied and notified
 - Approvals happen in `#slot-approvals` with **Approve / Deny** buttons and a denial modal for an optional reason —
-  or on the [web interface](#slot-requests), which does exactly the same thing
+  or on the [web interface](#slot-approvals), which does exactly the same thing
 - Actioned requests leave `#slot-approvals` and are archived as a compact embed in `#approval-archive`
 - Cancelling voids the approval message automatically (greyed out, buttons removed)
 - Members are DMed on submission, approval and denial
@@ -390,8 +390,9 @@ Presents a dropdown of active slots. Select one to remove the member and free th
 
 Unit Leaders only see slots belonging to members of their own unit.
 
-Unit Leaders can also **Approve / Deny** requests for members of their own unit — in `#slot-approvals`, or on the
-**📋 Slot requests** page of the [web interface](#slot-requests).
+The same thing is on the **📋 Slot Approvals** page of the [web interface](#slot-approvals), as **Release** next to a booked slot and **Withdraw** next to a request nobody has decided.
+
+Unit Leaders can also **Approve / Deny** requests for members of their own unit — in `#slot-approvals`, or on that same page.
 
 ---
 
@@ -797,7 +798,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | New / Edit | Title, start, duration, description, location, channel, ping roles, reminder, repeat pattern, custom sign-up buttons, banner image |
 | Cancel | Reason field, DMs everyone attending, optionally stops the whole series |
 | Delete | Confirmation page stating the sign-up count, then removes the event and its message |
-| Slot requests | Approve or deny the pending requests for the live operation, and see who already holds a slot |
+| Slot Approvals | Approve, deny or withdraw the pending requests for the live operation, and release a booked slot |
 | ORBATs | Build and edit the slot roster in the browser — squads, slots, radio nets, a preview of the board, and a one-way export to a Google Sheet |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
@@ -913,9 +914,9 @@ Two details worth knowing about the numbers:
 
 Voice state updates need no privileged intent and no extra permission, so unlike the member log this works the moment you switch it on.
 
-### Slot requests
+### Slot Approvals
 
-**📋 Slot requests** shows the pending requests for the operation that is running right now, with **✅ Approve** and **❌ Deny** next to each one and a field for an optional denial reason. Below them, who already holds a slot.
+**📋 Slot Approvals** shows the pending requests for the operation that is running right now, with **✅ Approve** and **❌ Deny** next to each one and a field for an optional denial reason. Below them, who already holds a slot.
 
 Deciding here does **exactly** what the buttons in `#slot-approvals` do — it is the same code: the member is DMed, the request leaves `#slot-approvals` and is archived in `#approval-archive`, the live ORBAT board refreshes, and anyone else who wanted that slot is denied and told. You can work through a queue in Discord and finish it in the browser without anything noticing.
 
@@ -924,7 +925,11 @@ Two things to know:
 - **Unit Leaders see every request but can only decide their own unit's.** A row you may not action says so (*“CNTO only”*) instead of showing the buttons — you can still see how many people are waiting. Admins can action everything.
 - **A slot two people want is marked `contested`.** That is the case where approving is a choice rather than a formality, and it is not otherwise visible: in Discord it is simply two separate messages.
 
-Taking somebody **off** the roster is still `/clear-slot` in Discord. Requesting a slot is still Discord-side too — this page is for deciding requests, not making them.
+**Taking somebody off a slot is on this page too.** A booked slot has a **🧹 Release** button and a request nobody has decided yet has **🧹 Withdraw** — the same two halves `/clear-slot` offers in one dropdown, and the same code again. The slot goes back on the board immediately, the member is DMed and told who removed them, and on a sheet-backed operation the cell is restored to `[] <Insert Name>`. Neither can be undone, so both ask first.
+
+Withdrawing is not a denial: nothing is written to `#approval-archive` and the member is not told a reason. Use **❌ Deny** when the answer is no, and **🧹 Withdraw** when the request should simply stop being in the queue.
+
+Requesting a slot is still Discord-side — this page is for deciding requests, not making them.
 
 ---
 

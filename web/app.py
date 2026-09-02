@@ -534,6 +534,19 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             return await slots_page(request, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/slots", 'ok', note)
 
+    @app.post('/g/{guild_id}/slots/{request_id}/clear', response_class=HTMLResponse)
+    async def slot_clear(request: Request, guild_id: str, request_id: int):
+        context = await slots_context(request, guild_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = await slots_service.clear(
+                bot, context['guild'], context['member'], request_id
+            )
+        except ValueError as e:
+            return await slots_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/slots", 'ok', note)
+
     # -- ORBATs -------------------------------------------------------------
 
     def require_orbat_admin(context: dict):
