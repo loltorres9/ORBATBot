@@ -15,6 +15,8 @@ from utils import database, reddit
 
 
 class FakeChannel:
+    name = 'announcements'
+
     def __init__(self):
         self.sent = []
 
@@ -180,3 +182,89 @@ def test_a_read_that_gets_through_clears_the_stand_down(run):
     # in the rotation as soon as one succeeds.
     _, stored, _ = run(make_feed(seen_ids='t3_1'), make_posts(2))
     assert stored.get('retry_at') is None
+
+
+# -- catching a post up by hand ---------------------------------------------
+
+@pytest.fixture
+def catch_up(monkeypatch):
+    """Announce one post by hand. Returns (messages, stored row)."""
+    def runner(feed, posts, post_id):
+        channel = FakeChannel()
+        bot = FakeBot(FakeGuild(channel))
+        stored = {}
+
+        async def fake_fetch(kind, source, **kwargs):
+            return posts
+
+        async def fake_record(feed_id, **values):
+            stored.update(values)
+
+        monkeypatch.setattr(reddit, 'fetch', fake_fetch)
+        monkeypatch.setattr(database, 'record_reddit_read', fake_record)
+        post = asyncio.run(redditfeed.announce_post(bot, feed, post_id))
+        return channel.sent, stored, post
+    return runner
+
+
+def test_a_post_that_never_went_out_can_be_announced(catch_up):
+    # `check_feed()` marks a post Discord refused as announced on purpose, so
+    # this is the only way it reaches the channel.
+    feed = make_feed(seen_ids='t3_2,t3_1')
+    sent, stored, post = catch_up(feed, make_posts(2), 't3_2')
+    assert [content for content, _ in sent] == ['Post 2 https://example.com/2']
+    assert post['id'] == 't3_2'
+    # Already seen, and it stays seen — announcing again doesn't queue it up
+    # for the next scheduled check.
+    assert stored['seen_ids'].split(',') == ['t3_2', 't3_1']
+
+
+def test_catching_one_up_marks_it_seen(catch_up):
+    feed = make_feed(seen_ids='t3_1')
+    _, stored, _ = catch_up(feed, make_posts(3), 't3_3')
+    assert stored['seen_ids'].startswith('t3_3,')
+    assert 't3_1' in stored['seen_ids']
+    # t3_2 was not chosen, so it is still waiting for the next check.
+    assert 't3_2' not in stored['seen_ids']
+
+
+def test_catching_up_on_a_never_read_watch_seeds_the_rest(catch_up):
+    # Otherwise announcing one post by hand would make the next scheduled check
+    # announce the other twenty-four.
+    feed = make_feed(seen_ids=None)
+    sent, stored, _ = catch_up(feed, make_posts(4), 't3_2')
+    assert len(sent) == 1
+    assert sorted(stored['seen_ids'].split(',')) == ['t3_1', 't3_2', 't3_3', 't3_4']
+
+
+def test_a_post_the_feed_no_longer_carries_says_so(catch_up):
+    with pytest.raises(ValueError, match="isn't on the feed"):
+        catch_up(make_feed(seen_ids=''), make_posts(2), 't3_99')
+
+
+def test_a_refused_send_is_not_marked_announced(monkeypatch):
+    # The point of the button is to get the post out; if it didn't go out,
+    # nothing should be recorded as though it had.
+    import discord
+
+    class RefusingChannel(FakeChannel):
+        async def send(self, content, allowed_mentions=None):
+            raise discord.Forbidden(
+                type('R', (), {'status': 403, 'reason': 'Forbidden'})(),
+                'no',
+            )
+
+    async def fake_fetch(kind, source, **kwargs):
+        return make_posts(1)
+
+    stored = {}
+
+    async def fake_record(feed_id, **values):
+        stored.update(values)
+
+    monkeypatch.setattr(reddit, 'fetch', fake_fetch)
+    monkeypatch.setattr(database, 'record_reddit_read', fake_record)
+    bot = FakeBot(FakeGuild(RefusingChannel()))
+    with pytest.raises(ValueError):
+        asyncio.run(redditfeed.announce_post(bot, make_feed(seen_ids=''), 't3_1'))
+    assert stored == {}

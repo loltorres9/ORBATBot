@@ -1,0 +1,64 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · {{ label }}{% endblock %}
+
+{% block content %}
+<p class="crumbs">
+  <a href="/g/{{ guild.id }}">{{ guild.name }}</a> ›
+  <a href="/g/{{ guild.id }}/reddit">Reddit</a> ›
+  <a href="/g/{{ guild.id }}/reddit/{{ feed.id }}">{{ label }}</a> › Recent posts
+</p>
+
+<h1>Recent posts from {{ label }}</h1>
+<p class="hint">
+  Everything the feed still lists, and whether it has been announced. Use
+  <strong>Announce</strong> to catch one up — if the bot was down when it went
+  up, if Discord refused that one message, or if you simply want it in the
+  channel again. Posts older than what the feed carries can't be reached.
+</p>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if posts %}
+  <table class="rolelist">
+    <tbody>
+      {% for post in posts %}
+        <tr>
+          <td>
+            <strong>
+              <a href="{{ post.url }}" target="_blank" rel="noopener">{{ post.title }}</a>
+            </strong>
+            {% if post.announced %}
+              <span class="chip">announced</span>
+            {% endif %}
+            <div class="muted">
+              {% if post.published %}{{ relative(post.published) }}{% endif %}
+              {% if post.subreddit %} · r/{{ post.subreddit }}{% endif %}
+            </div>
+            <details>
+              <summary class="muted">What would be posted</summary>
+              <div class="embedpreview">
+                <p class="epcontent">{{ post.message }}</p>
+              </div>
+            </details>
+          </td>
+          <td class="rowactions">
+            <form method="post" action="/g/{{ guild.id }}/reddit/{{ feed.id }}/announce">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="post_id" value="{{ post.id }}">
+              <button class="button" type="submit">
+                {{ 'Announce again' if post.announced else 'Announce' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% elif not error %}
+  <p class="empty">{{ label }} has no posts on its feed.</p>
+{% endif %}
+
+<div class="actions">
+  <a class="button" href="/g/{{ guild.id }}/reddit/{{ feed.id }}">Back to the watch</a>
+</div>
+{% endblock %}

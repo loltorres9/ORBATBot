@@ -823,6 +823,8 @@ Asking people to **read and comment** is fine, and comments and real discussion 
 
 1. Open the web UI, pick your server, go to **📣 Reddit** and press **+ Watch a feed**.
 2. Choose **Reddit user** or **Subreddit** and give the name. The bare name (`TaskForcePhalanx`), the `u/` or `r/` form, or the page URL pasted straight from the address bar all work.
+
+   > A **Reddit user** watch covers *everything that account submits*, in any subreddit — plus anything it posts to its own profile page. It is not limited to one community. A **Subreddit** watch is the other way round: every new post in that subreddit, whoever writes it.
 3. Pick the channel to announce in.
 4. Write the message. Four placeholders are filled in for you:
 
@@ -831,7 +833,7 @@ Asking people to **read and comment** is fine, and comments and real discussion 
    | `{title}` | The post's title |
    | `{url}` | A link to the post |
    | `{author}` | The Reddit account that posted it |
-   | `{subreddit}` | The subreddit it was posted in |
+   | `{subreddit}` | The subreddit it was posted in — for a post made on the author's own profile, that is `u_TheirName`, which is where such posts actually live |
 
    Leave it empty and the default is used. Discord unfurls the link on its own, so the title and thumbnail appear underneath the message without you doing anything.
 5. Tick the **roles** to ping, and list any **people** by user ID (right-click a member → *Copy User ID*, with Developer Mode on — there is no dropdown, because the bot cannot list your members without the privileged members intent).
@@ -839,10 +841,17 @@ Asking people to **read and comment** is fine, and comments and real discussion 
 
 The first check after that notes down what is already on the feed and announces **nothing** — otherwise switching a watch on would post the author's last 25 submissions at once. From then on, every new post is announced, within about five minutes of going up.
 
-### The two buttons
+### The buttons
 
 - **Preview newest post** — shows the newest post rendered exactly as it would be announced, using whatever is currently in the form. It posts nothing and marks nothing as seen, so press it as often as you like while working on the text.
 - **Check now** — runs the scheduled check immediately. This one *does* announce anything it hasn't announced before.
+- **Recent posts** — lists everything the feed still carries, saying which have already been announced, with an **Announce** button on each.
+
+### Catching a post up
+
+If a post never made it into the channel — the bot was down when it went up, Discord refused that one message, or you only set the watch up afterwards — open **Recent posts** and press **Announce** on it. It goes out exactly as the scheduled check would have posted it, pings included, and is then marked as announced so the next check doesn't repeat it. Each row can be expanded to see the message first.
+
+The one limit is that only what the feed still lists can be caught up: Reddit's feed carries roughly the last 25 submissions, and anything older than that is out of reach.
 
 ### Good to know
 

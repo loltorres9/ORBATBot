@@ -93,12 +93,11 @@ def _seen_list(feed) -> list:
     return [part for part in feed['seen_ids'].split(',') if part]
 
 
-async def check_feed(bot: commands.Bot, feed) -> dict:
-    """Read one watch and post what is new. Returns what happened.
+def _target(bot: commands.Bot, feed):
+    """The channel this watch announces in.
 
-    Raises `reddit.FeedError` when the feed itself couldn't be read, and
-    `ValueError` when the watch has nowhere to post. Both carry a message meant
-    for a person; the loop prints them, the web page flashes them.
+    Raises `ValueError` for each of the ways it can be missing, because each of
+    them is a different thing for the admin to go and fix.
     """
     guild = bot.get_guild(int(feed['guild_id']))
     if guild is None:
@@ -111,6 +110,17 @@ async def check_feed(bot: commands.Bot, feed) -> dict:
         raise ValueError("The channel this watch posts in is gone — pick another one.")
     if not channel.permissions_for(guild.me).send_messages:
         raise ValueError(f"I'm not allowed to post in #{channel.name}.")
+    return channel
+
+
+async def check_feed(bot: commands.Bot, feed) -> dict:
+    """Read one watch and post what is new. Returns what happened.
+
+    Raises `reddit.FeedError` when the feed itself couldn't be read, and
+    `ValueError` when the watch has nowhere to post. Both carry a message meant
+    for a person; the loop prints them, the web page flashes them.
+    """
+    channel = _target(bot, feed)
 
     try:
         posts = await reddit.fetch(feed['kind'], feed['source'])
@@ -181,6 +191,56 @@ async def check_feed(bot: commands.Bot, feed) -> dict:
         'error': error,
         'newest': posts[0] if posts else None,
     }
+
+
+async def announce_post(bot: commands.Bot, feed, post_id: str) -> dict:
+    """Announce one post by hand, whether or not it has been announced before.
+
+    The catch-up for a post that never made it out: the bot was down when it was
+    published, Discord refused that one message (which `check_feed()` marks as
+    announced on purpose, so one bad post can't wedge the watch for ever), or an
+    admin simply wants it in the channel again.
+
+    It goes out whatever the watch's cooldown says, for the same reason **Check
+    now** does: a person pressing a button may try where the loop may not.
+    """
+    channel = _target(bot, feed)
+
+    posts = await reddit.fetch(feed['kind'], feed['source'])
+    post = next((p for p in posts if p['id'] == post_id), None)
+    if post is None:
+        raise ValueError(
+            "That post isn't on the feed any more, so there is nothing to read "
+            "it from — only what the feed still lists can be caught up."
+        )
+
+    try:
+        await channel.send(
+            build_message(feed, post), allowed_mentions=allowed_mentions(feed)
+        )
+    except discord.Forbidden as e:
+        raise ValueError(f"I couldn't post in #{channel.name}: {e.text or e}")
+    except discord.HTTPException as e:
+        raise ValueError(f"Discord rejected the message: {e}")
+
+    seen = _seen_list(feed)
+    if seen is None:
+        # The watch has never been read. Everything else on the feed is marked
+        # seen along with this one, exactly as a first read would: catching a
+        # single post up must not turn into announcing the other twenty-four.
+        seen = [p['id'] for p in posts]
+    # Marked seen either way, so the next scheduled check doesn't announce it a
+    # second time. It goes to the front, so a post caught up by hand is the last
+    # to fall out of the remembered window.
+    seen = [post_id] + [i for i in seen if i != post_id]
+
+    newest = next((p['published'] for p in posts if p['published']), None)
+    await database.record_reddit_read(
+        feed['id'],
+        seen_ids=','.join(seen[:MAX_SEEN]),
+        last_post_at=newest.replace(tzinfo=None) if newest else None,
+    )
+    return post
 
 
 class RedditFeedCog(commands.Cog):

@@ -1228,6 +1228,43 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             return redirect(request, f"/g/{guild_id}/reddit", 'warn', str(e))
         return redirect(request, f"/g/{guild_id}/reddit", 'ok', note)
 
+    @app.get('/g/{guild_id}/reddit/{feed_id}/posts', response_class=HTMLResponse)
+    async def reddit_feed_posts(request: Request, guild_id: str, feed_id: int):
+        """The feed's recent posts, each with an Announce button.
+
+        Its own page rather than a panel on the watch form, because opening it
+        reads the feed — the form has to open without touching Reddit, not
+        least when Reddit is refusing us.
+        """
+        context = await feed_context(request, guild_id, feed_id)
+        feed = context['feed']
+        try:
+            posts = await reddit_service.recent(feed)
+            error = None
+        except (ValueError, reddit_lib.FeedError) as e:
+            posts, error = [], str(e)
+        return render(request, 'reddit_posts.html', {
+            **context,
+            'label': reddit_lib.kind_prefix(feed['kind']) + feed['source'],
+            'posts': posts,
+            'error': error,
+        })
+
+    @app.post('/g/{guild_id}/reddit/{feed_id}/announce')
+    async def announce_reddit_post(request: Request, guild_id: str, feed_id: int):
+        context = await feed_context(request, guild_id, feed_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            note = await reddit_service.catch_up(
+                bot, context['feed'], form.get('post_id')
+            )
+        except ValueError as e:
+            return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts",
+                            'warn', str(e))
+        return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts", 'ok', note)
+
     @app.post('/g/{guild_id}/reddit/{feed_id}/delete')
     async def delete_reddit_feed(request: Request, guild_id: str, feed_id: int):
         context = await feed_context(request, guild_id, feed_id)
