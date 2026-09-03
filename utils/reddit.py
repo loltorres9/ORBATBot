@@ -177,17 +177,84 @@ def _when(entry):
     return None
 
 
-def parse_feed(xml_text: str) -> list:
+class NotAFeed(FeedError):
+    """Something came back with a 200, but it wasn't a feed.
+
+    Treated like a refusal rather than like a missing feed: the other host is
+    asked too, because a body that isn't the feed is usually about who is
+    asking, not about what was asked for.
+    """
+
+
+# Characters XML 1.0 forbids outright. No valid feed can contain one, so
+# dropping them cannot change a well-formed document — and it rescues the one
+# way a single stray byte in a post title otherwise costs the whole feed.
+_ILLEGAL_BYTES = re.compile(rb'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+_ILLEGAL_TEXT = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+
+
+def _strip_illegal(body):
+    """The body without the characters XML refuses to see. Same type back."""
+    if isinstance(body, bytes):
+        return _ILLEGAL_BYTES.sub(b'', body)
+    return _ILLEGAL_TEXT.sub('', body or '')
+
+
+def _as_text(body) -> str:
+    """The body as text, for looking at rather than for parsing."""
+    if isinstance(body, bytes):
+        return body.decode('utf-8', errors='replace')
+    return body or ''
+
+
+def _fragment(body, position, width: int = 70) -> str:
+    """What the parser choked on, as `repr` so an invisible character shows.
+
+    A parse error's line and column mean nothing to whoever is reading a flash
+    message; the actual characters are the whole diagnosis — mis-decoded text, a
+    control character, or a page that isn't a feed all look completely different
+    here.
+    """
+    try:
+        line_no, column = position
+        line = _as_text(body).splitlines()[line_no - 1]
+    except (IndexError, TypeError, ValueError):
+        return ''
+    start = max(0, column - width // 2)
+    return repr(line[start:start + width])
+
+
+def parse_feed(body) -> list:
     """The feed's entries, newest first — the order Reddit returns them in.
 
-    Each is a plain dict: `id`, `title`, `url`, `author`, `subreddit`,
+    Takes the raw bytes, or text. **Bytes are what `fetch()` passes**: an XML
+    document declares its own encoding, and that declaration is the authority —
+    not the HTTP header, and not a guess made from the bytes, either of which
+    turns one accented character in a post title into a parse error two hundred
+    columns into line 20.
+
+    Each entry is a plain dict: `id`, `title`, `url`, `author`, `subreddit`,
     `published`. An entry without an id or a link is skipped rather than raising:
     one malformed entry must not cost the rest of the feed.
     """
+    if _as_text(body).lstrip()[:200].lower().startswith(('<!doctype html', '<html')):
+        # Reddit serves its "are you a robot" and block pages with a 200, so an
+        # HTML body is a refusal that didn't say so — which is the same thing a
+        # 429 says, and is handled the same way.
+        raise RateLimited(
+            "Reddit answered with a web page instead of the feed, which is how "
+            "it turns a request away without saying so."
+        )
+
+    body = _strip_illegal(body)
     try:
-        root = ElementTree.fromstring(xml_text)
+        root = ElementTree.fromstring(body)
     except ElementTree.ParseError as e:
-        raise FeedError(f"That didn't come back as a feed ({e}).")
+        where = _fragment(body, getattr(e, 'position', None))
+        raise NotAFeed(
+            f"That didn't come back as a feed ({e})."
+            + (f" It reads {where} there." if where else '')
+        )
 
     posts = []
     for entry in root.findall(f"{_ATOM}entry"):
@@ -245,7 +312,7 @@ async def _read(session, url: str, headers: dict, kind: str, source: str) -> str
             )
         if response.status != 200:
             raise FeedError(f"Reddit answered {response.status}.")
-        return await response.text()
+        return await response.read()
 
 
 def _retry_after(header) -> int:
@@ -296,9 +363,14 @@ async def fetch(kind: str, source: str, *, timeout: int = 15) -> list:
                 # silence.
                 if limited is None or e.retry_after > limited.retry_after:
                     limited = e
+            except NotAFeed as e:
+                # A body that isn't the feed is about who is asking rather than
+                # about what was asked for, so the other host is worth trying —
+                # but it is not a refusal, so it doesn't stand the watch down.
+                last = e
             except FeedError:
                 # A 404 or a 403 is about the feed itself and says the same
-                # thing from either host; only a refusal aimed at *us* is worth
+                # thing from either host; only something aimed at *us* is worth
                 # asking the other one about.
                 raise
             except aiohttp.ClientError as e:

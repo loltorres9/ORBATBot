@@ -857,7 +857,7 @@ The one limit is that only what the feed still lists can be caught up: Reddit's 
 
 - **Pings are limited to what you ticked.** A post title containing `@everyone` cannot ping your server: the announcement quotes Reddit, so only the roles and people on the watch are allowed to be mentioned.
 - **A burst is spread out.** At most three posts are announced per check; the rest follow on the next one. Nothing is skipped.
-- **Errors are visible.** A misspelled name, a private or suspended account, a channel the bot lost access to — the reason for the last failed check is shown next to the watch on the list.
+- **Errors are visible.** A misspelled name, a private or suspended account, a channel the bot lost access to — the reason for the last failed check is shown next to the watch on the list. If Reddit ever answers with something that isn't a feed, the message quotes the part it choked on, so the cause is visible rather than only its line number.
 - **Repointing a watch resets it.** Change which user or subreddit it follows and it starts fresh from that feed's current posts, rather than announcing its back catalogue.
 - **A watch with no channel is simply idle** — untick *Check this feed* to park one without losing its text.
 - **Persistent `429`s are a hosting problem, not a settings problem** — see above. If a watch is refused from both hosts every single time, the public feed is not usable from that server's address, and the way through is Reddit's OAuth API with a registered script app rather than any change to how often it checks.
