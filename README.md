@@ -98,6 +98,16 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 - Unit roles and `Unit Leader` can never become game roles, so nobody self-assigns approval rights
 - Drop a role by unticking it, or via the **➖ Remove a role** button for a list of only what you have
 
+### 📣 Reddit announcements
+
+Watch a Reddit user or a subreddit and announce every new post in a Discord channel, in your own words, pinging the roles and people you choose. Set up entirely in the [web interface](#reddit-announcements) — there is no slash command, and no Reddit API registration either. Full detail in [Reddit announcements](#reddit-announcements).
+
+- Watches a **user's posts** (`u/TaskForcePhalanx`) or a **subreddit's** new posts (`r/arma`)
+- Your own message text, with `{title}`, `{url}`, `{author}` and `{subreddit}` filled in
+- Pings any roles you tick, plus any members you list
+- Checked every 5 minutes; the first check notes what is already there so switching a watch on never dumps old posts into the channel
+- **Announcements only** — the bot will not ask anyone to upvote, because [organised voting gets accounts banned](#a-word-on-upvotes)
+
 ### ⚙️ Server & Maintenance
 
 | Command | Who | What |
@@ -121,7 +131,7 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 
 ## Role-Based Access
 
-Grouped by the same four feature areas as [Features](#features) above, so the two sections line up.
+Grouped by the same feature areas as [Features](#features) above, so the two sections line up.
 
 ### 🗺️ ORBAT & Slots
 
@@ -148,6 +158,12 @@ Editing and cancelling go by **who created the event**, not by rank — one Unit
 |---|---|---|---|
 | `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
+
+### 📣 Reddit announcements
+
+| Action | Members | Unit Leaders | Admins |
+|---|---|---|---|
+| Add, edit or remove a watch — web only | ❌ | ❌ | ✅ |
 
 ### ⚙️ Server & Maintenance
 
@@ -248,6 +264,8 @@ GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
 > `DATABASE_URL` is constructed automatically by docker-compose from `DB_PASSWORD`. On Railway it is injected automatically — you do not set it manually in either case. The only time you fill it in yourself is [running the bot outside Docker](#local-development), which is why `.env.example` carries a commented example of it.
 
 The optional [web interface](#web-ui) adds `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `WEB_SECRET_KEY` and `WEB_BASE_URL`. Leave them empty and the bot behaves exactly as before — no web server is started at all.
+
+`REDDIT_USER_AGENT` is optional and only matters if you use [Reddit announcements](#reddit-announcements): it is how the bot identifies itself when it reads a feed, and Reddit throttles clients that don't. Something like `orbatbot/1.0 (by /u/YourRedditName)` is ideal.
 
 ---
 
@@ -782,6 +800,55 @@ No privileged intents are needed for this feature.
 
 ---
 
+## Reddit announcements
+
+Watch a Reddit account or a subreddit, and every time something new is posted, the bot announces it in a Discord channel — with your wording and your pings. It is set up in the [web interface](#web-ui) under **📣 Reddit**, admin only.
+
+**No Reddit account, API key or app registration is needed.** Every user and every subreddit has a public RSS feed, and that is all the bot reads. The one thing worth setting is `REDDIT_USER_AGENT`, so Reddit can see who is asking — clients that don't say get throttled.
+
+### A word on upvotes
+
+The bot **announces** posts. It will not ask anyone to upvote them, and there is deliberately no wording for that anywhere in it.
+
+Asking a Discord server to go and upvote a post is *vote manipulation* under [Reddit's content policy](https://support.reddithelp.com/hc/en-us/articles/360043066412), and it is one of the few things Reddit enforces hard — not only against the account that posted, but against the accounts that keep answering the call. It is easy to spot: the same handful of accounts voting within minutes of the same author posting is exactly what shows up in the voting timeline, however the Discord message is worded.
+
+Asking people to **read and comment** is fine, and comments and real discussion weigh more in Reddit's own ranking than a few early votes do. That is what the suggested templates say.
+
+### Setting one up
+
+1. Open the web UI, pick your server, go to **📣 Reddit** and press **+ Watch a feed**.
+2. Choose **Reddit user** or **Subreddit** and give the name. The bare name (`TaskForcePhalanx`), the `u/` or `r/` form, or the page URL pasted straight from the address bar all work.
+3. Pick the channel to announce in.
+4. Write the message. Four placeholders are filled in for you:
+
+   | Placeholder | Becomes |
+   |---|---|
+   | `{title}` | The post's title |
+   | `{url}` | A link to the post |
+   | `{author}` | The Reddit account that posted it |
+   | `{subreddit}` | The subreddit it was posted in |
+
+   Leave it empty and the default is used. Discord unfurls the link on its own, so the title and thumbnail appear underneath the message without you doing anything.
+5. Tick the **roles** to ping, and list any **people** by user ID (right-click a member → *Copy User ID*, with Developer Mode on — there is no dropdown, because the bot cannot list your members without the privileged members intent).
+6. Save.
+
+The first check after that notes down what is already on the feed and announces **nothing** — otherwise switching a watch on would post the author's last 25 submissions at once. From then on, every new post is announced, within about five minutes of going up.
+
+### The two buttons
+
+- **Preview newest post** — shows the newest post rendered exactly as it would be announced, using whatever is currently in the form. It posts nothing and marks nothing as seen, so press it as often as you like while working on the text.
+- **Check now** — runs the scheduled check immediately. This one *does* announce anything it hasn't announced before.
+
+### Good to know
+
+- **Pings are limited to what you ticked.** A post title containing `@everyone` cannot ping your server: the announcement quotes Reddit, so only the roles and people on the watch are allowed to be mentioned.
+- **A burst is spread out.** At most three posts are announced per check; the rest follow on the next one. Nothing is skipped.
+- **Errors are visible.** A misspelled name, a private or suspended account, a channel the bot lost access to — the reason for the last failed check is shown next to the watch on the list.
+- **Repointing a watch resets it.** Change which user or subreddit it follows and it starts fresh from that feed's current posts, rather than announcing its back catalogue.
+- **A watch with no channel is simply idle** — untick *Check this feed* to park one without losing its text.
+
+---
+
 ## Web UI
 
 An optional browser interface for most of what the bot does — events, the slot roster and its approvals, game roles, embeds and the logs — without touching a slash command. You sign in with your Discord account, and everything you do goes through the same code as the slash commands, so it produces the same messages, in the same channels, with the same buttons.
@@ -807,6 +874,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
 | Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
+| Reddit | Watch a Reddit user or subreddit and announce new posts, with your own text and pings |
 | Voice time | Leaderboard of time spent in voice channels; admins configure what counts |
 
 Who may do what is **read live from your Discord roles**, not from the login:
@@ -814,7 +882,7 @@ Who may do what is **read live from your Discord roles**, not from the login:
 - **Any member of the server** — view events, RSVP, pick their own game roles, see the voice leaderboard
 - **Unit Leader or Manage Server** — create events; approve and deny slot requests (Unit Leaders for their own unit only)
 - **The organiser, or an admin** — edit, cancel and delete that event
-- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, build ORBATs, configure the member log and voice tracking
+- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, build ORBATs, watch Reddit feeds, configure the member log and voice tracking
 
 That is the same rule set the slash commands use; it is literally the same code. Roles are cached for a minute, so if you have just been given a role, the **“Changed your roles on Discord? Re-read them”** link at the bottom of the event list picks it up immediately.
 

@@ -53,6 +53,7 @@ def build(guild_id, *, is_admin: bool, may_action_slots: bool) -> dict:
     if is_admin:
         groups.append(_item('embeds', '📝 Embeds', f"{base}/embeds"))
         groups.append(_item('logs', '📋 Member log', f"{base}/logs"))
+        groups.append(_item('reddit', '📣 Reddit', f"{base}/reddit"))
 
     items = {'ops': operations}
     group_of = {

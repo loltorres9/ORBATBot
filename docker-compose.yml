@@ -22,6 +22,8 @@ services:
       - WEB_PORT=8080
       # Lets /restart go through the Railway API; harmless and unused elsewhere.
       - RAILWAY_API_TOKEN=${RAILWAY_API_TOKEN:-}
+      # How the bot identifies itself to Reddit when reading a watched feed.
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-}
     # The site is only reachable once the three variables above are set.
     ports:
       - "${WEB_PORT:-8080}:8080"

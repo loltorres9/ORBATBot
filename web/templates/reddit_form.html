@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · {{ 'Watch a feed' if mode == 'create' else values.source }}{% endblock %}
+
+{% set selected_roles = values.get('mention_ids') or [] %}
+
+{% block content %}
+<p class="crumbs">
+  <a href="/g/{{ guild.id }}">{{ guild.name }}</a> ›
+  <a href="/g/{{ guild.id }}/reddit">Reddit</a> ›
+  {{ 'New watch' if mode == 'create' else 'Edit' }}
+</p>
+
+<h1>{{ 'Watch a Reddit feed' if mode == 'create' else 'Edit watch' }}</h1>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if preview %}
+  <h2>Newest post, as it would be announced</h2>
+  <p class="hint">
+    Nothing was posted and nothing was marked as seen — this is only what the
+    message would look like.
+  </p>
+  <div class="embedpreview">
+    <p class="epcontent">{{ preview.message }}</p>
+    <div class="epfooter">{{ preview.post.url }}</div>
+  </div>
+{% endif %}
+
+<form class="form" method="post"
+      action="{{ '/g/%s/reddit/new' % guild.id if mode == 'create' else '/g/%s/reddit/%s' % (guild.id, feed.id) }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <div class="row">
+    <label class="field">
+      <span>Watch</span>
+      <select name="kind">
+        {% for key, label, prefix in kinds %}
+          <option value="{{ key }}" {% if values.get('kind') == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Name</span>
+      <input name="source" required maxlength="120" value="{{ values.get('source') or '' }}"
+             placeholder="TaskForcePhalanx">
+    </label>
+  </div>
+  <p class="hint">
+    The name on its own, the <code>u/</code> or <code>r/</code> form, or the page's
+    URL pasted in — all four work. Only public feeds can be read; a private or
+    suspended one says so on the next check.
+  </p>
+
+  <label class="field">
+    <span>Announce in</span>
+    <select name="channel_id">
+      <option value="">— nowhere yet —</option>
+      {% for channel in channels %}
+        <option value="{{ channel.id }}"
+          {% if values.get('channel_id') and values.get('channel_id')|string == channel.id|string %}selected{% endif %}>#{{ channel.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="check">
+    <input type="checkbox" name="enabled" value="1" {% if values.get('enabled') %}checked{% endif %}>
+    <span>Check this feed and announce new posts</span>
+  </label>
+
+  <h3>The message</h3>
+  <label class="field">
+    <span>Text</span>
+    <textarea name="template" rows="4"
+              placeholder="{{ default_template }}">{{ values.get('template') or '' }}</textarea>
+  </label>
+  <p class="hint">
+    Placeholders: {% for name in placeholders %}<code>{{ '{' ~ name ~ '}' }}</code>{% if not loop.last %} · {% endif %}{% endfor %}.
+    Left empty, the default is used. Discord unfurls the link on its own, so the
+    post's title and thumbnail show up underneath.
+  </p>
+  <p class="hint">
+    Say a post is up — <em>have a read</em>, <em>join the discussion</em>. Don't
+    ask for upvotes: coordinating votes off Reddit is vote manipulation, and it
+    is the accounts that answer the call, not only the poster, that get banned
+    for it. Comments are allowed and weigh more in Reddit's ranking anyway.
+  </p>
+  <details>
+    <summary class="muted">Examples</summary>
+    <ul class="hint">
+      {% for label, text in examples %}
+        <li><strong>{{ label }}</strong><br><code>{{ text.replace('\n', ' ⏎ ') }}</code></li>
+      {% endfor %}
+    </ul>
+  </details>
+
+  <fieldset class="field">
+    <legend>Ping roles</legend>
+    <div class="checkgrid">
+      {% for role in roles %}
+        <label class="check">
+          <input type="checkbox" name="mention_ids" value="{{ role.id }}"
+                 {% if role.id|string in selected_roles %}checked{% endif %}>
+          <span>{{ role.name }}</span>
+        </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <label class="field">
+    <span>Ping people</span>
+    <input name="mention_users" maxlength="400" value="{{ values.get('mention_users') or '' }}"
+           placeholder="123456789012345678 987654321098765432">
+  </label>
+  <p class="hint">
+    User IDs, separated by spaces — right-click a member in Discord and
+    <em>Copy User ID</em> (Developer Mode). There is no dropdown here because the
+    bot can't list a server's members without the privileged members intent.
+  </p>
+
+  <div class="actions">
+    <button class="button primary" type="submit">{{ 'Add watch' if mode == 'create' else 'Save' }}</button>
+    {% if mode == 'edit' %}
+      <button class="button" type="submit"
+              formaction="/g/{{ guild.id }}/reddit/{{ feed.id }}/preview">Preview newest post</button>
+    {% endif %}
+    <a class="button" href="/g/{{ guild.id }}/reddit">Cancel</a>
+  </div>
+</form>
+
+{% if mode == 'edit' %}
+  <div class="managebar">
+    <form class="inlineform" method="post" action="/g/{{ guild.id }}/reddit/{{ feed.id }}/check">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button" type="submit">Check now</button>
+    </form>
+    <form class="inlineform" method="post" action="/g/{{ guild.id }}/reddit/{{ feed.id }}/delete"
+          onsubmit="return confirm('Stop watching this feed?')">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button danger" type="submit">Stop watching</button>
+    </form>
+  </div>
+  <p class="hint">
+    <strong>Check now</strong> does exactly what the scheduled check does, posting
+    anything it hasn't posted before. <strong>Preview</strong> posts nothing.
+    {% if feed.seen_ids is none %}
+      This watch hasn't been read yet: the first check notes what is already there
+      and announces only what comes after it.
+    {% endif %}
+  </p>
+{% endif %}
+{% endblock %}
