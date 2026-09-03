@@ -331,6 +331,38 @@ async def init_db():
             await db.execute(
                 f'ALTER TABLE voice_settings ADD COLUMN IF NOT EXISTS {column} {definition}'
             )
+        # Reddit feeds watched for new posts. One row is one watch: where it
+        # points, which channel it announces in, and the text it announces with.
+        # `seen_ids` being NULL is what tells the first read apart from every
+        # later one — a fresh watch records what is already there and announces
+        # nothing, instead of dumping the author's last 25 posts into a channel.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS reddit_feeds (
+                id SERIAL PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'user',
+                source TEXT NOT NULL,
+                channel_id TEXT,
+                template TEXT,
+                mention_role_id TEXT,
+                mention_user_id TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                seen_ids TEXT,
+                last_checked_at TIMESTAMP,
+                last_post_at TIMESTAMP,
+                last_error TEXT,
+                created_by TEXT,
+                created_by_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # One watch per source per guild: two rows for the same author would
+        # announce every post twice, which reads as the bot being broken.
+        await db.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reddit_feed_source
+                ON reddit_feeds (guild_id, kind, lower(source))
+        ''')
         # Recurrence, added after the events tables shipped
         await db.execute('''
             ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence TEXT
@@ -1276,6 +1308,138 @@ async def save_log_settings(guild_id: str, values: dict):
                 ON CONFLICT (guild_id) DO UPDATE SET
                     {updates}, updated_at = CURRENT_TIMESTAMP''',
             guild_id, *[values[name] for name in columns],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Reddit feeds
+#
+# `seen_ids` is a comma-separated list of the post ids already announced, newest
+# first and capped — a rolling set rather than a high-water timestamp, because a
+# post that is edited moves its timestamp and would otherwise be announced twice.
+# NULL means the watch has never been read: the first read seeds it and
+# announces nothing.
+# ---------------------------------------------------------------------------
+
+_REDDIT_COLUMNS = (
+    'kind', 'source', 'channel_id', 'template', 'mention_role_id',
+    'mention_user_id', 'enabled',
+)
+
+
+async def get_reddit_feeds(guild_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM reddit_feeds WHERE guild_id = $1 ORDER BY kind, lower(source)',
+            guild_id,
+        )
+
+
+async def get_reddit_feed(feed_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow('SELECT * FROM reddit_feeds WHERE id = $1', feed_id)
+
+
+async def get_due_reddit_feeds():
+    """Every watch the polling loop should read — enabled, and with somewhere to
+    post. A watch whose channel was cleared keeps its row and its text, so it can
+    be switched back on later, but nothing is read for it in the meantime."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            '''SELECT * FROM reddit_feeds
+                WHERE enabled = 1 AND channel_id IS NOT NULL
+                ORDER BY id'''
+        )
+
+
+# The unique index turns "this source is already watched here" into a database
+# error, and both writers want to say that in words rather than 500.
+_DUPLICATE_FEED = "That Reddit user or subreddit is already watched on this server."
+
+
+async def create_reddit_feed(guild_id: str, values: dict,
+                             created_by: str = None,
+                             created_by_name: str = None) -> int:
+    columns = [name for name in _REDDIT_COLUMNS if name in values]
+    placeholders = ', '.join(f'${i}' for i in range(4, 4 + len(columns)))
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        try:
+            return await db.fetchval(
+                f'''INSERT INTO reddit_feeds
+                        (guild_id, created_by, created_by_name, {', '.join(columns)})
+                    VALUES ($1, $2, $3, {placeholders})
+                    RETURNING id''',
+                guild_id, created_by, created_by_name,
+                *[values[name] for name in columns],
+            )
+        except asyncpg.UniqueViolationError:
+            raise ValueError(_DUPLICATE_FEED)
+
+
+async def save_reddit_feed(feed_id: int, values: dict):
+    columns = [name for name in _REDDIT_COLUMNS if name in values]
+    if not columns:
+        return
+    assignments = ', '.join(f'{name} = ${i}' for i, name in enumerate(columns, start=2))
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        try:
+            await db.execute(
+                f'''UPDATE reddit_feeds SET {assignments},
+                        updated_at = CURRENT_TIMESTAMP
+                     WHERE id = $1''',
+                feed_id, *[values[name] for name in columns],
+            )
+        except asyncpg.UniqueViolationError:
+            raise ValueError(_DUPLICATE_FEED)
+
+
+async def reset_reddit_feed_seen(feed_id: int):
+    """Forget what this watch has announced.
+
+    Called when it is pointed at a different source: the next read then seeds
+    from that feed's current posts instead of announcing its whole front page.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE reddit_feeds
+                  SET seen_ids = NULL, last_post_at = NULL, last_error = NULL
+                WHERE id = $1''',
+            feed_id,
+        )
+
+
+async def delete_reddit_feed(feed_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute('DELETE FROM reddit_feeds WHERE id = $1', feed_id)
+
+
+async def record_reddit_read(feed_id: int, *, seen_ids: str = None,
+                             last_post_at=None, error: str = None):
+    """What the last read of this watch found.
+
+    `seen_ids` and `last_post_at` are only written when they are given, so a
+    failed read records its error without forgetting what has already been
+    announced.
+    """
+    sets = ["last_checked_at = (NOW() AT TIME ZONE 'UTC')", 'last_error = $2']
+    args = [feed_id, error]
+    if seen_ids is not None:
+        sets.append(f'seen_ids = ${len(args) + 1}')
+        args.append(seen_ids)
+    if last_post_at is not None:
+        sets.append(f'last_post_at = ${len(args) + 1}')
+        args.append(last_post_at)
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            f'UPDATE reddit_feeds SET {", ".join(sets)} WHERE id = $1', *args
         )
 
 

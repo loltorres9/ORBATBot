@@ -36,12 +36,14 @@ cogs/
   memberlog.py          # Join/leave/kick/ban announcements + invite attribution
   voicelog.py           # Time spent in voice channels, counted in intervals
   purge.py              # /purge — bulk message deletion, by count or back to a date
+  redditfeed.py         # Watches a Reddit user or subreddit and announces new posts
 utils/
   database.py           # All PostgreSQL queries (asyncpg)
   sheets.py             # Google Sheets read/write (gspread)
   roster.py             # One normalised slot, from a sheet or from an ORBAT
   orbat.py              # DB-held ORBATs: the text format, the safe edit, the board
   embeds.py             # Builder-made rich messages → discord.Embed, post and edit
+  reddit.py             # One Reddit feed, read and rendered — no Discord, no database
 web/                    # Optional browser UI — Discord OAuth2 login, events, roster, approvals
   config.py             # Env-driven config; the feature is off until it is complete
   server.py             # uvicorn driven from inside the bot's event loop
@@ -54,12 +56,14 @@ web/                    # Optional browser UI — Discord OAuth2 login, events, 
   orbat.py              # ORBAT editor forms, on top of utils/orbat.py
   slots.py              # The approval queue, on top of cogs/slots.py
   operations.py         # Starting and steering an operation, on top of cogs/admin.py
+  reddit.py             # The Reddit watches, on top of cogs/redditfeed.py
   nav.py                # The two-level tab bar, built once rather than per template
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates and one stylesheet — no build step
 lab/                    # Standalone ORBAT-editor playground — no Discord, no Postgres
+tests/                  # pytest — utils/reddit.py, and cogs/redditfeed.check_feed()
 requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
@@ -71,9 +75,11 @@ README.md               # User-facing docs — commands, setup, deployment
 CLAUDE.md               # This file
 ```
 
-There is no CI or linter config, and the only tests are `lab/tests` (47 cases,
-`python -m pytest lab/tests`), which cover `utils/orbat.py`'s parser and diff —
-the two places where a bug silently deletes somebody's slot. The date logic in
+There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
+(69 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+places where a bug silently deletes somebody's slot — and `tests/` covers
+`utils/reddit.py`'s feed parsing and templating, plus what `check_feed()`
+promises about announcing a post exactly once. The date logic in
 `cogs/events.py` (`_next_occurrence()`, `_weekday_day()`, `_add_months()`,
 `_nth_occurrence()`) is pure and Discord-free, so it is the obvious next thing
 to cover.
@@ -95,6 +101,7 @@ to cover.
 | `WEB_HOST` / `WEB_PORT` | **Optional.** Listen address. `PORT` (injected by Railway) wins over `WEB_PORT` |
 | `WEB_ENABLED` | **Optional.** `0` keeps the site off even when everything else is set |
 | `WEB_BRAND` | **Optional.** Site name in the header, tab title and footer. Defaults to `TFP BOT` |
+| `REDDIT_USER_AGENT` | **Optional.** How the bot identifies itself to Reddit when reading a watched feed. Reddit answers 429 to a client that doesn't say who it is, so a descriptive value naming your own Reddit account is best; empty falls back to `utils/reddit.DEFAULT_USER_AGENT`. There is nothing else to configure — the feeds are public RSS, so no API registration, OAuth or client secret is involved |
 | `MEMBER_EVENTS` | **Optional.** `1` requests the privileged members intent, which `cogs/memberlog.py` needs for joins and leaves. **Only set it once "Server Members Intent" is ticked in the Developer Portal** — requesting an ungranted privileged intent makes login fail, taking the whole bot down. Bans and unbans need no intent |
 
 Railway injects these at runtime; nothing sets them manually. `_railway_restart()` reads them to find the deployment to restart:
@@ -216,6 +223,30 @@ command — as against `orbat_squads.radio`, which is one squad's internal chann
 
 **Nothing hangs off a net**, so unlike the squads and slots a save replaces the
 list wholesale — there is no identity for an edit to lose.
+
+### `reddit_feeds`
+One row is one watch — see [Reddit announcements](#reddit-announcements-utilsredditpy--cogsredditfeedpy--webredditpy).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `guild_id` | TEXT | |
+| `kind` | TEXT | `user` or `subreddit` |
+| `source` | TEXT | The name, without the `u/` or `r/` |
+| `channel_id` | TEXT | Where posts are announced. NULL = the watch has nowhere to post, so it is skipped |
+| `template` | TEXT | The announcement text. NULL = `reddit.DEFAULT_TEMPLATE` |
+| `mention_role_id` | TEXT | **Comma-separated** role ids, the same convention as `events` |
+| `mention_user_id` | TEXT | Comma-separated user ids — the "tag these people" half |
+| `enabled` | INTEGER | 0/1 |
+| `seen_ids` | TEXT | The post ids already announced, newest first, capped at `MAX_SEEN`. **NULL means the watch has never been read**, which is what makes the first read seed instead of announcing 25 old posts |
+| `last_checked_at` / `last_post_at` | TIMESTAMP | Naive UTC |
+| `last_error` | TEXT | What the last read went wrong with, shown on the list page. NULL after a clean read |
+| `created_by` / `created_by_name` | TEXT | |
+| `created_at` / `updated_at` | TIMESTAMP | |
+
+`UNIQUE (guild_id, kind, lower(source))` — two rows for the same author would
+announce every post twice, which reads as the bot being broken. Both writers turn
+the violation into a `ValueError`, so it is a message rather than a 500.
 
 ### `guild_settings`
 | Column | Type | Notes |
@@ -427,6 +458,7 @@ needs one of these three channels must go through it**; a fresh
 | `/clear-requests`, `/post-orbat`, `/set-event-time`, `/set-timezone`, `/post-event` — all on the web's **Operation** tab | ❌ | ❌ | ✅ |
 | `/setup-slots`, `/current-operation`, `/debug-slots` — likewise | ❌ | ❌ | ✅ |
 | Choosing the ORBAT / approvals / archive channels — web only | ❌ | ❌ | ✅ |
+| Watching a Reddit feed — web only | ❌ | ❌ | ✅ |
 | `/sync`, `/restart`, `/archive-old-approvals` — Discord only, bot maintenance rather than slot work | ❌ | ❌ | ✅ |
 | `/purge` | ❌ | ❌ | ✅ — anyone with **Manage Messages** in that channel |
 | `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
@@ -858,8 +890,8 @@ On fire: sets `reminder_fired = 1`, DMs all approved members, posts mention in `
    intervals left open by a crash are closed at their last heartbeat before
    anything new is recorded
 2. Load `cogs.slots`, `cogs.admin`, `cogs.gameroles`, `cogs.events`, `cogs.voicelog`,
-   `cogs.memberlog` and `cogs.purge`. Each is wrapped in its own `try`, so one cog
-   failing to import doesn't take the others down
+   `cogs.memberlog`, `cogs.purge` and `cogs.redditfeed`. Each is wrapped in its own
+   `try`, so one cog failing to import doesn't take the others down
 3. Re-register persistent views:
    - `OrbatRequestButton` and `GameRolePanelView` — one global instance each
    - one `ApprovalView` per `pending` request
@@ -1037,6 +1069,7 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Add / remove game roles, post the panel | admin | `default_permissions(manage_guild=True)` on the cog's commands |
 | Build and post embeds, configure the member log and voice tracking | admin | `is_admin()` — `manage_guild` or `administrator` |
 | Build and edit ORBATs | admin | `is_admin()` |
+| Watch a Reddit feed | admin | `is_admin()` |
 | Start an operation, move its time, post the board or the announcement, empty the queue, choose the channels, set the timezone | admin | `is_admin()` |
 | Assign somebody to a slot outright | Unit Leader (own unit, and must have one) or admin | `check_can_assign()` |
 | Approve, deny or release slot requests | Unit Leader (own unit) or admin | `_can_action_request()` |
@@ -1101,6 +1134,12 @@ GET  /g/{guild}/embeds/{id}             preview, send, delete
 GET  /g/{guild}/embeds/{id}/edit        builder          POST to save
 POST /g/{guild}/embeds/{id}/send        post as a new message
 POST /g/{guild}/embeds/{id}/delete      optionally deletes the Discord message
+GET  /g/{guild}/reddit                  admin — the Reddit watches
+GET  /g/{guild}/reddit/new              add form           POST to create
+GET  /g/{guild}/reddit/{id}             edit form          POST to save
+POST /g/{guild}/reddit/{id}/preview     the newest post as it would be announced
+POST /g/{guild}/reddit/{id}/check       the scheduled check, run now
+POST /g/{guild}/reddit/{id}/delete      stop watching
 GET  /g/{guild}/logs                    admin — member log settings, POST to save
 GET  /g/{guild}/voice                   voice leaderboard; admins also get the settings
 POST /g/{guild}/voice                   admin — save the voice settings
@@ -1503,6 +1542,105 @@ the cap rather than eight-and-a-bit: 8 × 3 + 1 is exactly 25.
 - **The editor page steps outside the 900px column** via `.widepage`, because
   the text field and the preview do not fit side by side inside it. It is the
   only page that does.
+
+---
+
+## Reddit announcements (`utils/reddit.py` + `cogs/redditfeed.py` + `web/reddit.py`)
+
+A watch on a Reddit user or a subreddit that announces every new post in a
+channel, with the guild's own wording and whoever it wants pinged. Admin-only,
+one tab on the guild page, and no slash command — the text and the ping list are
+a form, not something to type into a modal.
+
+### It announces. It does not ask for votes.
+
+A Discord message asking people to go and upvote a post is **vote manipulation**
+under Reddit's content policy, and it is one of the few things Reddit acts on
+hard: not only the posting account but the accounts that reliably answer the
+call, because the same group voting minutes after the same author posts is
+exactly what the voting timeline shows. Nothing in the wording avoids that, so
+there is no vote wording anywhere here: not in `DEFAULT_TEMPLATE`, not in
+`TEMPLATE_EXAMPLES`, and the help text under the field says so. Asking people to
+read and comment is fine, and weighs more in Reddit's own ranking anyway.
+
+The post's score is deliberately never read, rendered or referred to — a feature
+that displays it is one step from a feature that asks people to change it.
+
+### No API registration
+
+`utils/reddit.py` reads the public Atom feed — `/user/<name>/submitted.rss` or
+`/r/<name>/new.rss` — which is the same page a browser gets, not the OAuth API
+surface. So there is no client id, no secret and nothing to register. The one
+thing it does need is `REDDIT_USER_AGENT`: Reddit rate-limits a client that
+doesn't identify itself down to nothing.
+
+`utils/reddit.py` imports **nothing but the standard library** — `aiohttp` is
+imported inside `fetch()`, the same trick `utils/sheets.py` plays with its
+credentials — which is what makes the parsing and the templating testable
+(`tests/test_reddit.py`).
+
+Two details in the parsing are load-bearing:
+
+- **`published` beats `updated`.** Editing a post moves `updated` and leaves
+  `published` alone; reading `updated` would make an edit look like a new post.
+- **An entry with no id or no link is skipped, not fatal.** One malformed entry
+  must not cost the rest of the feed.
+
+`render()` substitutes `{title}`, `{url}`, `{author}` and `{subreddit}` with one
+literal replace each rather than `str.format()`: a template is text somebody
+typed, so a stray `{` in it has to be harmless.
+
+### The first read announces nothing
+
+`seen_ids` is NULL until a watch has been read once, and that is the whole
+difference between the first read and every later one: the first records what is
+already on the feed and posts nothing. Without it, switching a watch on would
+dump the author's last 25 posts into the channel.
+
+It is a rolling set of post ids rather than a high-water timestamp for the same
+reason `published` is preferred above — a timestamp moves when a post is edited,
+an id doesn't.
+
+`MAX_PER_CHECK` caps one check at three announcements. Nothing is dropped: the
+ids of the posts that did go out are the only ones marked seen, so the rest
+follow on the next check.
+
+### `check_feed()` is the whole implementation
+
+The polling loop calls it and so does the **Check now** button, exactly as the
+approval buttons and the web queue share `approve_slot_request()`. It takes a
+feed row and the bot, and it knows nothing about interactions or forms; both
+`reddit.FeedError` and `ValueError` carry a message meant for a person, which
+the loop prints and the web page flashes.
+
+Its two send-failure paths differ on purpose:
+
+- **`Forbidden`** leaves the post unannounced. A permission problem is fixable,
+  and the post goes out on the next check once it is.
+- **Any other `HTTPException`** marks the post announced anyway. Retrying a
+  message Discord refuses, every five minutes for ever, would wedge the watch
+  behind one bad post.
+
+**`allowed_mentions` names exactly the roles and people the watch stores.** The
+post title goes into the message verbatim, so a title containing `@everyone`
+would otherwise ping the whole server — the announcement is quoting Reddit, not
+speaking for the admin who set the watch up.
+
+### The page
+
+`/g/{guild}/reddit` lists the watches; the form adds and edits one. Three things
+about it are worth knowing:
+
+- **People are a free-text box of user ids**, for the same reason the assign form
+  on the slot queue takes one: `Intents.default()` cannot list a guild's members,
+  so there is no dropdown to offer. Roles are checkboxes, as everywhere else.
+- **Preview posts nothing and marks nothing as seen**, and renders what is
+  *in the form* rather than what is stored — it is meant to be pressed while
+  working on the text. **Check now** is the opposite: it is the scheduled check,
+  run early, and it does announce.
+- **Pointing a watch at a different source resets `seen_ids`**
+  (`reset_reddit_feed_seen()`), so the new feed is seeded on its next read
+  instead of announcing its history. The page says so.
 
 ---
 

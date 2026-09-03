@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Reddit{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+  <a class="button primary" href="/g/{{ guild.id }}/reddit/new">+ Watch a feed</a>
+</div>
+
+{% with active = 'reddit' %}{% include '_nav.html' %}{% endwith %}
+
+<h2>Reddit posts</h2>
+<p class="hint">
+  Watches a Reddit user or a subreddit and announces every new post in a channel,
+  with your own wording and whoever you want pinged. Checked every
+  {{ poll_minutes }} minutes.
+</p>
+<p class="hint">
+  Announce the post, don't ask for votes on it: organised upvoting is vote
+  manipulation under Reddit's rules, and it gets the poster <em>and</em> everyone
+  who acts on the message banned. Asking people to read and comment is fine, and
+  counts for more in Reddit's own ranking anyway.
+</p>
+
+{% if feeds %}
+  <table class="rolelist">
+    <tbody>
+      {% for row in feeds %}
+        <tr>
+          <td>
+            <strong>
+              <a href="{{ row.url }}" target="_blank" rel="noopener">{{ row.label }}</a>
+            </strong>
+            {% if not row.feed.enabled %}<span class="chip">off</span>{% endif %}
+            {% if row.never_read %}<span class="chip">not read yet</span>{% endif %}
+            <div class="muted">
+              {% if row.channel %}
+                → #{{ row.channel.name }}
+              {% elif row.lost_channel %}
+                → the channel it posted in is gone
+              {% else %}
+                → no channel picked
+              {% endif %}
+              {% if row.roles %} · pings {{ row.roles|join(', ') }}{% endif %}
+              {% if row.people %} · and {{ row.people }} member(s){% endif %}
+            </div>
+            {% if row.feed.last_error %}
+              <div class="muted">⚠️ last check: {{ row.feed.last_error }}</div>
+            {% elif row.feed.last_checked_at %}
+              <div class="muted">last checked {{ relative(row.feed.last_checked_at) }}</div>
+            {% endif %}
+          </td>
+          <td class="rowactions">
+            <form method="post" action="/g/{{ guild.id }}/reddit/{{ row.feed.id }}/check">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <a class="button" href="/g/{{ guild.id }}/reddit/{{ row.feed.id }}">Edit</a>
+              <button class="button" type="submit">Check now</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="empty">
+    Nothing is watched yet.
+    <a href="/g/{{ guild.id }}/reddit/new">Add the first feed.</a>
+  </p>
+{% endif %}
+{% endblock %}

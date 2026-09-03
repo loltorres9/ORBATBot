@@ -13,9 +13,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from cogs.events import _RECURRENCE_LABELS, _recurrence_text
+from cogs.redditfeed import POLL_MINUTES
 from cogs.voicelog import refresh_leaderboard_board as refresh_board
 from utils import database
 from utils import embeds as embedlib
+from utils import reddit as reddit_lib
 from web import (
     auth,
     nav as nav_service,
@@ -23,6 +25,7 @@ from web import (
     invites as invite_service,
     operations as operation_service,
     orbat as orbat_service,
+    reddit as reddit_service,
     roles as roles_service,
     service,
     slots as slots_service,
@@ -1087,6 +1090,155 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         await database.save_invite_labels(str(guild_id), labels, remove)
         return redirect(request, f"/g/{guild_id}/logs", 'ok',
                         f"Saved {len(labels)} invite label(s).")
+
+    # -- reddit feeds -------------------------------------------------------
+
+    async def feed_context(request: Request, guild_id: str, feed_id: int) -> dict:
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        feed = await database.get_reddit_feed(feed_id)
+        if feed is None or feed['guild_id'] != str(context['guild'].id):
+            raise Forbidden("No such Reddit watch on this server.")
+        context['feed'] = feed
+        return context
+
+    def feed_form_values(feed) -> dict:
+        return {
+            'kind': feed['kind'],
+            'source': feed['source'],
+            'channel_id': feed['channel_id'] or '',
+            'template': feed['template'] or '',
+            'mention_ids': (feed['mention_role_id'] or '').split(','),
+            'mention_users': ' '.join(
+                (feed['mention_user_id'] or '').split(',')
+            ).strip(),
+            'enabled': feed['enabled'],
+        }
+
+    def feed_form(request: Request, context: dict, mode: str, values: dict,
+                  error: str = None, preview: dict = None, status: int = 200):
+        return render(request, 'reddit_form.html', {
+            **context,
+            'mode': mode,
+            'values': values,
+            'error': error,
+            'preview': preview,
+            'channels': postable_channels(context['guild']),
+            'roles': mentionable_roles(context['guild']),
+            'kinds': reddit_lib.FEED_KINDS,
+            'placeholders': reddit_lib.PLACEHOLDERS,
+            'examples': reddit_service.TEMPLATE_EXAMPLES,
+            'default_template': reddit_lib.DEFAULT_TEMPLATE,
+        }, status=status)
+
+    @app.get('/g/{guild_id}/reddit', response_class=HTMLResponse)
+    async def reddit_feeds(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        feeds = await database.get_reddit_feeds(str(guild_id))
+        return render(request, 'reddit.html', {
+            **context,
+            'feeds': reddit_service.view_models(context['guild'], feeds),
+            'poll_minutes': POLL_MINUTES,
+        })
+
+    @app.get('/g/{guild_id}/reddit/new', response_class=HTMLResponse)
+    async def new_reddit_feed_form(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        return feed_form(request, context, 'create', {
+            'kind': reddit_lib.DEFAULT_KIND,
+            'source': '',
+            'channel_id': '',
+            'template': reddit_lib.DEFAULT_TEMPLATE,
+            'mention_ids': [],
+            'mention_users': '',
+            'enabled': 1,
+        })
+
+    @app.post('/g/{guild_id}/reddit/new')
+    async def create_reddit_feed(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = form_values(await request.form())
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            feed_id, warnings = await reddit_service.create(
+                context['guild'], context['member'], form
+            )
+        except ValueError as e:
+            return feed_form(request, context, 'create', form, str(e), status=400)
+
+        text = "Watch added. The first check notes what is already there and " \
+               "announces only what comes after it."
+        if warnings:
+            text += ' ' + ' '.join(warnings)
+        return redirect(request, f"/g/{guild_id}/reddit/{feed_id}", 'ok', text)
+
+    @app.get('/g/{guild_id}/reddit/{feed_id}', response_class=HTMLResponse)
+    async def edit_reddit_feed_form(request: Request, guild_id: str, feed_id: int):
+        context = await feed_context(request, guild_id, feed_id)
+        return feed_form(request, context, 'edit', feed_form_values(context['feed']))
+
+    @app.post('/g/{guild_id}/reddit/{feed_id}')
+    async def edit_reddit_feed(request: Request, guild_id: str, feed_id: int):
+        context = await feed_context(request, guild_id, feed_id)
+        form = form_values(await request.form())
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            warnings = await reddit_service.save(context['guild'], context['feed'], form)
+        except ValueError as e:
+            return feed_form(request, context, 'edit', form, str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/reddit", 'ok',
+                        ' '.join(['Watch saved.'] + warnings))
+
+    @app.post('/g/{guild_id}/reddit/{feed_id}/preview', response_class=HTMLResponse)
+    async def preview_reddit_feed(request: Request, guild_id: str, feed_id: int):
+        """Show the newest post as this watch would announce it.
+
+        Rendered in place rather than flashed, and it posts nothing and marks
+        nothing as seen — it is meant to be pressed while working on the text.
+        """
+        context = await feed_context(request, guild_id, feed_id)
+        form = form_values(await request.form())
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        # Previewed against what is in the form, not what is stored, so an
+        # unsaved edit is what you see.
+        try:
+            values, _ = await reddit_service.read_form(context['guild'], form)
+            preview = await reddit_service.preview(
+                {**dict(context['feed']), **values}
+            )
+        except (ValueError, reddit_lib.FeedError) as e:
+            return feed_form(request, context, 'edit', form, str(e), status=400)
+        return feed_form(request, context, 'edit', form, preview=preview)
+
+    @app.post('/g/{guild_id}/reddit/{feed_id}/check')
+    async def check_reddit_feed(request: Request, guild_id: str, feed_id: int):
+        context = await feed_context(request, guild_id, feed_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            note = await reddit_service.check_now(bot, context['feed'])
+        except ValueError as e:
+            return redirect(request, f"/g/{guild_id}/reddit", 'warn', str(e))
+        return redirect(request, f"/g/{guild_id}/reddit", 'ok', note)
+
+    @app.post('/g/{guild_id}/reddit/{feed_id}/delete')
+    async def delete_reddit_feed(request: Request, guild_id: str, feed_id: int):
+        context = await feed_context(request, guild_id, feed_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        await database.delete_reddit_feed(feed_id)
+        label = (reddit_lib.kind_prefix(context['feed']['kind'])
+                 + context['feed']['source'])
+        return redirect(request, f"/g/{guild_id}/reddit", 'ok',
+                        f"Stopped watching {label}.")
 
     @app.post('/g/{guild_id}/refresh')
     async def refresh_permissions(request: Request, guild_id: str):
