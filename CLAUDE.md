@@ -76,10 +76,10 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(69 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(77 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
-`utils/reddit.py`'s feed parsing and templating, plus what `check_feed()`
-promises about announcing a post exactly once. The date logic in
+`utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
+what `check_feed()` promises about announcing a post exactly once. The date logic in
 `cogs/events.py` (`_next_occurrence()`, `_weekday_day()`, `_add_months()`,
 `_nth_occurrence()`) is pure and Discord-free, so it is the obvious next thing
 to cover.
@@ -241,6 +241,7 @@ One row is one watch — see [Reddit announcements](#reddit-announcements-utilsr
 | `seen_ids` | TEXT | The post ids already announced, newest first, capped at `MAX_SEEN`. **NULL means the watch has never been read**, which is what makes the first read seed instead of announcing 25 old posts |
 | `last_checked_at` / `last_post_at` | TIMESTAMP | Naive UTC |
 | `last_error` | TEXT | What the last read went wrong with, shown on the list page. NULL after a clean read |
+| `retry_at` | TIMESTAMP | Don't read this watch again before then — see [being refused](#being-refused-is-about-us-not-about-the-feed). NULL, and cleared by any read that gets through |
 | `created_by` / `created_by_name` | TEXT | |
 | `created_at` / `updated_at` | TIMESTAMP | |
 
@@ -1570,9 +1571,38 @@ that displays it is one step from a feature that asks people to change it.
 
 `utils/reddit.py` reads the public Atom feed — `/user/<name>/submitted.rss` or
 `/r/<name>/new.rss` — which is the same page a browser gets, not the OAuth API
-surface. So there is no client id, no secret and nothing to register. The one
-thing it does need is `REDDIT_USER_AGENT`: Reddit rate-limits a client that
-doesn't identify itself down to nothing.
+surface. So there is no client id, no secret and nothing to register. It does
+want `REDDIT_USER_AGENT`: Reddit rate-limits a client that doesn't identify
+itself down to nothing.
+
+### Being refused is about us, not about the feed
+
+Identifying ourselves is not always enough, and this is the thing to know before
+changing any of it. **Reddit also refuses the address the request comes from.**
+A hosting provider's IP — Railway's included — is turned away from the public
+feeds with 429 however politely it asks and however rarely it asks, so this is
+not a frequency that can be tuned down into working. One watch polled every five
+minutes is 288 requests a day, which is nothing; the refusal is not about that.
+
+Two things follow, and both are load-bearing:
+
+- **`fetch()` tries both hosts.** `www.reddit.com` carries the bot detection;
+  `old.reddit.com` is the legacy renderer and is markedly less fussy about who
+  is asking. The second one is only ever asked on a check that has already been
+  refused, so the normal case is still one request. A 404 or a 403 is *not*
+  retried there — those are about the feed and say the same thing from either
+  host.
+- **A refusal stands the watch down.** `RateLimited` carries a wait (Reddit's
+  own `Retry-After` where it gives one, bounded, otherwise
+  `DEFAULT_RETRY_AFTER`), `check_feed()` writes it to `retry_at`, and
+  `get_due_reddit_feeds()` skips the row until it passes. Asking again on the
+  next tick is what turns a passing throttle into a standing one. **Check now**
+  ignores the wait, because a person pressing a button may try; the loop may
+  not.
+
+If a watch is refused from both hosts every time, the feed is not the way in
+from that host and the OAuth API (a script app, `oauth.reddit.com`) is — which
+is a different fetcher, not a different frequency.
 
 `utils/reddit.py` imports **nothing but the standard library** — `aiohttp` is
 imported inside `fetch()`, the same trick `utils/sheets.py` plays with its

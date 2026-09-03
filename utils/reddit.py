@@ -2,8 +2,16 @@
 
 Reddit publishes both as an Atom feed — `/user/<name>/submitted.rss` and
 `/r/<name>/new.rss` — which needs no API registration, no OAuth and no client
-secret. The one thing it does need is a User-Agent that identifies the caller;
-without one Reddit answers 429 to everything.
+secret. It does want a User-Agent that identifies the caller; without one Reddit
+answers 429 to everything.
+
+Identifying yourself is not always enough, though, and this is the thing to know
+before changing anything here: Reddit also refuses **where** the request comes
+from. A hosting provider's address is turned away with 429 however politely it
+asks and however rarely, which is why `fetch()` tries `old.reddit.com` after
+`www` — the legacy renderer is markedly less fussy — and why a refusal comes
+back as `RateLimited` carrying a wait, rather than as a plain error the caller
+would retry on its next tick.
 
 **This announces a post. It never asks anyone to vote on one.** Organising votes
 off-platform is what Reddit's content policy calls vote manipulation, and it
@@ -62,11 +70,38 @@ MAX_TITLE = 240
 # generic agent (the default of most HTTP clients) is rate-limited to nothing.
 DEFAULT_USER_AGENT = 'orbatbot-feed/1.0 (Discord post notifier)'
 
+# The same feed, from two hosts. `www` is the one that carries Reddit's bot
+# detection and answers a request from a hosting provider's address with 429
+# however politely it identifies itself; `old` is the legacy renderer and is
+# markedly less fussy. Tried in this order, and only ever both on a check that
+# has already been refused.
+FEED_HOSTS = ('https://www.reddit.com', 'https://old.reddit.com')
+
+# How long a rate-limited feed is left alone when Reddit doesn't say itself.
+# Generous on purpose: retrying a refusal every few minutes is what keeps a
+# throttle warm, and a watch on somebody who posts twice a week loses nothing
+# by waiting half an hour.
+DEFAULT_RETRY_AFTER = 1800
+MAX_RETRY_AFTER = 6 * 3600
+
 _ATOM = '{http://www.w3.org/2005/Atom}'
 
 
 class FeedError(Exception):
     """A feed couldn't be read. The message is meant to be shown to a person."""
+
+
+class RateLimited(FeedError):
+    """Reddit refused *us*, rather than saying anything about the feed.
+
+    It carries how long to wait, so the caller can stand the watch down instead
+    of asking again on the next tick — which is what turns a passing throttle
+    into a standing one.
+    """
+
+    def __init__(self, message: str, retry_after: int = DEFAULT_RETRY_AFTER):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 def user_agent() -> str:
@@ -100,16 +135,16 @@ def clean_source(raw: str) -> str:
     return text if _NAME.match(text) else ''
 
 
-def feed_url(kind: str, source: str) -> str:
-    """The Atom feed for one watch.
+def feed_url(kind: str, source: str, host: str = FEED_HOSTS[0]) -> str:
+    """The Atom feed for one watch, on one of `FEED_HOSTS`.
 
     `.rss` rather than `.json`: the JSON endpoint is the API surface Reddit
     rate-limits per OAuth client, while the feed is the same public page a
     browser gets.
     """
     if clean_kind(kind) == 'subreddit':
-        return f"https://www.reddit.com/r/{source}/new.rss"
-    return f"https://www.reddit.com/user/{source}/submitted.rss"
+        return f"{host}/r/{source}/new.rss"
+    return f"{host}/user/{source}/submitted.rss"
 
 
 def page_url(kind: str, source: str) -> str:
@@ -185,8 +220,45 @@ def parse_feed(xml_text: str) -> list:
     return posts
 
 
+async def _read(session, url: str, headers: dict, kind: str, source: str) -> str:
+    """One request. Raises `FeedError` for anything that isn't a feed."""
+    async with session.get(url, headers=headers) as response:
+        if response.status == 404:
+            raise FeedError(
+                f"Reddit has no {kind_prefix(kind)}{source} — check the spelling."
+            )
+        if response.status == 403:
+            raise FeedError(
+                f"{kind_prefix(kind)}{source} is private or suspended, "
+                "so its feed can't be read."
+            )
+        if response.status == 429:
+            raise RateLimited(
+                "Reddit is rate-limiting this server.",
+                _retry_after(response.headers.get('Retry-After')),
+            )
+        if response.status != 200:
+            raise FeedError(f"Reddit answered {response.status}.")
+        return await response.text()
+
+
+def _retry_after(header) -> int:
+    """Reddit's own wait, when it gives one, bounded to something sensible."""
+    try:
+        seconds = int((header or '').strip())
+    except (TypeError, ValueError):
+        return DEFAULT_RETRY_AFTER
+    return max(60, min(seconds, MAX_RETRY_AFTER))
+
+
 async def fetch(kind: str, source: str, *, timeout: int = 15) -> list:
     """Read one feed. Raises `FeedError` with something a person can act on.
+
+    Both hosts are tried, because being rate-limited is not a property of the
+    feed but of who is asking: `www` carries the bot detection that answers a
+    cloud host's request with 429, and `old` is the legacy renderer, which the
+    same request often gets through. The second request only happens on a check
+    that has already failed, so it costs nothing in the normal case.
 
     `aiohttp` is imported here rather than at the top so the rest of this module
     stays importable without it — the same reason `utils/sheets.py` only reaches
@@ -194,38 +266,41 @@ async def fetch(kind: str, source: str, *, timeout: int = 15) -> list:
     """
     import aiohttp
 
-    url = feed_url(kind, source)
-    headers = {'User-Agent': user_agent()}
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=timeout)
-        ) as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status == 404:
-                    raise FeedError(
-                        f"Reddit has no {kind_prefix(kind)}{source} — check the spelling."
-                    )
-                if response.status == 403:
-                    raise FeedError(
-                        f"{kind_prefix(kind)}{source} is private or suspended, "
-                        "so its feed can't be read."
-                    )
-                if response.status == 429:
-                    raise FeedError(
-                        "Reddit is rate-limiting us. It sorts itself out; "
-                        "the next check will try again."
-                    )
-                if response.status != 200:
-                    raise FeedError(f"Reddit answered {response.status}.")
-                body = await response.text()
-    except FeedError:
-        raise
-    except aiohttp.ClientError as e:
-        raise FeedError(f"Couldn't reach Reddit: {e}")
-    except TimeoutError:
-        raise FeedError("Reddit didn't answer in time.")
+    headers = {
+        'User-Agent': user_agent(),
+        # Ask for the feed rather than for a page: an `Accept: */*` can be
+        # answered with Reddit's HTML interstitial, which is not a feed and
+        # would come back as a parse error rather than as what it is.
+        'Accept': 'application/atom+xml, application/rss+xml;q=0.9, */*;q=0.8',
+    }
 
-    return parse_feed(body)
+    limited, last = None, None
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
+        for host in FEED_HOSTS:
+            try:
+                return parse_feed(
+                    await _read(session, feed_url(kind, source, host),
+                                headers, kind, source)
+                )
+            except RateLimited as e:
+                # The wait taken is the longest either host asked for, so an
+                # explicit Retry-After is never shortened by the other host's
+                # silence.
+                if limited is None or e.retry_after > limited.retry_after:
+                    limited = e
+            except FeedError:
+                # A 404 or a 403 is about the feed itself and says the same
+                # thing from either host; only a refusal aimed at *us* is worth
+                # asking the other one about.
+                raise
+            except aiohttp.ClientError as e:
+                last = FeedError(f"Couldn't reach Reddit: {e}")
+            except TimeoutError:
+                last = FeedError("Reddit didn't answer in time.")
+
+    raise limited or last
 
 
 def render(template: str, post: dict) -> str:

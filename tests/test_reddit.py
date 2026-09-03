@@ -3,6 +3,8 @@ makes it cheap to test — and worth testing, because the two things it gets wro
 are silent: a name it can't read means a watch that never fires, and a template
 it mangles goes out to a channel."""
 
+import asyncio
+
 from utils import reddit
 
 
@@ -137,3 +139,105 @@ def test_a_stray_brace_is_left_alone_rather_than_raising():
 def test_a_very_long_title_is_trimmed():
     post = dict(reddit.parse_feed(FEED)[0], title='x' * 500)
     assert len(reddit.render('{title}', post)) == reddit.MAX_TITLE
+
+
+# -- being refused ----------------------------------------------------------
+#
+# Reddit turns a hosting provider's address away with 429 whatever the
+# User-Agent says, so how a refusal is handled matters more than it looks: the
+# second host is what usually gets through, and standing down afterwards is what
+# keeps a passing throttle from becoming a standing one.
+
+class FakeResponse:
+    def __init__(self, status, body='', headers=None):
+        self.status = status
+        self.headers = headers or {}
+        self._body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    async def text(self):
+        return self._body
+
+
+class FakeSession:
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.urls = []
+
+    def get(self, url, headers=None):
+        self.urls.append(url)
+        return self.answers.pop(0)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+
+def fetch_with(monkeypatch, *answers):
+    """Run fetch() against canned responses. Returns (result-or-error, urls)."""
+    import aiohttp
+    session = FakeSession(answers)
+    monkeypatch.setattr(aiohttp, 'ClientSession', lambda **kwargs: session)
+    try:
+        return asyncio.run(reddit.fetch('user', 'Someone')), session.urls
+    except reddit.FeedError as e:
+        return e, session.urls
+
+
+def test_a_refusal_is_retried_on_the_other_host(monkeypatch):
+    result, urls = fetch_with(
+        monkeypatch, FakeResponse(429), FakeResponse(200, FEED)
+    )
+    assert [p['id'] for p in result] == ['t3_newest', 't3_older']
+    assert urls == [
+        'https://www.reddit.com/user/Someone/submitted.rss',
+        'https://old.reddit.com/user/Someone/submitted.rss',
+    ]
+
+
+def test_only_one_request_when_the_first_host_answers(monkeypatch):
+    _, urls = fetch_with(monkeypatch, FakeResponse(200, FEED))
+    assert len(urls) == 1
+
+
+def test_refused_by_both_hosts_says_how_long_to_wait(monkeypatch):
+    error, urls = fetch_with(
+        monkeypatch,
+        FakeResponse(429, headers={'Retry-After': '3600'}),
+        FakeResponse(429),
+    )
+    assert isinstance(error, reddit.RateLimited)
+    assert len(urls) == 2
+    # The longest wait either host asked for, so the one host that named one
+    # isn't undercut by the other's silence.
+    assert error.retry_after == 3600
+
+
+def test_a_refusal_without_a_wait_gets_the_default(monkeypatch):
+    error, _ = fetch_with(monkeypatch, FakeResponse(429), FakeResponse(429))
+    assert error.retry_after == reddit.DEFAULT_RETRY_AFTER
+
+
+def test_an_absurd_wait_is_bounded(monkeypatch):
+    error, _ = fetch_with(
+        monkeypatch,
+        FakeResponse(429, headers={'Retry-After': '999999'}),
+        FakeResponse(429),
+    )
+    assert error.retry_after == reddit.MAX_RETRY_AFTER
+
+
+def test_a_missing_feed_is_not_asked_about_twice(monkeypatch):
+    # A 404 says the same thing from either host — only a refusal aimed at us
+    # is worth asking the other one about.
+    error, urls = fetch_with(monkeypatch, FakeResponse(404), FakeResponse(200, FEED))
+    assert isinstance(error, reddit.FeedError)
+    assert not isinstance(error, reddit.RateLimited)
+    assert len(urls) == 1

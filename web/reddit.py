@@ -13,6 +13,8 @@ poster and the people who act on it banned, so it isn't something to offer as a
 convenience.
 """
 
+from datetime import datetime
+
 import discord
 from discord.ext import commands
 
@@ -186,6 +188,15 @@ async def check_now(bot: commands.Bot, feed) -> str:
         raise ValueError("This watch is switched off. Turn it on first.")
     try:
         result = await check_feed(bot, feed)
+    except reddit.RateLimited as e:
+        # Worth spelling out, because the obvious reading of "rate-limited" is
+        # "we ask too often" — which is not what this is.
+        raise ValueError(
+            f"{e} Both reddit.com and old.reddit.com turned this server's "
+            "address away, so it is about where the bot is hosted rather than "
+            "about the feed or how often it is checked. Trying again in "
+            f"{e.retry_after // 60} minutes."
+        )
     except (reddit.FeedError, ValueError) as e:
         # A feed that couldn't be read is a message for the person who pressed
         # the button, like everything else `web/` raises.
@@ -218,6 +229,13 @@ async def preview(feed) -> dict:
     return {'post': post, 'message': build_message(feed, post)}
 
 
+def _future(when):
+    """A stored time, if it hasn't passed yet."""
+    if when is None:
+        return None
+    return when if when > datetime.utcnow() else None
+
+
 def view_models(guild: discord.Guild, feeds) -> list:
     """One row per watch, with everything the list page shows."""
     rows = []
@@ -234,5 +252,8 @@ def view_models(guild: discord.Guild, feeds) -> list:
             'roles': [r.name for r in roles if r],
             'people': len(mention_ids(feed, 'mention_user_id')),
             'never_read': feed['seen_ids'] is None,
+            # Set while a refusal is being waited out, so the list says why
+            # nothing is happening rather than looking simply broken.
+            'paused_until': _future(feed['retry_at']),
         })
     return rows

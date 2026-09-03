@@ -351,6 +351,7 @@ async def init_db():
                 last_checked_at TIMESTAMP,
                 last_post_at TIMESTAMP,
                 last_error TEXT,
+                retry_at TIMESTAMP,
                 created_by TEXT,
                 created_by_name TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -362,6 +363,13 @@ async def init_db():
         await db.execute('''
             CREATE UNIQUE INDEX IF NOT EXISTS idx_reddit_feed_source
                 ON reddit_feeds (guild_id, kind, lower(source))
+        ''')
+        # Don't read this watch again before this time. Added after the table
+        # shipped, when Reddit turned out to refuse a hosting provider's address
+        # outright — asking again every five minutes is what keeps a throttle
+        # warm, so a refusal now stands the watch down instead.
+        await db.execute('''
+            ALTER TABLE reddit_feeds ADD COLUMN IF NOT EXISTS retry_at TIMESTAMP
         ''')
         # Recurrence, added after the events tables shipped
         await db.execute('''
@@ -1343,14 +1351,18 @@ async def get_reddit_feed(feed_id: int):
 
 
 async def get_due_reddit_feeds():
-    """Every watch the polling loop should read — enabled, and with somewhere to
-    post. A watch whose channel was cleared keeps its row and its text, so it can
-    be switched back on later, but nothing is read for it in the meantime."""
+    """Every watch the polling loop should read now.
+
+    Enabled, with somewhere to post, and not standing down after a refusal. A
+    watch whose channel was cleared keeps its row and its text, so it can be
+    switched back on later, but nothing is read for it in the meantime.
+    """
     pool = await get_pool()
     async with pool.acquire() as db:
         return await db.fetch(
             '''SELECT * FROM reddit_feeds
                 WHERE enabled = 1 AND channel_id IS NOT NULL
+                  AND (retry_at IS NULL OR retry_at <= (NOW() AT TIME ZONE 'UTC'))
                 ORDER BY id'''
         )
 
@@ -1408,7 +1420,8 @@ async def reset_reddit_feed_seen(feed_id: int):
     async with pool.acquire() as db:
         await db.execute(
             '''UPDATE reddit_feeds
-                  SET seen_ids = NULL, last_post_at = NULL, last_error = NULL
+                  SET seen_ids = NULL, last_post_at = NULL, last_error = NULL,
+                      retry_at = NULL
                 WHERE id = $1''',
             feed_id,
         )
@@ -1421,15 +1434,18 @@ async def delete_reddit_feed(feed_id: int):
 
 
 async def record_reddit_read(feed_id: int, *, seen_ids: str = None,
-                             last_post_at=None, error: str = None):
+                             last_post_at=None, error: str = None,
+                             retry_at=None):
     """What the last read of this watch found.
 
     `seen_ids` and `last_post_at` are only written when they are given, so a
     failed read records its error without forgetting what has already been
-    announced.
+    announced. `retry_at` is written every time, including as NULL: a read that
+    got through is exactly what clears a stand-down.
     """
-    sets = ["last_checked_at = (NOW() AT TIME ZONE 'UTC')", 'last_error = $2']
-    args = [feed_id, error]
+    sets = ["last_checked_at = (NOW() AT TIME ZONE 'UTC')",
+            'last_error = $2', 'retry_at = $3']
+    args = [feed_id, error, retry_at]
     if seen_ids is not None:
         sets.append(f'seen_ids = ${len(args) + 1}')
         args.append(seen_ids)
