@@ -64,6 +64,7 @@
             <form method="post" action="/g/{{ guild.id }}/reddit/{{ row.feed.id }}/check">
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <a class="button" href="/g/{{ guild.id }}/reddit/{{ row.feed.id }}">Edit</a>
+              <a class="button" href="/g/{{ guild.id }}/reddit/{{ row.feed.id }}/posts">Posts</a>
               <button class="button" type="submit">Check now</button>
             </form>
           </td>

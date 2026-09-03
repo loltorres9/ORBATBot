@@ -76,7 +76,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(77 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(83 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
 what `check_feed()` promises about announcing a post exactly once. The date logic in
@@ -1140,6 +1140,8 @@ GET  /g/{guild}/reddit/new              add form           POST to create
 GET  /g/{guild}/reddit/{id}             edit form          POST to save
 POST /g/{guild}/reddit/{id}/preview     the newest post as it would be announced
 POST /g/{guild}/reddit/{id}/check       the scheduled check, run now
+GET  /g/{guild}/reddit/{id}/posts       what the feed still carries, to catch one up
+POST /g/{guild}/reddit/{id}/announce    post one of them by hand
 POST /g/{guild}/reddit/{id}/delete      stop watching
 GET  /g/{guild}/logs                    admin — member log settings, POST to save
 GET  /g/{guild}/voice                   voice leaderboard; admins also get the settings
@@ -1615,6 +1617,13 @@ Two details in the parsing are load-bearing:
   `published` alone; reading `updated` would make an edit look like a new post.
 - **An entry with no id or no link is skipped, not fatal.** One malformed entry
   must not cost the rest of the feed.
+- **The category's `term` beats its `label`.** Reddit writes them as
+  `term="arma" label="r/arma"`, and for a post made on the author's own profile
+  as `term="u_Name" label="u/Name"`. The term is already what belongs after an
+  `r/` in both cases — a profile post really does live in `r/u_Name` — while the
+  label would render as `r/u/Name`, which is not a place. A user watch carries
+  both kinds, since `/user/<name>/submitted.rss` is everything that author
+  submits anywhere.
 
 `render()` substitutes `{title}`, `{url}`, `{author}` and `{subreddit}` with one
 literal replace each rather than `str.format()`: a template is text somebody
@@ -1671,6 +1680,30 @@ about it are worth knowing:
 - **Pointing a watch at a different source resets `seen_ids`**
   (`reset_reddit_feed_seen()`), so the new feed is seeded on its next read
   instead of announcing its history. The page says so.
+
+### Catching a post up by hand
+
+`/g/{guild}/reddit/{id}/posts` lists what the feed still carries, says which of
+them have been announced, and gives each an **Announce** button —
+`announce_post()`, which is the second thing besides `check_feed()` that sends
+one of these messages. It exists because there are three ways a post ends up
+never reaching the channel and none of them heals itself: the bot was down when
+it went up, Discord refused that one message (which `check_feed()` marks as
+announced *on purpose*, so one bad post can't wedge the watch for ever), or the
+watch was pointed somewhere and seeded past it.
+
+Two things about it are load-bearing:
+
+- **It marks the post seen**, so the next scheduled check doesn't announce it
+  again — and on a watch that has **never been read** it seeds the rest of the
+  feed at the same time, exactly as a first read would. Without that, catching
+  one post up by hand would make the next check announce the other twenty-four.
+- **A send that fails records nothing.** The point of the button is to get the
+  post out; if it didn't go out, nothing should be stored as though it had.
+
+It is its own page rather than a panel on the watch form, because opening it
+reads the feed — and the form has to open without touching Reddit, not least
+when Reddit is refusing us.
 
 ---
 

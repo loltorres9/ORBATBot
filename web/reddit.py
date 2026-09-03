@@ -18,7 +18,12 @@ from datetime import datetime
 import discord
 from discord.ext import commands
 
-from cogs.redditfeed import build_message, check_feed, mention_ids
+from cogs.redditfeed import (
+    announce_post,
+    build_message,
+    check_feed,
+    mention_ids,
+)
 from utils import database, reddit
 from web.guilds import postable_channels
 
@@ -227,6 +232,41 @@ async def preview(feed) -> dict:
         )
     post = posts[0]
     return {'post': post, 'message': build_message(feed, post)}
+
+
+async def recent(feed) -> list:
+    """The feed's posts, each saying whether it has been announced.
+
+    What the catch-up page is built from: the bot can only announce what the
+    feed still lists, so this is exactly the set of posts that can be caught up.
+    """
+    posts = await reddit.fetch(feed['kind'], feed['source'])
+    seen = {part for part in (feed['seen_ids'] or '').split(',') if part}
+    never_read = feed['seen_ids'] is None
+    return [
+        {**post,
+         # A watch that has never been read has announced nothing, whatever the
+         # empty seen set would otherwise imply.
+         'announced': not never_read and post['id'] in seen,
+         'message': build_message(feed, post)}
+        for post in posts
+    ]
+
+
+async def catch_up(bot: commands.Bot, feed, post_id: str) -> str:
+    """Announce one post by hand. Returns what to flash."""
+    if not (post_id or '').strip():
+        raise ValueError("No post was chosen.")
+    try:
+        post = await announce_post(bot, feed, post_id.strip())
+    except reddit.RateLimited as e:
+        raise ValueError(
+            f"{e} The post can't be read to announce it — try again in "
+            f"{e.retry_after // 60} minutes."
+        )
+    except reddit.FeedError as e:
+        raise ValueError(str(e))
+    return f"Announced “{post['title'][:80]}”."
 
 
 def _future(when):

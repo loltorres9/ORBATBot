@@ -241,3 +241,17 @@ def test_a_missing_feed_is_not_asked_about_twice(monkeypatch):
     assert isinstance(error, reddit.FeedError)
     assert not isinstance(error, reddit.RateLimited)
     assert len(urls) == 1
+
+
+def test_a_post_on_the_author_s_own_profile_names_a_real_place():
+    """`/user/X/submitted.rss` carries everything X submits, profile posts
+    included — and those live in r/u_X, which is where the default template's
+    `r/{subreddit}` has to point."""
+    profile = FEED.replace(
+        '<category term="arma" label="r/arma"/>',
+        '<category term="u_TaskForcePhalanx" label="u/TaskForcePhalanx"/>',
+        1,
+    )
+    post = reddit.parse_feed(profile)[0]
+    assert post['subreddit'] == 'u_TaskForcePhalanx'
+    assert 'r/u_TaskForcePhalanx' in reddit.render('r/{subreddit}', post)

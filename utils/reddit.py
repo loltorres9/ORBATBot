@@ -206,7 +206,13 @@ def parse_feed(xml_text: str) -> list:
         subreddit = ''
         category = entry.find(f"{_ATOM}category")
         if category is not None:
-            subreddit = (category.get('label') or category.get('term') or '')
+            # `term` over `label`: Reddit writes them as term="arma"
+            # label="r/arma", and for a post made on somebody's own profile as
+            # term="u_Name" label="u/Name". The term is already what belongs
+            # after an `r/` in both cases — a profile post really does live in
+            # r/u_Name — while the label would render as `r/u/Name`, which is
+            # not a place.
+            subreddit = (category.get('term') or category.get('label') or '')
             subreddit = subreddit.removeprefix('r/')
 
         posts.append({

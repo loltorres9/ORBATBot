@@ -134,6 +134,7 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="button" type="submit">Check now</button>
     </form>
+    <a class="button" href="/g/{{ guild.id }}/reddit/{{ feed.id }}/posts">Recent posts</a>
     <form class="inlineform" method="post" action="/g/{{ guild.id }}/reddit/{{ feed.id }}/delete"
           onsubmit="return confirm('Stop watching this feed?')">
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -143,6 +144,8 @@
   <p class="hint">
     <strong>Check now</strong> does exactly what the scheduled check does, posting
     anything it hasn't posted before. <strong>Preview</strong> posts nothing.
+    <strong>Recent posts</strong> lists what the feed still carries, so a post
+    that never made it out can be announced by hand.
     {% if feed.seen_ids is none %}
       This watch hasn't been read yet: the first check notes what is already there
       and announces only what comes after it.
