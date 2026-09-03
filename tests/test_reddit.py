@@ -315,3 +315,14 @@ def test_both_hosts_serving_rubbish_is_reported_not_swallowed(monkeypatch):
     )
     assert isinstance(error, reddit.NotAFeed)
     assert len(urls) == 2
+
+
+def test_fetch_says_which_host_answered(monkeypatch):
+    # "The bot only found one post" and "that address only carries one post"
+    # are different problems, so the page has to be able to name the address.
+    import aiohttp
+    session = FakeSession([FakeResponse(429), FakeResponse(200, FEED)])
+    monkeypatch.setattr(aiohttp, 'ClientSession', lambda **kwargs: session)
+    url, posts = asyncio.run(reddit.fetch_from('user', 'Someone'))
+    assert url == 'https://old.reddit.com/user/Someone/submitted.rss'
+    assert len(posts) == 2

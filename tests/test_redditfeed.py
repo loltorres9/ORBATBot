@@ -268,3 +268,19 @@ def test_a_refused_send_is_not_marked_announced(monkeypatch):
     with pytest.raises(ValueError):
         asyncio.run(redditfeed.announce_post(bot, make_feed(seen_ids=''), 't3_1'))
     assert stored == {}
+
+
+# -- where a post lives -----------------------------------------------------
+
+def test_a_profile_post_is_named_for_what_it_is():
+    """A post on somebody's own profile lives in `u_Name`, which renders as
+    `r/u_Name` — a real place, but one that reads like a bug next to `r/arma`
+    and hides the question of whether the watch only sees profile posts."""
+    from web.reddit import where
+    assert where({'subreddit': 'arma'}) == 'r/arma'
+    assert where({'subreddit': 'u_TaskForcePhalanx'}) == (
+        "u/TaskForcePhalanx — the author's own profile"
+    )
+    # A feed that carried only the label, without the term behind it.
+    assert where({'subreddit': 'u/TaskForcePhalanx'}).startswith('u/TaskForcePhalanx')
+    assert where({'subreddit': ''}) == ''

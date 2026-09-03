@@ -76,7 +76,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(89 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(91 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
 what `check_feed()` promises about announcing a post exactly once. The date logic in
@@ -1716,6 +1716,13 @@ never reaching the channel and none of them heals itself: the bot was down when
 it went up, Discord refused that one message (which `check_feed()` marks as
 announced *on purpose*, so one bad post can't wedge the watch for ever), or the
 watch was pointed somewhere and seeded past it.
+
+The page says **which address it read and how many entries came back**, and
+names where each post lives — `r/arma`, or *the author's own profile* for one in
+`u_Name`. Both exist because "the bot only found one post" and "that address
+only carries one post" are different problems, and this is the only place the
+difference can be seen. A `u_Name` post rendered as `r/u_Name` reads like a bug
+next to `r/arma`, which is what hid the question in the first place.
 
 Two things about it are load-bearing:
 

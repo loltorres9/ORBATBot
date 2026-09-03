@@ -325,7 +325,13 @@ def _retry_after(header) -> int:
 
 
 async def fetch(kind: str, source: str, *, timeout: int = 15) -> list:
-    """Read one feed. Raises `FeedError` with something a person can act on.
+    """The posts on one feed. See `fetch_from()` for where they came from."""
+    _, posts = await fetch_from(kind, source, timeout=timeout)
+    return posts
+
+
+async def fetch_from(kind: str, source: str, *, timeout: int = 15) -> tuple:
+    """`(url that answered, posts)`. Raises `FeedError` with something a person can act on.
 
     Both hosts are tried, because being rate-limited is not a property of the
     feed but of who is asking: `www` carries the bot detection that answers a
@@ -352,10 +358,10 @@ async def fetch(kind: str, source: str, *, timeout: int = 15) -> list:
         timeout=aiohttp.ClientTimeout(total=timeout)
     ) as session:
         for host in FEED_HOSTS:
+            url = feed_url(kind, source, host)
             try:
-                return parse_feed(
-                    await _read(session, feed_url(kind, source, host),
-                                headers, kind, source)
+                return url, parse_feed(
+                    await _read(session, url, headers, kind, source)
                 )
             except RateLimited as e:
                 # The wait taken is the longest either host asked for, so an

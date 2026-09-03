@@ -18,6 +18,16 @@
 
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 
+<p class="hint">
+  Read from
+  <a href="{{ source_url }}" target="_blank" rel="noopener"><code>{{ source_url }}</code></a>
+  — <strong>{{ posts|length }}</strong> entr{{ 'y' if posts|length == 1 else 'ies' }}.
+  That is everything the address carries; open it yourself to see the same thing
+  the bot sees. A <em>Reddit user</em> watch reads that account's submissions,
+  wherever they were posted — if posts you expect are missing from it, they are
+  missing from the feed rather than being skipped here.
+</p>
+
 {% if posts %}
   <table class="rolelist">
     <tbody>
@@ -32,7 +42,7 @@
             {% endif %}
             <div class="muted">
               {% if post.published %}{{ relative(post.published) }}{% endif %}
-              {% if post.subreddit %} · r/{{ post.subreddit }}{% endif %}
+              {% if post.where %} · {{ post.where }}{% endif %}
             </div>
             <details>
               <summary class="muted">What would be posted</summary>

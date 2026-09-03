@@ -1238,15 +1238,17 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         """
         context = await feed_context(request, guild_id, feed_id)
         feed = context['feed']
+        read, error = {'url': reddit_lib.feed_url(feed['kind'], feed['source']),
+                       'posts': []}, None
         try:
-            posts = await reddit_service.recent(feed)
-            error = None
+            read = await reddit_service.recent(feed)
         except (ValueError, reddit_lib.FeedError) as e:
-            posts, error = [], str(e)
+            error = str(e)
         return render(request, 'reddit_posts.html', {
             **context,
             'label': reddit_lib.kind_prefix(feed['kind']) + feed['source'],
-            'posts': posts,
+            'posts': read['posts'],
+            'source_url': read['url'],
             'error': error,
         })
 

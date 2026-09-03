@@ -234,23 +234,49 @@ async def preview(feed) -> dict:
     return {'post': post, 'message': build_message(feed, post)}
 
 
-async def recent(feed) -> list:
-    """The feed's posts, each saying whether it has been announced.
+def where(post) -> str:
+    """Where a post actually lives, said the way Reddit says it.
+
+    A post made on somebody's own profile is in `u_Name`, which renders as
+    `r/u_Name` — a real place, but one that reads like a mistake next to
+    `r/arma`. Naming it for what it is answers the question the page otherwise
+    raises: whether the watch is only seeing profile posts.
+    """
+    sub = (post.get('subreddit') or '').strip()
+    if not sub:
+        return ''
+    if sub.startswith('u_'):
+        return f"u/{sub[2:]} — the author's own profile"
+    if sub.startswith('u/'):
+        # A feed that carried only the label, without the term behind it.
+        return f"{sub} — the author's own profile"
+    return f"r/{sub}"
+
+
+async def recent(feed) -> dict:
+    """What the feed carries, and where it was read from.
 
     What the catch-up page is built from: the bot can only announce what the
     feed still lists, so this is exactly the set of posts that can be caught up.
+    The address and the count ride along because "the bot only found one post"
+    and "that feed only carries one post" are different problems, and the page
+    is the only place the difference can be seen.
     """
-    posts = await reddit.fetch(feed['kind'], feed['source'])
+    url, posts = await reddit.fetch_from(feed['kind'], feed['source'])
     seen = {part for part in (feed['seen_ids'] or '').split(',') if part}
     never_read = feed['seen_ids'] is None
-    return [
-        {**post,
-         # A watch that has never been read has announced nothing, whatever the
-         # empty seen set would otherwise imply.
-         'announced': not never_read and post['id'] in seen,
-         'message': build_message(feed, post)}
-        for post in posts
-    ]
+    return {
+        'url': url,
+        'posts': [
+            {**post,
+             # A watch that has never been read has announced nothing, whatever
+             # the empty seen set would otherwise imply.
+             'announced': not never_read and post['id'] in seen,
+             'where': where(post),
+             'message': build_message(feed, post)}
+            for post in posts
+        ],
+    }
 
 
 async def catch_up(bot: commands.Bot, feed, post_id: str) -> str:
