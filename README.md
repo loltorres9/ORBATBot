@@ -853,6 +853,14 @@ If a post never made it into the channel — the bot was down when it went up, D
 
 The one limit is that only what the feed still lists can be caught up: Reddit's feed carries roughly the last 25 submissions, and anything older than that is out of reach.
 
+### Stopping a flood
+
+The same page marks posts as announced **without posting them**: **Mark as announced** on one row, or **Mark all as announced** for everything the feed carries.
+
+That is what to press when a feed suddenly fills up — an account that un-hid its posts, a subreddit that was quiet for a month. Without it the bot works through the backlog three posts at a time, every five minutes, until all of it has been announced. Mark them, and only what comes *after* that point reaches the channel.
+
+The page also names **the exact address it read and how many entries came back**, with a link to open it yourself. That is the answer to "why hasn't it announced X": if a post is missing from that page, it is missing from the feed, not being skipped by the bot. Each post says where it lives too — `r/arma`, or *the author's own profile* for one posted to `u/TheirName`.
+
 ### Good to know
 
 - **Pings are limited to what you ticked.** A post title containing `@everyone` cannot ping your server: the announcement quotes Reddit, so only the roles and people on the watch are allowed to be mentioned.

@@ -22,6 +22,7 @@ from cogs.redditfeed import (
     announce_post,
     build_message,
     check_feed,
+    mark_announced,
     mention_ids,
 )
 from utils import database, reddit
@@ -234,23 +235,49 @@ async def preview(feed) -> dict:
     return {'post': post, 'message': build_message(feed, post)}
 
 
-async def recent(feed) -> list:
-    """The feed's posts, each saying whether it has been announced.
+def where(post) -> str:
+    """Where a post actually lives, said the way Reddit says it.
+
+    A post made on somebody's own profile is in `u_Name`, which renders as
+    `r/u_Name` — a real place, but one that reads like a mistake next to
+    `r/arma`. Naming it for what it is answers the question the page otherwise
+    raises: whether the watch is only seeing profile posts.
+    """
+    sub = (post.get('subreddit') or '').strip()
+    if not sub:
+        return ''
+    if sub.startswith('u_'):
+        return f"u/{sub[2:]} — the author's own profile"
+    if sub.startswith('u/'):
+        # A feed that carried only the label, without the term behind it.
+        return f"{sub} — the author's own profile"
+    return f"r/{sub}"
+
+
+async def recent(feed) -> dict:
+    """What the feed carries, and where it was read from.
 
     What the catch-up page is built from: the bot can only announce what the
     feed still lists, so this is exactly the set of posts that can be caught up.
+    The address and the count ride along because "the bot only found one post"
+    and "that feed only carries one post" are different problems, and the page
+    is the only place the difference can be seen.
     """
-    posts = await reddit.fetch(feed['kind'], feed['source'])
+    url, posts = await reddit.fetch_from(feed['kind'], feed['source'])
     seen = {part for part in (feed['seen_ids'] or '').split(',') if part}
     never_read = feed['seen_ids'] is None
-    return [
-        {**post,
-         # A watch that has never been read has announced nothing, whatever the
-         # empty seen set would otherwise imply.
-         'announced': not never_read and post['id'] in seen,
-         'message': build_message(feed, post)}
-        for post in posts
-    ]
+    return {
+        'url': url,
+        'posts': [
+            {**post,
+             # A watch that has never been read has announced nothing, whatever
+             # the empty seen set would otherwise imply.
+             'announced': not never_read and post['id'] in seen,
+             'where': where(post),
+             'message': build_message(feed, post)}
+            for post in posts
+        ],
+    }
 
 
 async def catch_up(bot: commands.Bot, feed, post_id: str) -> str:
@@ -267,6 +294,31 @@ async def catch_up(bot: commands.Bot, feed, post_id: str) -> str:
     except reddit.FeedError as e:
         raise ValueError(str(e))
     return f"Announced “{post['title'][:80]}”."
+
+
+async def mark(feed, post_id: str = None) -> str:
+    """Mark one post, or the whole feed, as already announced.
+
+    Nothing is posted. Returns what to flash.
+    """
+    try:
+        result = await mark_announced(feed, [post_id.strip()] if post_id else None)
+    except reddit.RateLimited as e:
+        raise ValueError(
+            f"{e} The feed has to be read to know what to mark — try again in "
+            f"{e.retry_after // 60} minutes."
+        )
+    except reddit.FeedError as e:
+        raise ValueError(str(e))
+
+    if result['seeded']:
+        return (f"This watch hadn't been read yet, so all {result['on_feed']} post(s) "
+                "on the feed are now marked as announced. Only what comes after "
+                "them will be posted.")
+    if not result['marked']:
+        return "Nothing to do — that was already marked as announced."
+    return (f"Marked {result['marked']} post(s) as announced. "
+            "They won't be posted to the channel.")
 
 
 def _future(when):

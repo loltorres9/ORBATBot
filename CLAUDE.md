@@ -76,7 +76,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(89 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(97 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
 what `check_feed()` promises about announcing a post exactly once. The date logic in
@@ -1142,6 +1142,7 @@ POST /g/{guild}/reddit/{id}/preview     the newest post as it would be announced
 POST /g/{guild}/reddit/{id}/check       the scheduled check, run now
 GET  /g/{guild}/reddit/{id}/posts       what the feed still carries, to catch one up
 POST /g/{guild}/reddit/{id}/announce    post one of them by hand
+POST /g/{guild}/reddit/{id}/mark        mark one, or all, as announced — posts nothing
 POST /g/{guild}/reddit/{id}/delete      stop watching
 GET  /g/{guild}/logs                    admin — member log settings, POST to save
 GET  /g/{guild}/voice                   voice leaderboard; admins also get the settings
@@ -1716,6 +1717,22 @@ never reaching the channel and none of them heals itself: the bot was down when
 it went up, Discord refused that one message (which `check_feed()` marks as
 announced *on purpose*, so one bad post can't wedge the watch for ever), or the
 watch was pointed somewhere and seeded past it.
+
+The page says **which address it read and how many entries came back**, and
+names where each post lives — `r/arma`, or *the author's own profile* for one in
+`u_Name`. Both exist because "the bot only found one post" and "that address
+only carries one post" are different problems, and this is the only place the
+difference can be seen. A `u_Name` post rendered as `r/u_Name` reads like a bug
+next to `r/arma`, which is what hid the question in the first place.
+
+**The same page marks a post as announced without posting it** —
+`mark_announced()`, and with no post id, everything the feed carries. That is
+the way past a flood: a watch whose feed suddenly fills up (an account that
+un-hid its posts, a subreddit that woke up) would otherwise work through the
+backlog `MAX_PER_CHECK` at a time until all of it had been announced. On a watch
+that has **never been read** it marks the whole feed whatever was asked for,
+because its first check would have done exactly that — marking only the chosen
+post would leave the rest queued, which is the flood being prevented.
 
 Two things about it are load-bearing:
 

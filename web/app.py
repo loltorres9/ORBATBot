@@ -1238,15 +1238,17 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         """
         context = await feed_context(request, guild_id, feed_id)
         feed = context['feed']
+        read, error = {'url': reddit_lib.feed_url(feed['kind'], feed['source']),
+                       'posts': []}, None
         try:
-            posts = await reddit_service.recent(feed)
-            error = None
+            read = await reddit_service.recent(feed)
         except (ValueError, reddit_lib.FeedError) as e:
-            posts, error = [], str(e)
+            error = str(e)
         return render(request, 'reddit_posts.html', {
             **context,
             'label': reddit_lib.kind_prefix(feed['kind']) + feed['source'],
-            'posts': posts,
+            'posts': read['posts'],
+            'source_url': read['url'],
             'error': error,
         })
 
@@ -1260,6 +1262,24 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             note = await reddit_service.catch_up(
                 bot, context['feed'], form.get('post_id')
             )
+        except ValueError as e:
+            return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts",
+                            'warn', str(e))
+        return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts", 'ok', note)
+
+    @app.post('/g/{guild_id}/reddit/{feed_id}/mark')
+    async def mark_reddit_post(request: Request, guild_id: str, feed_id: int):
+        """Take posts out of the queue without announcing them.
+
+        No `post_id` means everything the feed currently carries — which is the
+        one press that stops a backlog going out three at a time.
+        """
+        context = await feed_context(request, guild_id, feed_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            note = await reddit_service.mark(context['feed'], form.get('post_id'))
         except ValueError as e:
             return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts",
                             'warn', str(e))
