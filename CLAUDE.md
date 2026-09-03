@@ -76,7 +76,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(83 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(89 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
 what `check_feed()` promises about announcing a post exactly once. The date logic in
@@ -1610,6 +1610,31 @@ is a different fetcher, not a different frequency.
 imported inside `fetch()`, the same trick `utils/sheets.py` plays with its
 credentials — which is what makes the parsing and the templating testable
 (`tests/test_reddit.py`).
+
+### What comes back is not always a feed
+
+`fetch()` hands `parse_feed()` the **raw bytes**. An XML document declares its
+own encoding and that declaration is the authority — not the HTTP header, and
+not a guess made from the bytes. Decoding first (`response.text()`) put a third
+party in charge of it, which is how one accented character in a post title turns
+into `not well-formed (invalid token): line 20, column 195`.
+
+Three kinds of not-a-feed, told apart because they need different answers:
+
+- **An HTML body is a refusal in disguise.** Reddit serves its block page with a
+  200, so `parse_feed()` sniffs for one and raises `RateLimited` — the same
+  thing a 429 means, handled the same way. (It is worth knowing that such a page
+  fails XML parsing as *mismatched tag*, not *invalid token*, so the two
+  symptoms are genuinely different problems.)
+- **Characters XML forbids are dropped.** No valid feed can contain a control
+  character, so removing them cannot change a well-formed document — and one
+  stray byte in a title must not cost the whole feed.
+- **Anything else raises `NotAFeed`**, which quotes the fragment it choked on as
+  `repr()`. The line and column mean nothing to whoever reads the flash message;
+  the characters themselves separate a stray `&`, an invisible byte and a
+  mis-encoded one at a glance. `NotAFeed` is also retried on the other host,
+  because a body that isn't the feed is usually about who is asking — but it
+  does not stand the watch down, since it is not a refusal.
 
 Two details in the parsing are load-bearing:
 

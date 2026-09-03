@@ -152,7 +152,7 @@ class FakeResponse:
     def __init__(self, status, body='', headers=None):
         self.status = status
         self.headers = headers or {}
-        self._body = body
+        self._body = body.encode() if isinstance(body, str) else body
 
     async def __aenter__(self):
         return self
@@ -160,7 +160,9 @@ class FakeResponse:
     async def __aexit__(self, *_):
         return False
 
-    async def text(self):
+    async def read(self):
+        # Bytes, like aiohttp's — the XML declaration is what says how to
+        # decode them, so `fetch()` deliberately never decodes them itself.
         return self._body
 
 
@@ -255,3 +257,61 @@ def test_a_post_on_the_author_s_own_profile_names_a_real_place():
     post = reddit.parse_feed(profile)[0]
     assert post['subreddit'] == 'u_TaskForcePhalanx'
     assert 'r/u_TaskForcePhalanx' in reddit.render('r/{subreddit}', post)
+
+
+# -- a body that isn't a feed -----------------------------------------------
+#
+# "That didn't come back as a feed" is the least actionable thing this module
+# can say, so what it says next matters: the fragment it choked on tells a
+# mis-encoded byte, a stray character and a page-instead-of-a-feed apart at a
+# glance, none of which the line and column do.
+
+def test_bytes_are_parsed_by_the_declaration_they_carry():
+    # An XML document says how to decode itself, and that beats the HTTP header
+    # or any guess made from the bytes — which is why fetch() never decodes.
+    post = reddit.parse_feed(FEED.encode('utf-8'))[0]
+    assert post['title'] == 'Operation Nightfall — sign-ups open'
+
+
+def test_a_character_xml_forbids_is_dropped_rather_than_fatal():
+    # XML 1.0 has no way to write a control character, so no valid feed can
+    # contain one — and one stray byte in a title must not cost the whole feed.
+    broken = FEED.replace('Operation Nightfall', 'Operation \x0cNightfall')
+    assert reddit.parse_feed(broken)[0]['title'].startswith('Operation Nightfall')
+
+
+def test_a_body_that_wont_parse_says_what_it_choked_on():
+    try:
+        reddit.parse_feed(b'<?xml version="1.0"?>\n<feed><title>Tom & Jerry</title></feed>')
+    except reddit.NotAFeed as e:
+        assert 'Tom & Jerry' in str(e)
+        return
+    raise AssertionError('a body that is not XML should raise NotAFeed')
+
+
+def test_a_web_page_is_a_refusal_in_disguise():
+    # Reddit serves its block page with a 200, so it has to be read as the 429
+    # it means: the other host is tried, and the watch stands down.
+    try:
+        reddit.parse_feed('<!DOCTYPE html>\n<html><body>blocked</body></html>')
+    except reddit.RateLimited:
+        return
+    raise AssertionError('an HTML body should be treated as a refusal')
+
+
+def test_a_body_that_isnt_a_feed_is_asked_of_the_other_host_too(monkeypatch):
+    result, urls = fetch_with(
+        monkeypatch,
+        FakeResponse(200, 'not xml at all'),
+        FakeResponse(200, FEED),
+    )
+    assert [p['id'] for p in result] == ['t3_newest', 't3_older']
+    assert len(urls) == 2
+
+
+def test_both_hosts_serving_rubbish_is_reported_not_swallowed(monkeypatch):
+    error, urls = fetch_with(
+        monkeypatch, FakeResponse(200, 'nope'), FakeResponse(200, 'nope')
+    )
+    assert isinstance(error, reddit.NotAFeed)
+    assert len(urls) == 2
