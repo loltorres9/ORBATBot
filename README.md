@@ -106,6 +106,7 @@ Watch a Reddit user or a subreddit and announce every new post in a Discord chan
 - Your own message text, with `{title}`, `{url}`, `{author}` and `{subreddit}` filled in
 - Pings any roles you tick, plus any members you list
 - Checked every 5 minutes; the first check notes what is already there so switching a watch on never dumps old posts into the channel
+- Handles Reddit turning a cloud-hosted bot away: retries on `old.reddit.com`, then waits it out instead of hammering
 - **Announcements only** — the bot will not ask anyone to upvote, because [organised voting gets accounts banned](#a-word-on-upvotes)
 
 ### ⚙️ Server & Maintenance
@@ -265,7 +266,7 @@ GOOGLE_CREDENTIALS={...paste entire JSON key file contents here...}
 
 The optional [web interface](#web-ui) adds `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `WEB_SECRET_KEY` and `WEB_BASE_URL`. Leave them empty and the bot behaves exactly as before — no web server is started at all.
 
-`REDDIT_USER_AGENT` is optional and only matters if you use [Reddit announcements](#reddit-announcements): it is how the bot identifies itself when it reads a feed, and Reddit throttles clients that don't. Something like `orbatbot/1.0 (by /u/YourRedditName)` is ideal.
+`REDDIT_USER_AGENT` is optional and only matters if you use [Reddit announcements](#reddit-announcements): it is how the bot identifies itself when it reads a feed, and Reddit throttles clients that don't. Something like `orbatbot/1.0 (by /u/YourRedditName)` is ideal. Note that it does not on its own guarantee Reddit will serve the feed to a cloud-hosted bot — see [Reddit announcements](#reddit-announcements) for what happens when it doesn't.
 
 ---
 
@@ -804,7 +805,11 @@ No privileged intents are needed for this feature.
 
 Watch a Reddit account or a subreddit, and every time something new is posted, the bot announces it in a Discord channel — with your wording and your pings. It is set up in the [web interface](#web-ui) under **📣 Reddit**, admin only.
 
-**No Reddit account, API key or app registration is needed.** Every user and every subreddit has a public RSS feed, and that is all the bot reads. The one thing worth setting is `REDDIT_USER_AGENT`, so Reddit can see who is asking — clients that don't say get throttled.
+**No Reddit account, API key or app registration is needed.** Every user and every subreddit has a public RSS feed, and that is all the bot reads. Do set `REDDIT_USER_AGENT`, so Reddit can see who is asking — clients that don't say get throttled.
+
+That may not be enough on its own, and it is worth knowing why before you go looking for a setting to change: **Reddit also refuses requests based on where they come from.** A hosting provider's address — Railway's included — gets turned away from the public feeds with `429 Too Many Requests` however politely it identifies itself, and however rarely it asks. One watch checked every five minutes is 288 requests a day, which is nothing at all; being refused is not about that number and cannot be fixed by lowering it.
+
+So when a check is refused, the bot retries the same feed on `old.reddit.com`, which is the older renderer and is much less fussy about who is asking. If both turn it down, the watch **stands down** for half an hour (or for whatever `Retry-After` Reddit asked for) rather than asking again every five minutes, since hammering a refusal is what makes a passing throttle into a permanent one. The list page says when the next attempt is due, and **Check now** ignores the wait, so you can always try immediately by hand.
 
 ### A word on upvotes
 
@@ -846,6 +851,7 @@ The first check after that notes down what is already on the feed and announces 
 - **Errors are visible.** A misspelled name, a private or suspended account, a channel the bot lost access to — the reason for the last failed check is shown next to the watch on the list.
 - **Repointing a watch resets it.** Change which user or subreddit it follows and it starts fresh from that feed's current posts, rather than announcing its back catalogue.
 - **A watch with no channel is simply idle** — untick *Check this feed* to park one without losing its text.
+- **Persistent `429`s are a hosting problem, not a settings problem** — see above. If a watch is refused from both hosts every single time, the public feed is not usable from that server's address, and the way through is Reddit's OAuth API with a registered script app rather than any change to how often it checks.
 
 ---
 

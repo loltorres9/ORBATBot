@@ -145,3 +145,38 @@ def test_a_feed_that_cannot_be_read_records_the_reason(run, monkeypatch):
     assert stored == {'error': 'Reddit answered 404.'}
     # Nothing was forgotten: seen_ids is untouched on a failed read.
     assert 'seen_ids' not in stored
+
+
+def test_being_refused_stands_the_watch_down(monkeypatch):
+    """A rate limit records when to try again, and forgets nothing.
+
+    Asking again on the next tick is what turns a passing throttle into a
+    standing one, so the row carries a `retry_at` that `get_due_reddit_feeds()`
+    filters on.
+    """
+    async def refused(kind, source, **kwargs):
+        raise reddit.RateLimited('Reddit is rate-limiting this server.', 900)
+
+    stored = {}
+
+    async def fake_record(feed_id, **values):
+        stored.update(values)
+
+    monkeypatch.setattr(reddit, 'fetch', refused)
+    monkeypatch.setattr(database, 'record_reddit_read', fake_record)
+    bot = FakeBot(FakeGuild(FakeChannel()))
+
+    with pytest.raises(reddit.RateLimited):
+        asyncio.run(redditfeed.check_feed(bot, make_feed(seen_ids='t3_1')))
+
+    assert 'seen_ids' not in stored          # nothing is forgotten
+    ahead = stored['retry_at'] - datetime.datetime.utcnow()
+    assert 890 < ahead.total_seconds() <= 900
+    assert stored['retry_at'].tzinfo is None, 'stored times are naive UTC'
+
+
+def test_a_read_that_gets_through_clears_the_stand_down(run):
+    # `retry_at` defaults to None on every recorded read, so the watch is back
+    # in the rotation as soon as one succeeds.
+    _, stored, _ = run(make_feed(seen_ids='t3_1'), make_posts(2))
+    assert stored.get('retry_at') is None

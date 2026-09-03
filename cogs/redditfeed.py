@@ -19,6 +19,7 @@ scheduled one does.
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord.ext import commands, tasks
@@ -80,6 +81,11 @@ def build_message(feed, post: dict) -> str:
     return body[:MAX_MESSAGE]
 
 
+def _cooldown_until(seconds: int) -> datetime:
+    """Naive UTC, like every stored time here."""
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).replace(tzinfo=None)
+
+
 def _seen_list(feed) -> list:
     """The ids already announced, or None when the watch has never been read."""
     if feed['seen_ids'] is None:
@@ -108,6 +114,15 @@ async def check_feed(bot: commands.Bot, feed) -> dict:
 
     try:
         posts = await reddit.fetch(feed['kind'], feed['source'])
+    except reddit.RateLimited as e:
+        # Reddit refused us rather than the feed. Asking again on the next tick
+        # is what turns a passing throttle into a standing one, so the watch
+        # stands down until `retry_at` — `get_due_reddit_feeds()` skips it, and
+        # the next read that gets through clears it.
+        await database.record_reddit_read(
+            feed['id'], error=str(e), retry_at=_cooldown_until(e.retry_after)
+        )
+        raise
     except reddit.FeedError as e:
         await database.record_reddit_read(feed['id'], error=str(e))
         raise
@@ -197,6 +212,9 @@ class RedditFeedCog(commands.Cog):
                 result = await check_feed(self.bot, feed)
                 if result.get('error'):
                     print(f"⚠️ redditfeed {feed['id']}: {result['error']}")
+            except reddit.RateLimited as e:
+                print(f"⚠️ redditfeed {feed['id']} ({feed['source']}): {e} "
+                      f"Standing down for {e.retry_after // 60} minute(s).")
             except (reddit.FeedError, ValueError) as e:
                 # Already recorded on the row, where the web page shows it.
                 print(f"⚠️ redditfeed {feed['id']} ({feed['source']}): {e}")

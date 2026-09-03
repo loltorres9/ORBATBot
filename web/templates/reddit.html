@@ -52,6 +52,13 @@
             {% elif row.feed.last_checked_at %}
               <div class="muted">last checked {{ relative(row.feed.last_checked_at) }}</div>
             {% endif %}
+            {% if row.paused_until %}
+              <div class="muted">
+                Waiting it out — the next scheduled check is
+                {{ relative(row.paused_until) }}. <strong>Check now</strong>
+                tries straight away.
+              </div>
+            {% endif %}
           </td>
           <td class="rowactions">
             <form method="post" action="/g/{{ guild.id }}/reddit/{{ row.feed.id }}/check">
