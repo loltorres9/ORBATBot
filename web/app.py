@@ -1267,6 +1267,24 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                             'warn', str(e))
         return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts", 'ok', note)
 
+    @app.post('/g/{guild_id}/reddit/{feed_id}/mark')
+    async def mark_reddit_post(request: Request, guild_id: str, feed_id: int):
+        """Take posts out of the queue without announcing them.
+
+        No `post_id` means everything the feed currently carries — which is the
+        one press that stops a backlog going out three at a time.
+        """
+        context = await feed_context(request, guild_id, feed_id)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            note = await reddit_service.mark(context['feed'], form.get('post_id'))
+        except ValueError as e:
+            return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts",
+                            'warn', str(e))
+        return redirect(request, f"/g/{guild_id}/reddit/{feed_id}/posts", 'ok', note)
+
     @app.post('/g/{guild_id}/reddit/{feed_id}/delete')
     async def delete_reddit_feed(request: Request, guild_id: str, feed_id: int):
         context = await feed_context(request, guild_id, feed_id)

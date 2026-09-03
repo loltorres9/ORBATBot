@@ -242,6 +242,46 @@ async def announce_post(bot: commands.Bot, feed, post_id: str) -> dict:
     )
     return post
 
+async def mark_announced(feed, post_ids=None) -> dict:
+    """Mark posts as already announced, without posting anything.
+
+    The way past a flood. A watch whose feed suddenly fills up — an account that
+    un-hid its posts, a subreddit that was quiet for a month — would otherwise
+    work through the backlog three posts at a time until every one of them had
+    been announced. Marking them takes them out of the queue silently.
+
+    `post_ids` of None means everything the feed currently carries, which is the
+    same thing a first read does and is what makes it one press rather than
+    twenty-five.
+    """
+    _, posts = await reddit.fetch_from(feed['kind'], feed['source'])
+    on_feed = [p['id'] for p in posts]
+
+    wanted = on_feed if post_ids is None else [i for i in post_ids if i in on_feed]
+    if post_ids is not None and not wanted:
+        raise ValueError(
+            "That post isn't on the feed any more, so there is nothing to mark."
+        )
+
+    seen = _seen_list(feed)
+    seeded = seen is None
+    if seeded:
+        # Never read. Its first check would have marked the whole feed and
+        # announced nothing, so doing that now changes no outcome — while
+        # marking only the chosen post would leave the rest of the feed queued
+        # up, which is the flood this is here to prevent.
+        seen, wanted = [], on_feed
+
+    added = [i for i in wanted if i not in seen]
+    newest = next((p['published'] for p in posts if p['published']), None)
+    await database.record_reddit_read(
+        feed['id'],
+        seen_ids=','.join((added + seen)[:MAX_SEEN]),
+        last_post_at=newest.replace(tzinfo=None) if newest else None,
+    )
+    return {'marked': len(added), 'seeded': seeded, 'on_feed': len(on_feed)}
+
+
 
 class RedditFeedCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

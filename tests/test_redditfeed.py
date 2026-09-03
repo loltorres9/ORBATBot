@@ -284,3 +284,68 @@ def test_a_profile_post_is_named_for_what_it_is():
     # A feed that carried only the label, without the term behind it.
     assert where({'subreddit': 'u/TaskForcePhalanx'}).startswith('u/TaskForcePhalanx')
     assert where({'subreddit': ''}) == ''
+
+
+# -- marking without announcing ---------------------------------------------
+
+@pytest.fixture
+def mark(monkeypatch):
+    """Mark posts as announced. Returns (messages sent, stored row, result)."""
+    def runner(feed, posts, post_ids=None):
+        channel = FakeChannel()
+        stored = {}
+
+        async def fake_fetch_from(kind, source, **kwargs):
+            return 'https://www.reddit.com/x.rss', posts
+
+        async def fake_record(feed_id, **values):
+            stored.update(values)
+
+        monkeypatch.setattr(reddit, 'fetch_from', fake_fetch_from)
+        monkeypatch.setattr(database, 'record_reddit_read', fake_record)
+        result = asyncio.run(redditfeed.mark_announced(feed, post_ids))
+        return channel.sent, stored, result
+    return runner
+
+
+def test_marking_the_whole_feed_posts_nothing(mark):
+    # The flood stopper: a feed that suddenly fills up would otherwise go out
+    # three posts at a time until it had all been announced.
+    sent, stored, result = mark(make_feed(seen_ids='t3_1'), make_posts(5))
+    assert sent == []
+    assert result['marked'] == 4
+    assert sorted(stored['seen_ids'].split(',')) == [
+        't3_1', 't3_2', 't3_3', 't3_4', 't3_5'
+    ]
+
+
+def test_marking_one_post_leaves_the_others_queued(mark):
+    _, stored, result = mark(make_feed(seen_ids='t3_1'), make_posts(4), ['t3_3'])
+    assert result['marked'] == 1
+    assert stored['seen_ids'].split(',') == ['t3_3', 't3_1']
+
+
+def test_marking_something_already_marked_changes_nothing(mark):
+    _, stored, result = mark(make_feed(seen_ids='t3_2,t3_1'), make_posts(2), ['t3_2'])
+    assert result['marked'] == 0
+    assert stored['seen_ids'].split(',') == ['t3_2', 't3_1']
+
+
+def test_marking_on_a_never_read_watch_marks_the_whole_feed(mark):
+    # Its first check would have done exactly that and announced nothing, so
+    # this changes no outcome — while marking only the chosen post would leave
+    # the rest of the feed queued up, which is the flood being prevented.
+    _, stored, result = mark(make_feed(seen_ids=None), make_posts(3), ['t3_2'])
+    assert result['seeded'] is True
+    assert sorted(stored['seen_ids'].split(',')) == ['t3_1', 't3_2', 't3_3']
+
+
+def test_marking_a_post_the_feed_no_longer_carries_says_so(mark):
+    with pytest.raises(ValueError, match="isn't on the feed"):
+        mark(make_feed(seen_ids='t3_1'), make_posts(2), ['t3_99'])
+
+
+def test_marking_keeps_the_remembered_window_capped(mark):
+    feed = make_feed(seen_ids=','.join(f't3_old{n}' for n in range(redditfeed.MAX_SEEN)))
+    _, stored, _ = mark(feed, make_posts(3))
+    assert len(stored['seen_ids'].split(',')) == redditfeed.MAX_SEEN

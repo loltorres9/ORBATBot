@@ -22,6 +22,7 @@ from cogs.redditfeed import (
     announce_post,
     build_message,
     check_feed,
+    mark_announced,
     mention_ids,
 )
 from utils import database, reddit
@@ -293,6 +294,31 @@ async def catch_up(bot: commands.Bot, feed, post_id: str) -> str:
     except reddit.FeedError as e:
         raise ValueError(str(e))
     return f"Announced “{post['title'][:80]}”."
+
+
+async def mark(feed, post_id: str = None) -> str:
+    """Mark one post, or the whole feed, as already announced.
+
+    Nothing is posted. Returns what to flash.
+    """
+    try:
+        result = await mark_announced(feed, [post_id.strip()] if post_id else None)
+    except reddit.RateLimited as e:
+        raise ValueError(
+            f"{e} The feed has to be read to know what to mark — try again in "
+            f"{e.retry_after // 60} minutes."
+        )
+    except reddit.FeedError as e:
+        raise ValueError(str(e))
+
+    if result['seeded']:
+        return (f"This watch hadn't been read yet, so all {result['on_feed']} post(s) "
+                "on the feed are now marked as announced. Only what comes after "
+                "them will be posted.")
+    if not result['marked']:
+        return "Nothing to do — that was already marked as announced."
+    return (f"Marked {result['marked']} post(s) as announced. "
+            "They won't be posted to the channel.")
 
 
 def _future(when):

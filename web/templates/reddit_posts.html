@@ -29,6 +29,27 @@
 </p>
 
 {% if posts %}
+  {% set pending = posts | rejectattr('announced') | list %}
+  {% if pending %}
+    <div class="managebar">
+      <form class="inlineform" method="post"
+            action="/g/{{ guild.id }}/reddit/{{ feed.id }}/mark"
+            onsubmit="return confirm('Mark every post on the feed as announced? Nothing is posted.')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="button" type="submit">
+          Mark all {{ posts|length }} as announced
+        </button>
+      </form>
+    </div>
+    <p class="hint">
+      Marking takes posts out of the queue <em>without</em> posting anything —
+      the way to stop a backlog going out three at a time. Press this after the
+      feed suddenly fills up (an account that un-hid its posts, a quiet
+      subreddit that woke up), and only what comes <em>after</em> today is
+      announced.
+    </p>
+  {% endif %}
+
   <table class="rolelist">
     <tbody>
       {% for post in posts %}
@@ -58,6 +79,12 @@
               <button class="button" type="submit">
                 {{ 'Announce again' if post.announced else 'Announce' }}
               </button>
+              {% if not post.announced %}
+                <button class="button" type="submit"
+                        formaction="/g/{{ guild.id }}/reddit/{{ feed.id }}/mark">
+                  Mark as announced
+                </button>
+              {% endif %}
             </form>
           </td>
         </tr>
