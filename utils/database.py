@@ -1410,6 +1410,24 @@ async def save_reddit_feed(feed_id: int, values: dict):
             raise ValueError(_DUPLICATE_FEED)
 
 
+async def set_reddit_feed_seen(feed_id: int, seen_ids: str):
+    """Write what has been announced, and nothing else.
+
+    Marking a post by hand is bookkeeping, not a read, so it deliberately does
+    not go through `record_reddit_read()`: that would clear `last_error` and the
+    stand-down after a refusal, both of which say something about Reddit rather
+    than about what has been announced.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE reddit_feeds SET seen_ids = $2,
+                    updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $1''',
+            feed_id, seen_ids,
+        )
+
+
 async def reset_reddit_feed_seen(feed_id: int):
     """Forget what this watch has announced.
 

@@ -76,7 +76,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(97 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(99 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
 what `check_feed()` promises about announcing a post exactly once. The date logic in
@@ -1142,7 +1142,7 @@ POST /g/{guild}/reddit/{id}/preview     the newest post as it would be announced
 POST /g/{guild}/reddit/{id}/check       the scheduled check, run now
 GET  /g/{guild}/reddit/{id}/posts       what the feed still carries, to catch one up
 POST /g/{guild}/reddit/{id}/announce    post one of them by hand
-POST /g/{guild}/reddit/{id}/mark        mark one, or all, as announced — posts nothing
+POST /g/{guild}/reddit/{id}/mark        mark the ticked posts as announced — posts nothing
 POST /g/{guild}/reddit/{id}/delete      stop watching
 GET  /g/{guild}/logs                    admin — member log settings, POST to save
 GET  /g/{guild}/voice                   voice leaderboard; admins also get the settings
@@ -1725,14 +1725,33 @@ only carries one post" are different problems, and this is the only place the
 difference can be seen. A `u_Name` post rendered as `r/u_Name` reads like a bug
 next to `r/arma`, which is what hid the question in the first place.
 
-**The same page marks a post as announced without posting it** —
-`mark_announced()`, and with no post id, everything the feed carries. That is
-the way past a flood: a watch whose feed suddenly fills up (an account that
-un-hid its posts, a subreddit that woke up) would otherwise work through the
-backlog `MAX_PER_CHECK` at a time until all of it had been announced. On a watch
-that has **never been read** it marks the whole feed whatever was asked for,
-because its first check would have done exactly that — marking only the chosen
-post would leave the rest queued, which is the flood being prevented.
+**The same page marks posts as announced without posting them** —
+tick the ones to skip, or **Mark all**. That is the way past a flood: a watch
+whose feed suddenly fills up (an account that un-hid its posts, a subreddit that
+woke up) would otherwise work through the backlog `MAX_PER_CHECK` at a time
+until all of it had been announced. On a watch that has **never been read** it
+marks everything the page listed whatever was ticked, because its first check
+would have done exactly that — marking only the ticked posts would leave the
+rest queued, which is the flood being prevented.
+
+**`mark_announced()` reads nothing.** The ids come from the page, which has just
+read the feed; going back to Reddit to write down a decision somebody has
+already made fails at the one moment it matters — when Reddit is refusing us,
+which is when a backlog most needs marking. It writes through
+`set_reddit_feed_seen()` rather than `record_reddit_read()` for the same reason:
+marking is bookkeeping, not a read, so it must not clear `last_error` or the
+stand-down, which say something about Reddit rather than about what has been
+announced.
+
+**The rest of the page reuses that read too.** `remember_posts()` holds what was
+last read for `RECENT_TTL`, and `announce_post()` takes it from there rather
+than asking again — pressing a button on the page is the second half of one
+interaction. `check_feed()` deliberately does not use it: the scheduled check
+must see the feed as it is now.
+
+The ticking form holds no rows of its own. The checkboxes point at it with the
+`form` attribute, which is what lets each row keep its own **Announce** form
+without nesting one form inside another.
 
 Two things about it are load-bearing:
 

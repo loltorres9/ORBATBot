@@ -19,6 +19,7 @@ scheduled one does.
 """
 
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -45,6 +46,28 @@ MAX_PER_CHECK = 3
 
 # Discord's message limit.
 MAX_MESSAGE = 2000
+
+
+# What the catch-up page last read for a watch. Pressing a button on that page
+# is the second half of one interaction, so it should not send us back to
+# Reddit: a moment later the answer is the same, and at the one time it matters
+# — Reddit refusing us, a backlog waiting to be marked — asking again is what
+# makes the button fail. The scheduled check deliberately does not use this.
+RECENT_TTL = 600
+_recent: dict = {}
+
+
+def remember_posts(feed, posts) -> None:
+    _recent[int(feed['id'])] = (time.monotonic() + RECENT_TTL, posts)
+
+
+def recall_posts(feed):
+    """What was last read for this watch, while it is still fresh."""
+    hit = _recent.get(int(feed['id']))
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+    _recent.pop(int(feed['id']), None)
+    return None
 
 
 def mention_ids(feed, column: str) -> list:
@@ -206,7 +229,10 @@ async def announce_post(bot: commands.Bot, feed, post_id: str) -> dict:
     """
     channel = _target(bot, feed)
 
-    posts = await reddit.fetch(feed['kind'], feed['source'])
+    # What the page showed, if it is still fresh — see `recall_posts()`.
+    posts = recall_posts(feed)
+    if posts is None:
+        posts = await reddit.fetch(feed['kind'], feed['source'])
     post = next((p for p in posts if p['id'] == post_id), None)
     if post is None:
         raise ValueError(
@@ -242,7 +268,7 @@ async def announce_post(bot: commands.Bot, feed, post_id: str) -> dict:
     )
     return post
 
-async def mark_announced(feed, post_ids=None) -> dict:
+async def mark_announced(feed, post_ids, feed_ids=None) -> dict:
     """Mark posts as already announced, without posting anything.
 
     The way past a flood. A watch whose feed suddenly fills up — an account that
@@ -250,36 +276,32 @@ async def mark_announced(feed, post_ids=None) -> dict:
     work through the backlog three posts at a time until every one of them had
     been announced. Marking them takes them out of the queue silently.
 
-    `post_ids` of None means everything the feed currently carries, which is the
-    same thing a first read does and is what makes it one press rather than
-    twenty-five.
+    **It reads nothing.** The page that offers this has just read the feed, and
+    marking is bookkeeping on what was shown there; going back to Reddit to
+    write down a decision the person already made is pointless, and fails
+    outright at the moment Reddit is refusing us — which is exactly when a
+    backlog needs marking. So the ids come from the page: `post_ids` is what to
+    mark, `feed_ids` is everything the page listed.
     """
-    _, posts = await reddit.fetch_from(feed['kind'], feed['source'])
-    on_feed = [p['id'] for p in posts]
-
-    wanted = on_feed if post_ids is None else [i for i in post_ids if i in on_feed]
-    if post_ids is not None and not wanted:
-        raise ValueError(
-            "That post isn't on the feed any more, so there is nothing to mark."
-        )
+    post_ids = [i for i in (post_ids or []) if i]
+    feed_ids = [i for i in (feed_ids or []) if i]
+    if not post_ids:
+        raise ValueError("Nothing was ticked, so nothing was marked.")
 
     seen = _seen_list(feed)
     seeded = seen is None
     if seeded:
         # Never read. Its first check would have marked the whole feed and
         # announced nothing, so doing that now changes no outcome — while
-        # marking only the chosen post would leave the rest of the feed queued
+        # marking only the ticked posts would leave the rest of the feed queued
         # up, which is the flood this is here to prevent.
-        seen, wanted = [], on_feed
+        seen, post_ids = [], list(dict.fromkeys(post_ids + feed_ids))
 
-    added = [i for i in wanted if i not in seen]
-    newest = next((p['published'] for p in posts if p['published']), None)
-    await database.record_reddit_read(
-        feed['id'],
-        seen_ids=','.join((added + seen)[:MAX_SEEN]),
-        last_post_at=newest.replace(tzinfo=None) if newest else None,
+    added = [i for i in dict.fromkeys(post_ids) if i not in seen]
+    await database.set_reddit_feed_seen(
+        feed['id'], ','.join((added + seen)[:MAX_SEEN])
     )
-    return {'marked': len(added), 'seeded': seeded, 'on_feed': len(on_feed)}
+    return {'marked': len(added), 'seeded': seeded}
 
 
 

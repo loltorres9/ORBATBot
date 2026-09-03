@@ -7,6 +7,7 @@ both are stubbed, since what is being tested is the bookkeeping around them.
 
 import asyncio
 import datetime
+import time
 
 import pytest
 
@@ -290,62 +291,113 @@ def test_a_profile_post_is_named_for_what_it_is():
 
 @pytest.fixture
 def mark(monkeypatch):
-    """Mark posts as announced. Returns (messages sent, stored row, result)."""
-    def runner(feed, posts, post_ids=None):
-        channel = FakeChannel()
+    """Mark posts as announced. Returns (what was written, result).
+
+    Nothing is stubbed for Reddit on purpose: marking must not read the feed,
+    so a test that reaches the network would fail rather than pass quietly.
+    """
+    def runner(feed, post_ids, feed_ids=None):
         stored = {}
 
-        async def fake_fetch_from(kind, source, **kwargs):
-            return 'https://www.reddit.com/x.rss', posts
+        async def fake_set(feed_id, seen_ids):
+            stored['seen_ids'] = seen_ids
 
-        async def fake_record(feed_id, **values):
-            stored.update(values)
+        async def must_not_run(*args, **kwargs):
+            raise AssertionError('marking must not read the feed')
 
-        monkeypatch.setattr(reddit, 'fetch_from', fake_fetch_from)
-        monkeypatch.setattr(database, 'record_reddit_read', fake_record)
-        result = asyncio.run(redditfeed.mark_announced(feed, post_ids))
-        return channel.sent, stored, result
+        monkeypatch.setattr(database, 'set_reddit_feed_seen', fake_set)
+        monkeypatch.setattr(reddit, 'fetch', must_not_run)
+        monkeypatch.setattr(reddit, 'fetch_from', must_not_run)
+        result = asyncio.run(redditfeed.mark_announced(feed, post_ids, feed_ids))
+        return stored, result
     return runner
 
 
-def test_marking_the_whole_feed_posts_nothing(mark):
+def ids(count):
+    """The ids a page would have listed, newest first."""
+    return [f't3_{n}' for n in range(count, 0, -1)]
+
+
+def test_marking_the_listed_posts_reads_nothing_and_posts_nothing(mark):
     # The flood stopper: a feed that suddenly fills up would otherwise go out
     # three posts at a time until it had all been announced.
-    sent, stored, result = mark(make_feed(seen_ids='t3_1'), make_posts(5))
-    assert sent == []
+    listed = ids(5)
+    stored, result = mark(make_feed(seen_ids='t3_1'), listed, listed)
     assert result['marked'] == 4
     assert sorted(stored['seen_ids'].split(',')) == [
         't3_1', 't3_2', 't3_3', 't3_4', 't3_5'
     ]
 
 
-def test_marking_one_post_leaves_the_others_queued(mark):
-    _, stored, result = mark(make_feed(seen_ids='t3_1'), make_posts(4), ['t3_3'])
+def test_ticking_some_leaves_the_others_queued(mark):
+    stored, result = mark(make_feed(seen_ids='t3_1'), ['t3_3'], ids(4))
     assert result['marked'] == 1
     assert stored['seen_ids'].split(',') == ['t3_3', 't3_1']
 
 
 def test_marking_something_already_marked_changes_nothing(mark):
-    _, stored, result = mark(make_feed(seen_ids='t3_2,t3_1'), make_posts(2), ['t3_2'])
+    stored, result = mark(make_feed(seen_ids='t3_2,t3_1'), ['t3_2'], ids(2))
     assert result['marked'] == 0
     assert stored['seen_ids'].split(',') == ['t3_2', 't3_1']
 
 
-def test_marking_on_a_never_read_watch_marks_the_whole_feed(mark):
+def test_marking_on_a_never_read_watch_marks_everything_listed(mark):
     # Its first check would have done exactly that and announced nothing, so
-    # this changes no outcome — while marking only the chosen post would leave
+    # this changes no outcome — while marking only the ticked post would leave
     # the rest of the feed queued up, which is the flood being prevented.
-    _, stored, result = mark(make_feed(seen_ids=None), make_posts(3), ['t3_2'])
+    stored, result = mark(make_feed(seen_ids=None), ['t3_2'], ids(3))
     assert result['seeded'] is True
     assert sorted(stored['seen_ids'].split(',')) == ['t3_1', 't3_2', 't3_3']
 
 
-def test_marking_a_post_the_feed_no_longer_carries_says_so(mark):
-    with pytest.raises(ValueError, match="isn't on the feed"):
-        mark(make_feed(seen_ids='t3_1'), make_posts(2), ['t3_99'])
+def test_ticking_nothing_says_so(mark):
+    with pytest.raises(ValueError, match='Nothing was ticked'):
+        mark(make_feed(seen_ids='t3_1'), [], ids(2))
 
 
 def test_marking_keeps_the_remembered_window_capped(mark):
     feed = make_feed(seen_ids=','.join(f't3_old{n}' for n in range(redditfeed.MAX_SEEN)))
-    _, stored, _ = mark(feed, make_posts(3))
+    listed = ids(3)
+    stored, _ = mark(feed, listed, listed)
     assert len(stored['seen_ids'].split(',')) == redditfeed.MAX_SEEN
+
+
+# -- what the page read, reused by its own buttons --------------------------
+
+def test_announcing_reuses_what_the_page_read(monkeypatch):
+    """Pressing a button on the catch-up page is the second half of one
+    interaction; going back to Reddit for it fails at the one moment it
+    matters, when Reddit is refusing us."""
+    channel = FakeChannel()
+    bot = FakeBot(FakeGuild(channel))
+    feed = make_feed(seen_ids='')
+    posts = make_posts(2)
+
+    async def must_not_run(*args, **kwargs):
+        raise AssertionError('the page already read this')
+
+    async def fake_set(feed_id, seen_ids):
+        pass
+
+    async def fake_record(feed_id, **values):
+        pass
+
+    redditfeed.remember_posts(feed, posts)
+    monkeypatch.setattr(reddit, 'fetch', must_not_run)
+    monkeypatch.setattr(database, 'record_reddit_read', fake_record)
+    monkeypatch.setattr(database, 'set_reddit_feed_seen', fake_set)
+
+    post = asyncio.run(redditfeed.announce_post(bot, feed, 't3_2'))
+    assert post['title'] == 'Post 2'
+    assert len(channel.sent) == 1
+
+
+def test_a_stale_read_is_not_reused(monkeypatch):
+    feed = make_feed(seen_ids='')
+    redditfeed.remember_posts(feed, make_posts(1))
+    # Bound before patching: `redditfeed.time` is the module itself, so the
+    # replacement would otherwise call itself.
+    real = time.monotonic
+    monkeypatch.setattr(redditfeed.time, 'monotonic',
+                        lambda: real() + redditfeed.RECENT_TTL + 1)
+    assert redditfeed.recall_posts(feed) is None

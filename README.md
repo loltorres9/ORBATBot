@@ -855,9 +855,11 @@ The one limit is that only what the feed still lists can be caught up: Reddit's 
 
 ### Stopping a flood
 
-The same page marks posts as announced **without posting them**: **Mark as announced** on one row, or **Mark all as announced** for everything the feed carries.
+Tick the posts you *don't* want announced and press **Mark ticked as announced** — or **Mark all** for the whole list. Nothing is posted; the posts simply leave the queue.
 
-That is what to press when a feed suddenly fills up — an account that un-hid its posts, a subreddit that was quiet for a month. Without it the bot works through the backlog three posts at a time, every five minutes, until all of it has been announced. Mark them, and only what comes *after* that point reaches the channel.
+That is what to do when a feed suddenly fills up — an account that un-hid its posts, a subreddit that was quiet for a month. Without it the bot works through the backlog three posts at a time, every five minutes, until all of it has been announced. Mark them, and only what comes *after* that point reaches the channel.
+
+Marking needs no connection to Reddit: the page has already read the feed, so ticking and marking works even while Reddit is refusing the server — which is exactly when a backlog is waiting.
 
 The page also names **the exact address it read and how many entries came back**, with a link to open it yourself. That is the answer to "why hasn't it announced X": if a post is missing from that page, it is missing from the feed, not being skipped by the bot. Each post says where it lives too — `r/arma`, or *the author's own profile* for one posted to `u/TheirName`.
 
