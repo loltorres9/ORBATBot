@@ -24,6 +24,7 @@ from cogs.redditfeed import (
     check_feed,
     mark_announced,
     mention_ids,
+    remember_posts,
 )
 from utils import database, reddit
 from web.guilds import postable_channels
@@ -264,6 +265,8 @@ async def recent(feed) -> dict:
     is the only place the difference can be seen.
     """
     url, posts = await reddit.fetch_from(feed['kind'], feed['source'])
+    # So the buttons on the page it builds don't have to ask Reddit again.
+    remember_posts(feed, posts)
     seen = {part for part in (feed['seen_ids'] or '').split(',') if part}
     never_read = feed['seen_ids'] is None
     return {
@@ -296,27 +299,19 @@ async def catch_up(bot: commands.Bot, feed, post_id: str) -> str:
     return f"Announced “{post['title'][:80]}”."
 
 
-async def mark(feed, post_id: str = None) -> str:
-    """Mark one post, or the whole feed, as already announced.
+async def mark(feed, post_ids, feed_ids) -> str:
+    """Mark the chosen posts as already announced. Returns what to flash.
 
-    Nothing is posted. Returns what to flash.
+    Nothing is posted and nothing is read — the ids come from the page, which
+    has just read the feed.
     """
-    try:
-        result = await mark_announced(feed, [post_id.strip()] if post_id else None)
-    except reddit.RateLimited as e:
-        raise ValueError(
-            f"{e} The feed has to be read to know what to mark — try again in "
-            f"{e.retry_after // 60} minutes."
-        )
-    except reddit.FeedError as e:
-        raise ValueError(str(e))
-
+    result = await mark_announced(feed, post_ids, feed_ids)
     if result['seeded']:
-        return (f"This watch hadn't been read yet, so all {result['on_feed']} post(s) "
+        return (f"This watch hadn't been read yet, so all {result['marked']} post(s) "
                 "on the feed are now marked as announced. Only what comes after "
                 "them will be posted.")
     if not result['marked']:
-        return "Nothing to do — that was already marked as announced."
+        return "Nothing to do — those were already marked as announced."
     return (f"Marked {result['marked']} post(s) as announced. "
             "They won't be posted to the channel.")
 
