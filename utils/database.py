@@ -198,9 +198,18 @@ async def init_db():
                 log_ban INTEGER NOT NULL DEFAULT 1,
                 log_unban INTEGER NOT NULL DEFAULT 1,
                 track_invites INTEGER NOT NULL DEFAULT 1,
+                welcome_channel_id TEXT,
+                welcome_message TEXT,
+                welcome_dm INTEGER NOT NULL DEFAULT 0,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Older deployments already have the table without the welcome columns.
+        await db.execute('ALTER TABLE log_settings ADD COLUMN IF NOT EXISTS welcome_channel_id TEXT')
+        await db.execute('ALTER TABLE log_settings ADD COLUMN IF NOT EXISTS welcome_message TEXT')
+        await db.execute(
+            'ALTER TABLE log_settings ADD COLUMN IF NOT EXISTS welcome_dm INTEGER NOT NULL DEFAULT 0'
+        )
         # Where each invite link was published, so a join can say "came in through
         # the Steam group" instead of only naming a code.
         await db.execute('''
@@ -1292,7 +1301,7 @@ async def set_embed_fields(embed_id: int, fields: list):
 
 _LOG_COLUMNS = (
     'channel_id', 'log_join', 'log_leave', 'log_kick', 'log_ban', 'log_unban',
-    'track_invites',
+    'track_invites', 'welcome_channel_id', 'welcome_message', 'welcome_dm',
 )
 
 
