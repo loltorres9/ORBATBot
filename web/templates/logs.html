@@ -87,6 +87,45 @@
     <em>Invite used: Unknown</em>, saying which of those it was.
   </p>
 
+  <h3>Welcome message</h3>
+  <p class="hint">
+    Greets a new member directly — separate from the log above, and works whether
+    or not that is switched on. Post it in a channel, send it as a DM, both, or
+    neither.
+  </p>
+
+  <label class="field">
+    <span>Welcome channel</span>
+    <select name="welcome_channel_id">
+      <option value="">Don't post in a channel</option>
+      {% for channel in channels %}
+        <option value="{{ channel.id }}"
+          {% if settings and settings.welcome_channel_id and settings.welcome_channel_id|int == channel.id %}selected{% endif %}>#{{ channel.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="check">
+    <input type="checkbox" name="welcome_dm" value="1"
+           {% if settings and settings.welcome_dm %}checked{% endif %}>
+    <span>Also send it as a DM</span>
+  </label>
+  <p class="hint">
+    Skipped quietly for anyone with DMs closed to the bot — nothing is shown for
+    that, the same as a message Discord otherwise refuses.
+  </p>
+
+  <label class="field">
+    <span>Message</span>
+    <textarea name="welcome_message" rows="3" maxlength="1000"
+              placeholder="{{ welcome_default_template }}">{{ (settings.welcome_message if settings else None) or '' }}</textarea>
+  </label>
+  <p class="hint">
+    Placeholders: {% for name in welcome_placeholders %}<code>{{ '{' ~ name ~ '}' }}</code>{% if not loop.last %} · {% endif %}{% endfor %}.
+    Left empty, the default above is used. <code>{member}</code> pings them —
+    the point of a welcome message — the others don't.
+  </p>
+
   <div class="actions">
     <button class="button primary" type="submit">Save</button>
   </div>

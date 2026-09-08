@@ -376,6 +376,9 @@ nothing is announced — see [Member log](#member-log-cogsmemberlogpy).
 | `channel_id` | TEXT | Where announcements go. NULL = logging off |
 | `log_join` / `log_leave` / `log_kick` / `log_ban` / `log_unban` | INTEGER | 0/1 per event type |
 | `track_invites` | INTEGER | 0/1 — whether to work out which invite a join used |
+| `welcome_channel_id` | TEXT | Where the welcome message is posted publicly. NULL = not posted anywhere — independent of `channel_id` above |
+| `welcome_message` | TEXT | The welcome template as typed. NULL = `memberlog.DEFAULT_WELCOME_TEMPLATE` |
+| `welcome_dm` | INTEGER | 0/1 — also send the welcome message as a DM |
 | `updated_at` | TIMESTAMP | |
 
 ### `invite_labels`
@@ -1802,6 +1805,36 @@ limit here is the form, which has no JavaScript to add rows with.
 Announces joins, leaves, kicks, bans and unbans in a channel chosen per guild
 (`log_settings`). Nothing is posted until a channel is set; each event type has its
 own flag.
+
+### Welcome messages are a separate, member-facing thing
+
+The join log above is written for staff — one line in whatever channel they
+picked, saying who joined and how. `on_member_join` also greets the member
+directly, through `_send_welcome()`, and the two are deliberately independent:
+
+- **A different channel, or none.** `log_settings.welcome_channel_id` is its
+  own column, not `channel_id`. The log channel is often a private mod channel;
+  a welcome message wants a public one, or no channel at all if only the DM is
+  wanted.
+- **Or a DM, or both, or neither.** `welcome_dm` sends the same rendered text
+  to the member directly. A `discord.Forbidden` there — DMs closed, or no
+  shared guild left to send through — is caught and dropped silently, the same
+  as a channel post Discord refuses.
+- **Neither destination depends on the join log being switched on**, or on
+  `log_join`, or on the members intent being anything other than what it
+  already is — the welcome message uses the same `on_member_join` listener, so
+  it needs the same privileged intent to fire at all, but nothing about
+  `log_settings.channel_id` or `log_join`.
+- **`render_welcome()` is one literal replace per placeholder**
+  (`WELCOME_PLACEHOLDERS`: `member`, `name`, `server`, `member_count`), the
+  same reasoning as `reddit.render()` — the template is text an admin typed,
+  not a format string, so a stray `{` in it must stay harmless. An empty
+  template falls back to `DEFAULT_WELCOME_TEMPLATE`. `{member}` is the only
+  placeholder that pings; the others are plain text.
+- The web form for both — the join log and the welcome message — lives on the
+  same `/g/{guild}/logs` page and posts as **one form**, so a save always
+  carries every checkbox; splitting it into two forms would silently zero out
+  whichever section wasn't submitted.
 
 ### The intent is opt-in, and that is deliberate
 

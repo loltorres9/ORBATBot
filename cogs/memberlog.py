@@ -9,6 +9,12 @@ Two things decide whether this does anything at all:
   Bans and unbans need no privileged intent and work either way.
 * **A configured channel.** Nothing is posted until `log_settings.channel_id` is
   set for the guild, which the web UI does.
+
+On top of that, `on_member_join` also greets the member directly — a public
+message in `log_settings.welcome_channel_id` and/or a DM, entirely independent
+of the staff-facing join log above. Neither needs the other switched on, and
+either one needs its own privileged-intent check the join log already does.
+See `render_welcome()` and `_send_welcome()`.
 """
 
 import asyncio
@@ -60,6 +66,33 @@ COLOR_LEAVE = discord.Color.light_grey()
 COLOR_KICK = discord.Color.orange()
 COLOR_BAN = discord.Color.red()
 COLOR_UNBAN = discord.Color.blue()
+
+# The welcome message is a *greeting to the member*, separate from the join
+# embed above — that one is for staff, in whatever channel they picked as the
+# log channel, and stays quiet about it. This is the "Welcome, @Member!" a
+# guild wants either posted publicly or sent to the person directly.
+WELCOME_PLACEHOLDERS = ('member', 'name', 'server', 'member_count')
+
+DEFAULT_WELCOME_TEMPLATE = 'Welcome to {server}, {member}! 🎉'
+
+
+def render_welcome(template: str, member: discord.Member) -> str:
+    """The welcome text for one join.
+
+    Only the placeholders in `WELCOME_PLACEHOLDERS` are substituted, one literal
+    replace each — a template is text an admin typed, not a format string, so a
+    stray brace in it has to be harmless (the same reasoning as `reddit.render()`).
+    """
+    text = template if (template or '').strip() else DEFAULT_WELCOME_TEMPLATE
+    values = {
+        'member': member.mention,
+        'name': member.display_name,
+        'server': member.guild.name,
+        'member_count': str(member.guild.member_count),
+    }
+    for name in WELCOME_PLACEHOLDERS:
+        text = text.replace('{' + name + '}', values[name])
+    return text.strip()
 
 
 def _stamp(moment) -> str:
@@ -116,6 +149,36 @@ class MemberLogCog(commands.Cog):
             await channel.send(embed=embed)
         except (discord.Forbidden, discord.HTTPException):
             pass
+
+    async def _send_welcome(self, member: discord.Member):
+        """Greets the member — in the welcome channel, as a DM, both or neither.
+
+        Independent of the join log above: a guild without **View Audit Log**
+        or with logging off entirely can still welcome people, and the two
+        destinations are tried separately so one failing (DMs closed, the
+        channel gone) doesn't take out the other.
+        """
+        settings = await database.get_log_settings(str(member.guild.id))
+        if not settings:
+            return
+        text = render_welcome(settings['welcome_message'], member)
+
+        channel_id = settings['welcome_channel_id']
+        if channel_id:
+            channel = member.guild.get_channel(int(channel_id))
+            if channel is not None and channel.permissions_for(member.guild.me).send_messages:
+                try:
+                    await channel.send(text)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+        if settings['welcome_dm']:
+            try:
+                await member.send(text)
+            except (discord.Forbidden, discord.HTTPException):
+                # DMs closed, or the bot and member share no other guild —
+                # neither is worth telling anyone about.
+                pass
 
     # -- invite tracking ----------------------------------------------------
 
@@ -368,6 +431,11 @@ class MemberLogCog(commands.Cog):
             await self._send(member.guild, 'join', embed)
         except Exception as e:
             print(f"❌ memberlog on_member_join failed: {e}")
+
+        try:
+            await self._send_welcome(member)
+        except Exception as e:
+            print(f"❌ memberlog welcome message failed: {e}")
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
