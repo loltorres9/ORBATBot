@@ -76,7 +76,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(99 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(110 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
 what `check_feed()` promises about announcing a post exactly once. The date logic in
@@ -235,6 +235,7 @@ One row is one watch — see [Reddit announcements](#reddit-announcements-utilsr
 | `source` | TEXT | The name, without the `u/` or `r/` |
 | `channel_id` | TEXT | Where posts are announced. NULL = the watch has nowhere to post, so it is skipped |
 | `template` | TEXT | The announcement text. NULL = `reddit.DEFAULT_TEMPLATE` |
+| `author_filter` | TEXT | Comma-separated account names. NULL = announce every post the feed carries — see [following an author through a subreddit](#following-an-author-through-a-subreddit) |
 | `mention_role_id` | TEXT | **Comma-separated** role ids, the same convention as `events` |
 | `mention_user_id` | TEXT | Comma-separated user ids — the "tag these people" half |
 | `enabled` | INTEGER | 0/1 |
@@ -1657,6 +1658,33 @@ Two details in the parsing are load-bearing:
 `render()` substitutes `{title}`, `{url}`, `{author}` and `{subreddit}` with one
 literal replace each rather than `str.format()`: a template is text somebody
 typed, so a stray `{` in it has to be harmless.
+
+### Following an author through a subreddit
+
+A `user` watch reads that account's **profile listing**, and Reddit lets an
+account hide its posts from its own profile (Settings → *Curate your profile* →
+*Content and activities*). The posts stay where they were written — a subreddit
+lists them whatever the profile says — so the way in is to watch the subreddit
+and keep only what that account wrote. `author_filter` is that filter, and
+`reddit.by_authors()` applies it.
+
+It is applied in `check_feed()` **before anything else looks at the posts**, so
+`seen_ids` only ever holds posts this watch would announce and `last_post_at` is
+the newest *matching* one. The remembered window is therefore effectively much
+longer than `MAX_SEEN` on a busy subreddit, since the other authors' posts never
+enter it.
+
+Two things it cannot do anything about:
+
+- **A busy subreddit can push a post out of its own feed between two checks.**
+  `new.rss` carries about 25 posts; a subreddit that gets more than that in five
+  minutes can lose one. The form says so rather than pretending otherwise.
+- **Widening the filter makes old posts new.** Nothing is reset when it changes
+  — narrowing it should lose nothing — so `save()` warns and points at *Recent
+  posts → Mark all* instead, which is the same answer as any other backlog.
+
+`remember_posts()` deliberately holds the feed **unnarrowed**: announcing one by
+hand is an explicit choice and should be able to reach a post the filter skips.
 
 ### The first read announces nothing
 

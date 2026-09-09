@@ -1120,6 +1120,9 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'source': feed['source'],
             'channel_id': feed['channel_id'] or '',
             'template': feed['template'] or '',
+            'authors': ' '.join(
+                (feed['author_filter'] or '').split(',')
+            ).strip(),
             'mention_ids': (feed['mention_role_id'] or '').split(','),
             'mention_users': ' '.join(
                 (feed['mention_user_id'] or '').split(',')
@@ -1163,6 +1166,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'source': '',
             'channel_id': '',
             'template': reddit_lib.DEFAULT_TEMPLATE,
+            'authors': '',
             'mention_ids': [],
             'mention_users': '',
             'enabled': 1,
@@ -1251,7 +1255,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         context = await feed_context(request, guild_id, feed_id)
         feed = context['feed']
         read, error = {'url': reddit_lib.feed_url(feed['kind'], feed['source']),
-                       'posts': []}, None
+                       'posts': [], 'on_feed': 0,
+                       'authors': reddit_service.feed_authors(feed)}, None
         try:
             read = await reddit_service.recent(feed)
         except (ValueError, reddit_lib.FeedError) as e:
@@ -1261,6 +1266,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'label': reddit_lib.kind_prefix(feed['kind']) + feed['source'],
             'posts': read['posts'],
             'source_url': read['url'],
+            'on_feed': read['on_feed'],
+            'authors': read['authors'],
             'error': error,
         })
 

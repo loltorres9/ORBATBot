@@ -826,7 +826,8 @@ Asking people to **read and comment** is fine, and comments and real discussion 
 
    > A **Reddit user** watch covers *everything that account submits*, in any subreddit — plus anything it posts to its own profile page. It is not limited to one community. A **Subreddit** watch is the other way round: every new post in that subreddit, whoever writes it.
 3. Pick the channel to announce in.
-4. Write the message. Four placeholders are filled in for you:
+4. Optionally, fill in **Only these accounts** to announce just those authors' posts. See [following someone whose profile hides their posts](#following-someone-whose-profile-hides-their-posts).
+5. Write the message. Four placeholders are filled in for you:
 
    | Placeholder | Becomes |
    |---|---|
@@ -836,8 +837,19 @@ Asking people to **read and comment** is fine, and comments and real discussion 
    | `{subreddit}` | The subreddit it was posted in — for a post made on the author's own profile, that is `u_TheirName`, which is where such posts actually live |
 
    Leave it empty and the default is used. Discord unfurls the link on its own, so the title and thumbnail appear underneath the message without you doing anything.
-5. Tick the **roles** to ping, and list any **people** by user ID (right-click a member → *Copy User ID*, with Developer Mode on — there is no dropdown, because the bot cannot list your members without the privileged members intent).
-6. Save.
+6. Tick the **roles** to ping, and list any **people** by user ID (right-click a member → *Copy User ID*, with Developer Mode on — there is no dropdown, because the bot cannot list your members without the privileged members intent).
+7. Save.
+
+### Following someone whose profile hides their posts
+
+Reddit lets an account hide its posts from its own profile page (Settings → **Curate your profile** → **Content and activities**). A **Reddit user** watch reads exactly that profile listing, so when the setting is on it comes back nearly empty — the bot sees what a logged-out visitor sees.
+
+The posts themselves are not hidden: the subreddit they were written in still lists them. So watch the **subreddit** instead, and put the account's name in **Only these accounts**. Every new post in that subreddit is read, and only that author's are announced. Several names are allowed, separated by spaces.
+
+Two limits worth knowing:
+
+- A very busy subreddit can push a post out of its own feed between two checks — the feed carries roughly the last 25 posts, and the bot looks every five minutes.
+- Adding an account to the filter makes their posts *new* to the watch, so the next check would announce whatever of theirs is still on the feed. The save warns about it; open **Recent posts** and mark what you don't want first.
 
 The first check after that notes down what is already on the feed and announces **nothing** — otherwise switching a watch on would post the author's last 25 submissions at once. From then on, every new post is announced, within about five minutes of going up.
 

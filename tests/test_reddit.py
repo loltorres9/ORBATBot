@@ -326,3 +326,59 @@ def test_fetch_says_which_host_answered(monkeypatch):
     url, posts = asyncio.run(reddit.fetch_from('user', 'Someone'))
     assert url == 'https://old.reddit.com/user/Someone/submitted.rss'
     assert len(posts) == 2
+
+
+# -- narrowing to one author ------------------------------------------------
+#
+# The way in when an account's profile hides its posts: a subreddit lists a post
+# whatever the author's profile setting says, so the watch reads the subreddit
+# and keeps only what that account wrote.
+
+def test_authors_are_read_the_same_ways_a_source_is():
+    names, unusable = reddit.clean_authors(
+        'u/TaskForcePhalanx, https://www.reddit.com/user/Someone  /u/Third'
+    )
+    assert names == ['TaskForcePhalanx', 'Someone', 'Third']
+    assert unusable == []
+
+
+def test_a_repeated_author_is_kept_once_however_it_was_written():
+    names, _ = reddit.clean_authors('TaskForcePhalanx u/taskforcephalanx')
+    assert names == ['TaskForcePhalanx']
+
+
+def test_something_that_cannot_be_a_name_is_reported_not_dropped():
+    names, unusable = reddit.clean_authors('TaskForcePhalanx x https://example.com/')
+    assert names == ['TaskForcePhalanx']
+    # Reported so the form can say so; dropping it in silence would leave the
+    # filter looking like it covers something it doesn't. Anything Reddit could
+    # actually have as a name is kept — there is no telling a typo from a real
+    # short account, and guessing would be the worse failure.
+    assert unusable == ['x', 'https://example.com/']
+
+
+def test_an_empty_filter_means_every_post():
+    posts = reddit.parse_feed(FEED)
+    assert reddit.by_authors(posts, []) == posts
+    assert reddit.by_authors(posts, None) == posts
+
+
+def test_only_the_named_author_s_posts_come_through():
+    mixed = FEED.replace(
+        '<author><name>/u/TaskForcePhalanx</name></author>\n    <category term="arma" label="r/arma"/>\n    <id>t3_older</id>',
+        '<author><name>/u/SomebodyElse</name></author>\n    <category term="arma" label="r/arma"/>\n    <id>t3_older</id>',
+    )
+    posts = reddit.parse_feed(mixed)
+    assert len(posts) == 2
+    kept = reddit.by_authors(posts, ['TaskForcePhalanx'])
+    assert [p['id'] for p in kept] == ['t3_newest']
+
+
+def test_the_author_match_ignores_case():
+    posts = reddit.parse_feed(FEED)
+    assert len(reddit.by_authors(posts, ['taskforcephalanx'])) == 2
+
+
+def test_a_post_with_no_author_never_matches_a_filter():
+    posts = [{'id': 't3_x', 'author': ''}]
+    assert reddit.by_authors(posts, ['Someone']) == []

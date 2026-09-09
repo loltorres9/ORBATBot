@@ -70,6 +70,11 @@ def recall_posts(feed):
     return None
 
 
+def authors(feed) -> list:
+    """The accounts this watch narrows to, or an empty list for all of them."""
+    return [name for name in (feed['author_filter'] or '').split(',') if name]
+
+
 def mention_ids(feed, column: str) -> list:
     """The ids stored in one of the two comma-separated mention columns."""
     return [part for part in (feed[column] or '').split(',') if part]
@@ -159,6 +164,11 @@ async def check_feed(bot: commands.Bot, feed) -> dict:
     except reddit.FeedError as e:
         await database.record_reddit_read(feed['id'], error=str(e))
         raise
+
+    # Narrowed before anything else looks at them, so `seen_ids` only ever
+    # holds posts this watch would announce and the recorded newest post is the
+    # newest *matching* one.
+    posts = reddit.by_authors(posts, authors(feed))
 
     newest = next((p['published'] for p in posts if p['published']), None)
     if newest is not None:
