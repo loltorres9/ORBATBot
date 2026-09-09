@@ -62,6 +62,10 @@ DEFAULT_TEMPLATE = 'New post by u/{author} in r/{subreddit}\n**{title}**\n{url}'
 
 MAX_TEMPLATE = 1500
 
+# How many accounts one watch may filter down to. A list longer than this is a
+# subreddit worth announcing whole.
+MAX_AUTHORS = 10
+
 # Reddit caps a title at 300 characters; trimming here keeps one long title from
 # pushing the link out of a 2000-character Discord message.
 MAX_TITLE = 240
@@ -133,6 +137,39 @@ def clean_source(raw: str) -> str:
             break
     text = text.strip('/')
     return text if _NAME.match(text) else ''
+
+
+def clean_authors(raw) -> tuple:
+    """`(names, unusable)` out of a free-text list of Reddit accounts.
+
+    The way to follow somebody whose profile hides their posts: a subreddit
+    listing shows them whatever the profile does, so the watch reads the
+    subreddit and keeps only what that account wrote. Each entry goes through
+    `clean_source()`, so `u/Name`, a profile URL and the bare name all work.
+    """
+    names, unusable = [], []
+    for part in re.split(r'[,\s]+', (raw or '').strip()):
+        if not part:
+            continue
+        name = clean_source(part)
+        if not name:
+            unusable.append(part)
+        elif name.lower() not in {n.lower() for n in names}:
+            names.append(name)
+    return names, unusable
+
+
+def by_authors(posts: list, authors) -> list:
+    """Only the posts one of `authors` wrote. No authors means all of them.
+
+    Reddit's author names are case-insensitive to type but keep their case, so
+    the comparison is folded — `u/taskforcephalanx` has to match the account
+    written `u/TaskForcePhalanx`.
+    """
+    if not authors:
+        return list(posts)
+    wanted = {str(name).lower() for name in authors}
+    return [p for p in posts if (p.get('author') or '').lower() in wanted]
 
 
 def feed_url(kind: str, source: str, host: str = FEED_HOSTS[0]) -> str:

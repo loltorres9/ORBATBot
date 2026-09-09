@@ -63,6 +63,23 @@
     </select>
   </label>
 
+  <label class="field">
+    <span>Only these accounts <span class="muted">— optional</span></span>
+    <input name="authors" maxlength="300" value="{{ values.get('authors') or '' }}"
+           placeholder="TaskForcePhalanx">
+  </label>
+  <p class="hint">
+    Leave empty to announce every post the feed carries. Filled in, only posts
+    written by these accounts are announced — separated by spaces, and
+    <code>u/</code> or a profile URL works too.
+  </p>
+  <p class="hint">
+    This is how to follow somebody whose profile hides their posts: watch the
+    <em>subreddit</em> they post in and name them here. A subreddit lists a post
+    whatever the author's profile setting says. The one limit is that a busy
+    subreddit can push a post out of its feed between two checks.
+  </p>
+
   <label class="check">
     <input type="checkbox" name="enabled" value="1" {% if values.get('enabled') %}checked{% endif %}>
     <span>Check this feed and announce new posts</span>

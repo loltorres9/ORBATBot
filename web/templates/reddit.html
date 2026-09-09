@@ -44,6 +44,7 @@
               {% else %}
                 → no channel picked
               {% endif %}
+              {% if row.authors %} · only u/{{ row.authors|join(', u/') }}{% endif %}
               {% if row.roles %} · pings {{ row.roles|join(', ') }}{% endif %}
               {% if row.people %} · and {{ row.people }} member(s){% endif %}
             </div>

@@ -50,18 +50,19 @@ def make_feed(**over):
         'id': 1, 'guild_id': '1', 'kind': 'user', 'source': 'Someone',
         'channel_id': '2', 'template': '{title} {url}', 'mention_role_id': None,
         'mention_user_id': None, 'enabled': 1, 'seen_ids': None,
+        'author_filter': None,
     }
     feed.update(over)
     return feed
 
 
-def make_posts(count):
+def make_posts(count, author='Someone'):
     """Newest first, the order the feed itself comes back in."""
     return [
         {
             'id': f't3_{n}', 'title': f'Post {n}',
             'url': f'https://example.com/{n}',
-            'author': 'Someone', 'subreddit': 'arma',
+            'author': author, 'subreddit': 'arma',
             'published': datetime.datetime(2026, 1, n + 1, tzinfo=datetime.timezone.utc),
         }
         for n in range(count, 0, -1)
@@ -401,3 +402,42 @@ def test_a_stale_read_is_not_reused(monkeypatch):
     monkeypatch.setattr(redditfeed.time, 'monotonic',
                         lambda: real() + redditfeed.RECENT_TTL + 1)
     assert redditfeed.recall_posts(feed) is None
+
+
+# -- narrowing a subreddit watch to one author ------------------------------
+
+def test_only_the_named_author_is_announced(run):
+    """A subreddit lists a post whatever the author's profile setting says, so
+    this is the way in when a profile hides its posts."""
+    feed = make_feed(kind='subreddit', source='arma',
+                     author_filter='TaskForcePhalanx', seen_ids='')
+    posts = (make_posts(1, author='TaskForcePhalanx')
+             + make_posts(2, author='SomebodyElse'))
+    sent, stored, result = run(feed, posts)
+    assert [content for content, _ in sent] == ['Post 1 https://example.com/1']
+    # Only the matching post is remembered: the rest were never candidates, so
+    # keeping them would just crowd the window out.
+    assert stored['seen_ids'] == 't3_1'
+    assert result['waiting'] == 0
+
+
+def test_the_first_read_of_a_narrowed_watch_seeds_only_matches(run):
+    feed = make_feed(kind='subreddit', source='arma',
+                     author_filter='TaskForcePhalanx', seen_ids=None)
+    posts = (make_posts(2, author='TaskForcePhalanx')
+             + make_posts(3, author='SomebodyElse'))
+    sent, stored, result = run(feed, posts)
+    assert sent == []
+    assert result['seeded'] == 2
+    assert sorted(stored['seen_ids'].split(',')) == ['t3_1', 't3_2']
+
+
+def test_a_watch_with_no_filter_still_announces_everyone(run):
+    feed = make_feed(kind='subreddit', source='arma', seen_ids='')
+    sent, _, _ = run(feed, make_posts(2, author='SomebodyElse'))
+    assert len(sent) == 2
+
+
+def test_the_filter_is_read_off_the_row():
+    assert redditfeed.authors(make_feed(author_filter='A,B')) == ['A', 'B']
+    assert redditfeed.authors(make_feed(author_filter=None)) == []

@@ -20,6 +20,7 @@ from discord.ext import commands
 
 from cogs.redditfeed import (
     announce_post,
+    authors as feed_authors,
     build_message,
     check_feed,
     mark_announced,
@@ -105,6 +106,21 @@ async def _users(guild: discord.Guild, raw: str) -> tuple:
     return ids, unknown
 
 
+def _authors(raw) -> tuple:
+    """(comma-separated names to store, warnings)."""
+    names, unusable = reddit.clean_authors(raw)
+    if len(names) > reddit.MAX_AUTHORS:
+        raise ValueError(
+            f"That's more than {reddit.MAX_AUTHORS} accounts to filter on."
+        )
+    warnings = []
+    if unusable:
+        warnings.append(
+            "Not a Reddit name, so dropped: " + ', '.join(unusable[:5])
+        )
+    return (','.join(names) or None), warnings
+
+
 def _template(raw) -> str:
     text = (raw or '').strip()
     if not text:
@@ -128,8 +144,8 @@ async def read_form(guild: discord.Guild, form: dict) -> tuple:
 
     roles, unknown_roles = _roles(guild, form.get('mention_ids'))
     users, unknown_users = await _users(guild, form.get('mention_users'))
+    author_filter, warnings = _authors(form.get('authors'))
 
-    warnings = []
     not_pingable = [r.name for r in roles if not r.mentionable]
     if not_pingable:
         warnings.append(
@@ -149,6 +165,7 @@ async def read_form(guild: discord.Guild, form: dict) -> tuple:
         'source': source,
         'channel_id': _channel(guild, form.get('channel_id')),
         'template': _template(form.get('template')),
+        'author_filter': author_filter,
         'mention_role_id': ','.join(str(r.id) for r in roles) or None,
         'mention_user_id': ','.join(users) or None,
         'enabled': 1 if form.get('enabled') else 0,
@@ -177,12 +194,22 @@ async def save(guild: discord.Guild, feed, form: dict) -> list:
     values, warnings = await read_form(guild, form)
     moved = (values['kind'] != feed['kind']
              or values['source'].lower() != (feed['source'] or '').lower())
+    refiltered = (values['author_filter'] or '') != (feed['author_filter'] or '')
     await database.save_reddit_feed(feed['id'], values)
     if moved:
         await database.reset_reddit_feed_seen(feed['id'])
         warnings.append(
             "It now points somewhere else, so the next check starts from that "
             "feed's current posts rather than announcing its history."
+        )
+    elif refiltered:
+        # Widening the filter makes posts that were never announced new all at
+        # once. Not reset, because narrowing it should lose nothing — so the
+        # person is told where the switch for that is instead.
+        warnings.append(
+            "The accounts it follows changed. Anything newly matching that is "
+            "still on the feed will be announced on the next check — open "
+            "Recent posts and mark what you don't want first."
         )
     return warnings
 
@@ -266,11 +293,17 @@ async def recent(feed) -> dict:
     """
     url, posts = await reddit.fetch_from(feed['kind'], feed['source'])
     # So the buttons on the page it builds don't have to ask Reddit again.
+    # Remembered unnarrowed: announcing one by hand is an explicit choice, and
+    # should reach a post the filter would have skipped.
     remember_posts(feed, posts)
+
+    narrowed = reddit.by_authors(posts, feed_authors(feed))
     seen = {part for part in (feed['seen_ids'] or '').split(',') if part}
     never_read = feed['seen_ids'] is None
     return {
         'url': url,
+        'on_feed': len(posts),
+        'authors': feed_authors(feed),
         'posts': [
             {**post,
              # A watch that has never been read has announced nothing, whatever
@@ -278,7 +311,7 @@ async def recent(feed) -> dict:
              'announced': not never_read and post['id'] in seen,
              'where': where(post),
              'message': build_message(feed, post)}
-            for post in posts
+            for post in narrowed
         ],
     }
 
@@ -338,6 +371,7 @@ def view_models(guild: discord.Guild, feeds) -> list:
             'lost_channel': bool(feed['channel_id']) and channel is None,
             'roles': [r.name for r in roles if r],
             'people': len(mention_ids(feed, 'mention_user_id')),
+            'authors': feed_authors(feed),
             'never_read': feed['seen_ids'] is None,
             # Set while a refusal is being waited out, so the list says why
             # nothing is happening rather than looking simply broken.

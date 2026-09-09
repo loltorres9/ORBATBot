@@ -353,6 +353,7 @@ async def init_db():
                 source TEXT NOT NULL,
                 channel_id TEXT,
                 template TEXT,
+                author_filter TEXT,
                 mention_role_id TEXT,
                 mention_user_id TEXT,
                 enabled INTEGER NOT NULL DEFAULT 1,
@@ -379,6 +380,12 @@ async def init_db():
         # warm, so a refusal now stands the watch down instead.
         await db.execute('''
             ALTER TABLE reddit_feeds ADD COLUMN IF NOT EXISTS retry_at TIMESTAMP
+        ''')
+        # Announce only these accounts' posts. Added when an account whose
+        # profile hides its posts turned out to be reachable through the
+        # subreddit it posts in, which lists them whatever the profile says.
+        await db.execute('''
+            ALTER TABLE reddit_feeds ADD COLUMN IF NOT EXISTS author_filter TEXT
         ''')
         # Recurrence, added after the events tables shipped
         await db.execute('''
@@ -1339,8 +1346,8 @@ async def save_log_settings(guild_id: str, values: dict):
 # ---------------------------------------------------------------------------
 
 _REDDIT_COLUMNS = (
-    'kind', 'source', 'channel_id', 'template', 'mention_role_id',
-    'mention_user_id', 'enabled',
+    'kind', 'source', 'channel_id', 'template', 'author_filter',
+    'mention_role_id', 'mention_user_id', 'enabled',
 )
 
 
