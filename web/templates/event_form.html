@@ -104,6 +104,12 @@
       <span>Repeat until</span>
       <input type="datetime-local" name="repeat_until" value="{{ values.get('repeat_until', '') }}">
     </label>
+    <label class="field">
+      <span>Post next occurrence after</span>
+      <input type="number" name="repeat_delay" min="0" value="{{ values.get('repeat_delay', '') }}"
+             placeholder="0 = immediately">
+      <span class="hint">Hours to wait after an occurrence ends before the next one is posted.</span>
+    </label>
   </div>
 
   <label class="field">

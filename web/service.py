@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands
 
 from cogs.events import (
+    MAX_RECURRENCE_DELAY_HOURS,
     _DAY_NAMES,
     _RECURRENCE_LABELS,
     _as_utc,
@@ -120,6 +121,23 @@ def _recurrence(raw) -> str:
     raise ValueError("That isn't a repeat pattern I recognise.")
 
 
+def _recurrence_delay(raw, recurrence: str) -> int:
+    """Hours to wait after an occurrence ends before posting the next one.
+    None (the empty field) means "post it immediately", same as before this
+    existed."""
+    if not (raw or '').strip():
+        return None
+    if recurrence is None:
+        raise ValueError("A repeat delay only makes sense together with a repeat pattern.")
+    try:
+        hours = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError("The repeat delay has to be a whole number of hours.")
+    if hours < 0 or hours > MAX_RECURRENCE_DELAY_HOURS:
+        raise ValueError(f"The repeat delay has to be between 0 and {MAX_RECURRENCE_DELAY_HOURS} hours.")
+    return hours
+
+
 def _repeat_warnings(recurrence: str, start) -> list:
     """The same "your first date doesn't match the pattern" notes the slash
     command gives, so the jump doesn't surprise anyone a month later."""
@@ -184,6 +202,8 @@ async def create_event(bot: commands.Bot, guild: discord.Guild,
                 "otherwise the event would never repeat."
             )
 
+    delay = _recurrence_delay(form.get('repeat_delay'), recurrence)
+
     event_id = await database.create_event(
         guild_id=str(guild.id),
         title=title,
@@ -198,6 +218,7 @@ async def create_event(bot: commands.Bot, guild: discord.Guild,
         reminder_minutes=reminder,
         recurrence=recurrence,
         recurrence_until=until,
+        recurrence_delay_hours=delay,
     )
     if responses:
         await database.set_event_responses(event_id, responses)
@@ -253,6 +274,8 @@ async def edit_event(bot: commands.Bot, guild: discord.Guild, event,
         if until <= start:
             raise ValueError("The repeat end date has to be after the start time.")
 
+    delay = _recurrence_delay(form.get('repeat_delay'), recurrence) if recurrence else None
+
     await database.update_event(
         event_id,
         title=title,
@@ -284,7 +307,7 @@ async def edit_event(bot: commands.Bot, guild: discord.Guild, event,
     else:
         # Re-anchor when the start time moved, so the series follows it.
         anchor = start if time_changed else (event['recurrence_anchor'] or event['event_time'])
-        await database.set_event_recurrence(event_id, recurrence, until, anchor)
+        await database.set_event_recurrence(event_id, recurrence, until, anchor, delay)
         notes += _repeat_warnings(recurrence, anchor)
 
     await database.set_event_mentions(event_id, ','.join(str(r.id) for r in roles) or None)

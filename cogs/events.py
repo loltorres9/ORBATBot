@@ -74,6 +74,10 @@ _BARE_ID_RE = re.compile(r'(?<!\d)(\d{15,25})(?!\d)')
 # which is why this needed no migration.
 MAX_MENTION_ROLES = 10
 
+# Sanity cap on how long a series can wait after an occurrence ends before the
+# next one is posted — a month, generously.
+MAX_RECURRENCE_DELAY_HOURS = 24 * 31
+
 
 def _mention_ids(event) -> list:
     return [part for part in (event['mention_role_id'] or '').split(',') if part]
@@ -568,6 +572,7 @@ async def _spawn_next_occurrence(bot: commands.Bot, event) -> Optional[int]:
         recurrence=event['recurrence'],
         recurrence_until=event['recurrence_until'],
         recurrence_anchor=anchor,
+        recurrence_delay_hours=event['recurrence_delay_hours'],
     )
 
     # A series keeps its response set — the next occurrence must look identical.
@@ -705,10 +710,26 @@ class EventsCog(commands.Cog):
                 event = await database.get_event(event['id'])
                 # Buttons come off once the event is over.
                 await _refresh_event_message(self.bot, event, view=None)
-                # A recurring event hands over to its next occurrence here.
-                await _spawn_next_occurrence(self.bot, event)
             except Exception as e:
                 print(f"event_task: closing out event {event['id']} failed: {e!r}")
+
+        # A recurring event hands over to its next occurrence once its own
+        # recurrence_delay_hours has elapsed since it ended — immediately when
+        # that's 0/unset, same as before delays existed.
+        try:
+            ready = await database.get_events_ready_for_handover()
+        except Exception as e:
+            print(f"event_task: could not load events ready for handover: {e!r}")
+            ready = []
+
+        for event in ready:
+            try:
+                # Set before spawning, same reasoning as reminder_fired: a
+                # failure here must not retry the handover every tick.
+                await database.mark_event_handover_fired(event['id'])
+                await _spawn_next_occurrence(self.bot, event)
+            except Exception as e:
+                print(f"event_task: handover for event {event['id']} failed: {e!r}")
 
     @event_task.before_loop
     async def before_event_task(self):
@@ -783,6 +804,7 @@ class EventsCog(commands.Cog):
         image_url='Banner image shown on the event',
         repeat='Repeat the event automatically after each occurrence ends',
         repeat_until='Stop repeating after this date, e.g. 31/12/2025 23:59',
+        repeat_delay='Hours to wait after an occurrence ends before posting the next one (default: none)',
         responses="Your own sign-up buttons, e.g. ✅ Coming | ❓ Maybe | -❌ Can't. Prefix with - for 'not coming'",
     )
     @app_commands.choices(reminder=_REMINDER_CHOICES, repeat=_REPEAT_CHOICES)
@@ -800,6 +822,7 @@ class EventsCog(commands.Cog):
         image_url: str = None,
         repeat: str = 'none',
         repeat_until: str = None,
+        repeat_delay: int = None,
         responses: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
@@ -875,6 +898,20 @@ class EventsCog(commands.Cog):
                 )
                 return
 
+        if repeat_delay is not None:
+            if recurrence is None:
+                await interaction.followup.send(
+                    "❌ `repeat_delay` only makes sense together with `repeat`.",
+                    ephemeral=True,
+                )
+                return
+            if repeat_delay < 0 or repeat_delay > MAX_RECURRENCE_DELAY_HOURS:
+                await interaction.followup.send(
+                    f"❌ `repeat_delay` has to be between 0 and {MAX_RECURRENCE_DELAY_HOURS} hours.",
+                    ephemeral=True,
+                )
+                return
+
         target = channel or interaction.channel
         event_id = await database.create_event(
             guild_id=str(interaction.guild_id),
@@ -890,6 +927,7 @@ class EventsCog(commands.Cog):
             reminder_minutes=reminder or None,
             recurrence=recurrence,
             recurrence_until=until,
+            recurrence_delay_hours=repeat_delay,
         )
 
         if custom_responses:
@@ -941,8 +979,12 @@ class EventsCog(commands.Cog):
                     f"after it skips the last {_DAY_NAMES[parsed.weekday()]}."
                 )
             if nxt and not (until and nxt > until):
+                when = (
+                    f"{repeat_delay} hour(s) after this one ends"
+                    if repeat_delay else "when this one ends"
+                )
                 repeat_line += (
-                    f"\nThe next one goes up when this one ends, for "
+                    f"\nThe next one is posted {when}, starting "
                     f"<t:{int(_as_utc(nxt).timestamp())}:F>."
                 )
         response_line = (
@@ -990,6 +1032,7 @@ class EventsCog(commands.Cog):
         reminder='New reminder window',
         repeat='Change the repeat interval, or pick "Don\'t repeat" to stop the series',
         repeat_until='Stop repeating after this date, e.g. 31/12/2025 23:59',
+        repeat_delay='Hours to wait after an occurrence ends before posting the next one (0 to go back to posting immediately)',
         responses="Replace the sign-up buttons, e.g. ✅ Coming | ❓ Maybe | -❌ Can't",
         mention='Change the ping roles — type @ and pick, or `none` to stop pinging',
     )
@@ -1007,6 +1050,7 @@ class EventsCog(commands.Cog):
         reminder: int = None,
         repeat: str = None,
         repeat_until: str = None,
+        repeat_delay: int = None,
         responses: str = None,
         mention: str = None,
     ):
@@ -1064,6 +1108,27 @@ class EventsCog(commands.Cog):
                 await interaction.followup.send(f"❌ {e}", ephemeral=True)
                 return
 
+        if repeat_delay is not None:
+            if repeat == 'none':
+                await interaction.followup.send(
+                    "❌ `repeat_delay` conflicts with stopping the repeat. "
+                    "Pass one or the other.",
+                    ephemeral=True,
+                )
+                return
+            if repeat_delay < 0 or repeat_delay > MAX_RECURRENCE_DELAY_HOURS:
+                await interaction.followup.send(
+                    f"❌ `repeat_delay` has to be between 0 and {MAX_RECURRENCE_DELAY_HOURS} hours.",
+                    ephemeral=True,
+                )
+                return
+            if record['recurrence'] not in _RECURRENCE_LABELS and repeat not in _RECURRENCE_LABELS:
+                await interaction.followup.send(
+                    "❌ `repeat_delay` only makes sense together with `repeat`.",
+                    ephemeral=True,
+                )
+                return
+
         new_responses = None
         if responses:
             try:
@@ -1090,7 +1155,7 @@ class EventsCog(commands.Cog):
             name for name, value in (
                 ('title', title), ('start time', parsed), ('description', description),
                 ('duration', duration), ('location', location), ('reminder', reminder),
-                ('repeat', repeat), ('repeat end', until),
+                ('repeat', repeat), ('repeat end', until), ('repeat delay', repeat_delay),
                 ('sign-up options', new_responses), ('ping roles', new_mentions),
             ) if value is not None
         ]
@@ -1111,7 +1176,7 @@ class EventsCog(commands.Cog):
         )
 
         repeat_note = ""
-        if repeat is not None or until is not None:
+        if repeat is not None or until is not None or repeat_delay is not None:
             new_rec = record['recurrence'] if repeat is None else (
                 repeat if repeat in _RECURRENCE_LABELS else None
             )
@@ -1122,7 +1187,11 @@ class EventsCog(commands.Cog):
                 # Re-anchor when the start time moved, so the series follows it.
                 anchor = parsed or record['recurrence_anchor'] or record['event_time']
                 new_until = until if until is not None else record['recurrence_until']
-                await database.set_event_recurrence(event, new_rec, new_until, anchor)
+                new_delay = (
+                    repeat_delay if repeat_delay is not None
+                    else record['recurrence_delay_hours']
+                )
+                await database.set_event_recurrence(event, new_rec, new_until, anchor, new_delay)
                 described = _recurrence_text(
                     {'recurrence': new_rec, 'recurrence_anchor': anchor,
                      'event_time': anchor}
@@ -1130,7 +1199,10 @@ class EventsCog(commands.Cog):
                 repeat_note = f"\n🔁 Now repeats: **{described}**"
                 if new_until:
                     repeat_note += f" until <t:{int(_as_utc(new_until).timestamp())}:d>"
-                repeat_note += "."
+                repeat_note += (
+                    f", next one posted {new_delay} hour(s) after each ends."
+                    if new_delay else ", next one posted as soon as each ends."
+                )
 
         response_note = ""
         if new_responses:
