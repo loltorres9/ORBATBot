@@ -308,6 +308,8 @@ Standalone events, independent of `operations` and Google Sheets — see Events 
 | `recurrence` | TEXT | NULL, or `daily` / `weekly` / `biweekly` / `monthly` / `monthly_nth` / `monthly_last` / `weekly_not_last` |
 | `recurrence_until` | TIMESTAMP | Optional end of the series (naive UTC) |
 | `recurrence_anchor` | TIMESTAMP | The **first** occurrence's start, carried unchanged down the series |
+| `recurrence_delay_hours` | INTEGER | Hours to wait after this occurrence ends before its successor is posted. NULL/0 = post it the moment this one is marked completed |
+| `handover_fired` | INTEGER | 0/1 — whether this **completed** event's handover (spawning its successor) has already run, so the delayed handover step in `event_task` doesn't repeat it every tick. Backfilled to 1 for every event already `completed` before this column existed, since those already had their handover done synchronously at completion time under the old code |
 | `created_at` / `updated_at` | TIMESTAMP | |
 
 Index `idx_events_guild_status` on `(guild_id, status, event_time)` backs the upcoming-events lookup.
@@ -916,10 +918,10 @@ Staged build toward Apollo parity. Done: sign-ups, reminders, editing, cancellin
 
 ### Commands
 
-**`/event-create <title> <start_time> [description] [duration] [location] [channel] [mention] [reminder] [image_url] [repeat] [repeat_until] [responses]`** (Admin or Unit Leader)
-Parses `start_time` with `_parse_event_time()` from `admin.py` in the guild's timezone, rejects times in the past, posts the event and registers its view. If the send fails (`Forbidden`, or `HTTPException` from a bad `image_url`) the row is set to `cancelled` so it can't linger as a phantom event.
+**`/event-create <title> <start_time> [description] [duration] [location] [channel] [mention] [reminder] [image_url] [repeat] [repeat_until] [repeat_delay] [responses]`** (Admin or Unit Leader)
+Parses `start_time` with `_parse_event_time()` from `admin.py` in the guild's timezone, rejects times in the past, posts the event and registers its view. If the send fails (`Forbidden`, or `HTTPException` from a bad `image_url`) the row is set to `cancelled` so it can't linger as a phantom event. `repeat_delay` only makes sense together with `repeat` — see [Recurrence](#recurrence).
 
-**`/event-edit <event> [title] [start_time] [description] [duration] [location] [reminder] [repeat] [repeat_until] [responses] [mention]`** (organiser or admin)
+**`/event-edit <event> [title] [start_time] [description] [duration] [location] [reminder] [repeat] [repeat_until] [repeat_delay] [responses] [mention]`** (organiser or admin)
 Only the passed fields change — `update_event()` uses `COALESCE`, so omitted fields keep their value. Changing the time resets `reminder_fired` to 0 so the reminder fires again for the new time.
 
 **`/event-cancel <event> [reason] [stop_series]`** (organiser or admin)
@@ -1004,13 +1006,15 @@ The same property fixes catch-up: `_next_occurrence()` walks `n` upward until th
 
 If the next occurrence can't be posted (channel gone, `Forbidden`), the freshly created row is set to `cancelled` so the series stops cleanly instead of retrying every minute.
 
+**`recurrence_delay_hours` decides how long after an occurrence ends its successor goes up.** NULL/0 (the default, and the only behaviour before this existed) posts it the moment this occurrence is marked `completed`; any other value holds it back that many hours. It rides along with `recurrence`/`recurrence_until`/`recurrence_anchor` down the series — set on `/event-create`, changed on `/event-edit` via `repeat_delay`, carried forward by `_spawn_next_occurrence()`, and cleared whenever the recurrence itself is cleared. It only ever applies to the *scheduled handover* in `event_task` below — cancelling a single occurrence (`/event-cancel` without `stop_series`) still spawns its successor immediately, because there was no "end" for a delay to count from.
+
 ### Background loop
 
 `EventsCog.event_task` runs every 60 s (separate from `bot.py`'s `reminder_task`, which stays operation-only):
 
 1. **Reminders** — `reminder_fired` is set *before* sending, so a failure can't cause a retry storm. DMs go to everyone `_attending()` returns, i.e. every response not flagged `is_decline`; the channel ping adds `mention_role_id` if set.
-2. **Finishing** — events past `event_time + duration` flip to `completed` and their message is re-rendered grey with buttons removed.
-3. **Handover** — a completed event with a `recurrence` spawns its next occurrence. Because the source is already `completed` by then, it is out of `get_finished_events()` and cannot spawn twice.
+2. **Finishing** — events past `event_time + duration` flip to `completed` and their message is re-rendered grey with buttons removed. This step is unaffected by `recurrence_delay_hours`: the message loses its buttons the moment the event ends, whatever the handover delay is.
+3. **Handover** — a **separate** step, `get_events_ready_for_handover()`: a completed, recurring event whose `event_time + duration + recurrence_delay_hours` has passed and whose `handover_fired` is still 0 spawns its next occurrence. `handover_fired` is set *before* spawning, same reasoning as `reminder_fired`, so a failure can't retry the handover every tick; it is also what stops a delayed handover firing twice, since a completed event otherwise satisfies the "past its cutoff" condition on every later tick too. Splitting this from Finishing is what makes the delay possible: without it, completing and handing over were the same step and the next occurrence always went up immediately.
 
 `cog_unload()` cancels the loop; verified not to leak past unload.
 

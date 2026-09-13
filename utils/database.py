@@ -400,6 +400,27 @@ async def init_db():
         await db.execute('''
             ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence_anchor TIMESTAMP
         ''')
+        # How long after an occurrence ends before the next one is posted.
+        # NULL/0 keeps the original behaviour: the handover happens the moment
+        # this occurrence is marked completed.
+        await db.execute('''
+            ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence_delay_hours INTEGER
+        ''')
+        # Whether this completed event's handover (spawning its successor) has
+        # already run, so the delayed handover step doesn't repeat it every
+        # tick. A row that was already completed before this column existed
+        # already had its handover done synchronously at completion time under
+        # the old code, so it is backfilled as fired here — only an event
+        # completed after this column exists should start at 0.
+        handover_column_existed = await db.fetchval(
+            """SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'events' AND column_name = 'handover_fired'"""
+        )
+        await db.execute('''
+            ALTER TABLE events ADD COLUMN IF NOT EXISTS handover_fired INTEGER DEFAULT 0
+        ''')
+        if not handover_column_existed:
+            await db.execute("UPDATE events SET handover_fired = 1 WHERE status = 'completed'")
         # Add event scheduling columns to existing operations tables
         await db.execute('''
             ALTER TABLE operations ADD COLUMN IF NOT EXISTS
@@ -906,7 +927,8 @@ async def create_event(guild_id: str, title: str, event_time, created_by: str,
                        duration_minutes: int = None, location: str = None,
                        image_url: str = None, mention_role_id: str = None,
                        reminder_minutes: int = 30, recurrence: str = None,
-                       recurrence_until=None, recurrence_anchor=None) -> int:
+                       recurrence_until=None, recurrence_anchor=None,
+                       recurrence_delay_hours: int = None) -> int:
     event_time = _naive(event_time)
     # A new series anchors on its own first start time.
     if recurrence and recurrence_anchor is None:
@@ -917,18 +939,20 @@ async def create_event(guild_id: str, title: str, event_time, created_by: str,
             '''INSERT INTO events
                (guild_id, title, event_time, created_by, created_by_name, description,
                 duration_minutes, location, image_url, mention_role_id, reminder_minutes,
-                recurrence, recurrence_until, recurrence_anchor)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                recurrence, recurrence_until, recurrence_anchor, recurrence_delay_hours)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                RETURNING id''',
             guild_id, title, event_time, created_by, created_by_name, description,
             duration_minutes, location, image_url, mention_role_id, reminder_minutes,
             recurrence, _naive(recurrence_until), _naive(recurrence_anchor),
+            recurrence_delay_hours,
         )
         return row['id']
 
 
 async def set_event_recurrence(event_id: int, recurrence: str = None,
-                               recurrence_until=None, recurrence_anchor=None):
+                               recurrence_until=None, recurrence_anchor=None,
+                               recurrence_delay_hours: int = None):
     """Set the recurrence outright. Unlike update_event this can clear it, which
     is how a series is stopped."""
     pool = await get_pool()
@@ -936,9 +960,10 @@ async def set_event_recurrence(event_id: int, recurrence: str = None,
         await db.execute(
             '''UPDATE events
                SET recurrence = $2, recurrence_until = $3, recurrence_anchor = $4,
-                   updated_at = CURRENT_TIMESTAMP
+                   recurrence_delay_hours = $5, updated_at = CURRENT_TIMESTAMP
                WHERE id = $1''',
             event_id, recurrence, _naive(recurrence_until), _naive(recurrence_anchor),
+            recurrence_delay_hours,
         )
 
 
@@ -1182,6 +1207,33 @@ async def get_finished_events() -> list:
                  AND event_time + (COALESCE(duration_minutes, 0) * INTERVAL '1 minute')
                      < (NOW() AT TIME ZONE 'UTC')"""
         )
+
+
+async def get_events_ready_for_handover() -> list:
+    """Completed, recurring events whose handover delay has elapsed and whose
+    next occurrence hasn't been spawned yet.
+
+    Kept separate from get_finished_events() so an event is marked completed —
+    and its message loses its buttons — the moment it ends, while the next
+    occurrence can go up later, per recurrence_delay_hours.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            """SELECT * FROM events
+               WHERE status = 'completed'
+                 AND recurrence IS NOT NULL
+                 AND handover_fired = 0
+                 AND event_time + (COALESCE(duration_minutes, 0) * INTERVAL '1 minute')
+                     + (COALESCE(recurrence_delay_hours, 0) * INTERVAL '1 hour')
+                     <= (NOW() AT TIME ZONE 'UTC')"""
+        )
+
+
+async def mark_event_handover_fired(event_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute('UPDATE events SET handover_fired = 1 WHERE id = $1', event_id)
 
 
 async def get_approved_member_ids(operation_id: int) -> list:

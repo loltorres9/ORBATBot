@@ -35,6 +35,8 @@
     <dd>
       {{ recurrence_text(event) }}
       {% if event.recurrence_until %} · until {{ fmt_date(event.recurrence_until, tz) }}{% endif %}
+      {% if event.recurrence_delay_hours %} · next one posted {{ event.recurrence_delay_hours }}h after this one ends
+      {% else %} · next one posted as soon as this one ends{% endif %}
     </dd>
   {% endif %}
   {% if event.mention_role_id %}

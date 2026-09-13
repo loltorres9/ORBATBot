@@ -258,7 +258,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'mode': 'create',
             'channels': postable_channels(context['guild']),
             'roles': mentionable_roles(context['guild']),
-            'values': {'reminder': 30, 'repeat': 'none', 'mention_ids': []},
+            'values': {'reminder': 30, 'repeat': 'none', 'repeat_delay': '', 'mention_ids': []},
             'error': None,
         })
 
@@ -324,6 +324,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                 'reminder': event['reminder_minutes'] or 0,
                 'repeat': event['recurrence'] or 'none',
                 'repeat_until': fmt_input(event['recurrence_until'], context['tz']),
+                'repeat_delay': event['recurrence_delay_hours'] if event['recurrence_delay_hours'] is not None else '',
                 'mention_ids': (event['mention_role_id'] or '').split(','),
                 'responses': ' | '.join(
                     ('-' if row['is_decline'] else '')
