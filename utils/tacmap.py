@@ -72,58 +72,68 @@ KINDS = ('unit', 'point', 'line', 'area', 'text')
 # whatever was added last; `sort_order` only breaks ties within a kind.
 KIND_ORDER = {'area': 0, 'line': 1, 'text': 2, 'point': 3, 'unit': 4}
 
-# APP-6 shapes, painted the way Arma paints its own map markers: a solid block
-# of the side's colour with a white pictogram on it. That match is the point —
+# Painted as Arma paints its own map markers, because that is the whole point:
 # whoever reads the plan is looking at the same icons in game ten minutes
-# later, and a differently-styled symbol set makes them translate. The values
-# are Arma's marker colours (ColorWEST, ColorEAST, ColorGUER, ColorUNKNOWN),
-# lifted just enough to hold their own on a satellite image.
+# later. Two things come straight from the game rather than from APP-6:
+#
+# * the colours are `CfgMarkerColors` exactly — ColorWEST, ColorEAST,
+#   ColorGUER, ColorCIV, ColorUNKNOWN — not a lifted version of them;
+# * **every side uses the same rectangle.** Arma's NATO markers say whose a
+#   unit is by colour alone, so the APP-6 diamond, square and quatrefoil are
+#   gone. That is a readability trade the game itself makes, and matching it
+#   is worth more here than being right about the standard.
 AFFILIATIONS = {
-    'friend': {'label': 'Friendly', 'fill': '#13508f', 'edge': '#08263f',
+    'friend': {'label': 'BLUFOR', 'fill': '#004d99', 'edge': '#01223f',
                'glyph': '#ffffff'},
-    'hostile': {'label': 'Hostile', 'fill': '#8f1717', 'edge': '#3f0808',
+    'hostile': {'label': 'OPFOR', 'fill': '#800000', 'edge': '#2d0000',
                 'glyph': '#ffffff'},
-    'neutral': {'label': 'Neutral', 'fill': '#13702f', 'edge': '#083317',
+    'neutral': {'label': 'Independent', 'fill': '#008000', 'edge': '#013301',
                 'glyph': '#ffffff'},
-    'unknown': {'label': 'Unknown', 'fill': '#9c7a0c', 'edge': '#453505',
+    'civ': {'label': 'Civilian', 'fill': '#66007f', 'edge': '#290033',
+            'glyph': '#ffffff'},
+    'unknown': {'label': 'Unknown', 'fill': '#b39900', 'edge': '#453c00',
                 'glyph': '#ffffff'},
 }
 DEFAULT_SIDE = 'friend'
 
-# The frames, drawn in a 100 × 100 box centred on (50, 50). They carry no paint
-# of their own so the `<use>` that places one decides the colours.
-_FRAMES = {
-    'friend': '<path d="M8,26 H92 V74 H8 Z"/>',
-    'hostile': '<path d="M50,6 L94,50 L50,94 L6,50 Z"/>',
-    'neutral': '<path d="M14,14 H86 V86 H14 Z"/>',
-    # A quatrefoil: four half-circles bulging out of a square.
-    'unknown': ('<path d="M30,30 A20,20 0 0 1 70,30 A20,20 0 0 1 70,70 '
-                'A20,20 0 0 1 30,70 A20,20 0 0 1 30,30 Z"/>'),
-}
+# The frame, drawn in a 100 x 100 box centred on (50, 50). It carries no paint
+# of its own so the `<use>` that places it decides the colours.
+_FRAME = '<path d="M6,28 H94 V72 H6 Z"/>'
 
-# The icon sits in x 25–75, y 33–67, which fits inside every frame above —
-# including the diamond, which is narrowest where the icon is tallest.
+# The icon sits in x 25-75, y 33-67, which is what fits inside the frame with
+# room for its outline.
+#
+# The set is Arma's own — one entry per icon in `a3\ui_f\data\map\markers\nato`,
+# so `ARMA_TYPES` below is a one-to-one mapping rather than a best guess, and
+# what somebody places here is the marker they will see in the mission. The
+# four extras (sniper, machine gun, anti-tank, signals) are ours: the game has
+# no marker for them, and a platoon plan needs them more than it needs the
+# gaps to be honest.
 #
 # An icon inherits `stroke` and `fill="none"` from the `<use>` that places it;
 # a shape that is meant to be solid says `fill="currentColor"` itself, and the
-# `<use>` sets `color` to the same stroke colour.
+# `<use>` sets `color` to the same colour as the stroke.
 SYMBOLS = {
     'generic': {'label': 'Unspecified', 'group': 'Infantry', 'icon': ''},
     'inf': {'label': 'Infantry', 'group': 'Infantry',
             'icon': '<path d="M27,34 L73,66 M73,34 L27,66"/>'},
     'mech': {'label': 'Mechanised infantry', 'group': 'Infantry',
              'icon': '<ellipse cx="50" cy="50" rx="25" ry="16"/>'
-                     '<path d="M27,34 L73,66 M73,34 L27,66"/>'},
+                     '<path d="M29,36 L71,64 M71,36 L29,64"/>'},
     'motor': {'label': 'Motorised infantry', 'group': 'Infantry',
               'icon': '<path d="M27,34 L73,66 M73,34 L27,66"/>'
-                      '<circle cx="50" cy="50" r="7" fill="currentColor"/>'},
-    'armor': {'label': 'Armour', 'group': 'Vehicles',
-              'icon': '<ellipse cx="50" cy="50" rx="25" ry="16"/>'},
+                      '<circle cx="50" cy="50" r="8" fill="currentColor"/>'},
     'recon': {'label': 'Reconnaissance', 'group': 'Infantry',
               'icon': '<path d="M27,66 L73,34"/>'},
     'sniper': {'label': 'Sniper / marksman', 'group': 'Infantry',
-               'icon': '<circle cx="50" cy="50" r="13"/>'
-                       '<path d="M50,30 V70 M30,50 H70"/>'},
+               'icon': '<circle cx="50" cy="50" r="12"/>'
+                       '<path d="M50,31 V69 M31,50 H69"/>'},
+    'armor': {'label': 'Armour', 'group': 'Vehicles',
+              'icon': '<ellipse cx="50" cy="50" rx="25" ry="16"/>'},
+    'veh': {'label': 'Wheeled vehicle', 'group': 'Vehicles',
+            'icon': '<path d="M30,39 H70 V58 H30 Z"/>'
+                    '<circle cx="39" cy="63" r="5" fill="currentColor"/>'
+                    '<circle cx="61" cy="63" r="5" fill="currentColor"/>'},
     'mg': {'label': 'Machine gun', 'group': 'Weapons',
            'icon': '<path d="M50,33 V57 M33,67 L50,57 L67,67"/>'},
     'at': {'label': 'Anti-tank', 'group': 'Weapons',
@@ -134,10 +144,6 @@ SYMBOLS = {
              'icon': '<circle cx="50" cy="50" r="11" fill="currentColor"/>'},
     'mortar': {'label': 'Mortar', 'group': 'Weapons',
                'icon': '<path d="M50,32 V68"/><circle cx="50" cy="50" r="10"/>'},
-    'veh': {'label': 'Wheeled vehicle', 'group': 'Vehicles',
-            'icon': '<path d="M30,40 H70 V57 H30 Z"/>'
-                    '<circle cx="39" cy="63" r="5" fill="currentColor"/>'
-                    '<circle cx="61" cy="63" r="5" fill="currentColor"/>'},
     'air': {'label': 'Fixed wing', 'group': 'Air',
             'icon': '<path d="M26,38 L50,50 L74,38 L74,62 L50,50 L26,62 Z"/>'},
     'heli': {'label': 'Rotary wing', 'group': 'Air',
@@ -146,14 +152,31 @@ SYMBOLS = {
     'uav': {'label': 'UAV', 'group': 'Air',
             'icon': '<path d="M26,42 L50,52 L74,42 L74,64 L50,54 L26,64 Z"/>'
                     '<circle cx="50" cy="34" r="5" fill="currentColor"/>'},
-    'engr': {'label': 'Engineers', 'group': 'Support',
-             'icon': '<path d="M28,66 V44 H72 V66"/>'},
+    'naval': {'label': 'Naval', 'group': 'Air',
+              'icon': '<circle cx="50" cy="35" r="6"/>'
+                      '<path d="M50,41 V67 M38,46 H62"/>'
+                      '<path d="M30,55 A20,20 0 0 0 70,55"/>'},
     'med': {'label': 'Medical', 'group': 'Support',
             'icon': '<path d="M50,34 V66 M31,50 H69"/>'},
-    'logi': {'label': 'Logistics', 'group': 'Support',
-             'icon': '<path d="M30,38 H70 V62 H30 Z M30,62 L70,38"/>'},
+    'engr': {'label': 'Engineers', 'group': 'Support',
+             'icon': '<path d="M28,66 V44 H72 V66"/>'},
+    'maint': {'label': 'Maintenance', 'group': 'Support',
+              'icon': '<path d="M36,34 A12,12 0 1 0 50,52 L66,68"/>'
+                      '<path d="M28,42 L40,42"/>'},
+    'logi': {'label': 'Supply / service', 'group': 'Support',
+             'icon': '<path d="M30,37 H70 V63 H30 Z M30,63 L70,37"/>'},
+    'support': {'label': 'Combat support', 'group': 'Support',
+                'icon': '<path d="M42,33 A22,22 0 0 0 42,67"/>'
+                        '<path d="M58,33 A22,22 0 0 1 58,67"/>'
+                        '<circle cx="50" cy="50" r="4" fill="currentColor"/>'},
+    'installation': {'label': 'Installation', 'group': 'Support',
+                     'icon': '<path d="M34,33 V67"/>'
+                             '<path d="M34,35 H68 V51 H34 Z" fill="currentColor"/>'},
     'signal': {'label': 'Signals', 'group': 'Support',
                'icon': '<path d="M30,66 L50,34 L70,66 M38,54 H62"/>'},
+    'unknown': {'label': 'Unknown', 'group': 'Support',
+                'icon': '<path d="M38,43 A12,12 0 0 1 62,43 C62,53 50,53 50,60"/>'
+                        '<circle cx="50" cy="67" r="4" fill="currentColor"/>'},
 }
 DEFAULT_SYMBOL = 'inf'
 
@@ -161,6 +184,55 @@ DEFAULT_SYMBOL = 'inf'
 # a modifier rather than its own symbol because any unit can be the one in
 # charge — an HQ that is also a medical company is a medical icon on a staff.
 _HQ_STAFF = '<path d="M8,74 V116" fill="none" stroke-linecap="square"/>'
+
+# The markers Arma ships beside the NATO icons — `mil_dot`, `mil_objective`,
+# `mil_destroy` and the rest. They are drawn here the way the game draws them:
+# line art in the marker's colour rather than a filled block, which is what
+# tells a task marker from a unit at a glance. `arma` is the marker's name in
+# the game, so the export is a lookup rather than a guess about what somebody
+# meant by typing "TGT".
+#
+# `text` says whether the marker has room for the glyph inside it; where it
+# does not, the glyph is written in front of the label instead of being lost.
+MARKERS = {
+    'dot': {'label': 'Dot', 'arma': 'mil_dot', 'text': True,
+            'icon': '<circle cx="50" cy="50" r="16" fill="currentColor"/>'},
+    'circle': {'label': 'Circle', 'arma': 'mil_circle', 'text': True,
+               'icon': '<circle cx="50" cy="50" r="24"/>'},
+    'box': {'label': 'Box', 'arma': 'mil_box', 'text': True,
+            'icon': '<path d="M26,26 H74 V74 H26 Z"/>'},
+    'triangle': {'label': 'Triangle', 'arma': 'mil_triangle', 'text': True,
+                 'icon': '<path d="M50,24 L76,70 H24 Z"/>'},
+    'objective': {'label': 'Objective', 'arma': 'mil_objective', 'text': False,
+                  'icon': '<circle cx="50" cy="56" r="22"/>'
+                          '<path d="M50,34 V12"/>'},
+    'destroy': {'label': 'Destroy', 'arma': 'mil_destroy', 'text': False,
+                'icon': '<path d="M26,26 L74,74 M74,26 L26,74"/>'},
+    'warning': {'label': 'Warning', 'arma': 'mil_warning', 'text': False,
+                'icon': '<path d="M50,22 L78,72 H22 Z"/>'
+                        '<path d="M50,40 V56"/>'
+                        '<circle cx="50" cy="64" r="3.5" fill="currentColor"/>'},
+    'unknown': {'label': 'Question', 'arma': 'mil_unknown', 'text': False,
+                'icon': '<path d="M34,40 A16,16 0 0 1 66,40 C66,54 50,54 50,64"/>'
+                        '<circle cx="50" cy="75" r="4.5" fill="currentColor"/>'},
+    'flag': {'label': 'Flag', 'arma': 'mil_flag', 'text': False,
+             'icon': '<path d="M30,20 V80"/>'
+                     '<path d="M30,22 H72 L62,38 L72,54 H30 Z" fill="currentColor"/>'},
+    'arrow': {'label': 'Arrow', 'arma': 'mil_arrow', 'text': False,
+              'icon': '<path d="M50,20 L74,72 L50,60 L26,72 Z" fill="currentColor"/>'},
+    'start': {'label': 'Start', 'arma': 'mil_start', 'text': False,
+              'icon': '<path d="M28,24 L76,50 L28,76 Z" fill="currentColor"/>'},
+    'end': {'label': 'End', 'arma': 'mil_end', 'text': False,
+            'icon': '<path d="M28,28 H72 V72 H28 Z" fill="currentColor"/>'},
+    'pickup': {'label': 'Pick-up / LZ', 'arma': 'mil_pickup', 'text': False,
+               'icon': '<circle cx="50" cy="50" r="24"/>'
+                       '<path d="M34,54 L50,36 L66,54 M50,36 V68"/>'},
+    'join': {'label': 'Join', 'arma': 'mil_join', 'text': False,
+             'icon': '<path d="M26,24 L50,50 L74,24 M50,50 V76"/>'},
+    'marker': {'label': 'Cross', 'arma': 'mil_marker', 'text': False,
+               'icon': '<path d="M50,24 V76 M24,50 H76"/>'},
+}
+DEFAULT_MARKER = 'dot'
 
 LINE_STYLES = ('solid', 'dashed')
 
@@ -241,32 +313,38 @@ DEFAULT_EXTENT = {'terrain': '', 'left': 0.0, 'bottom': 0.0,
 
 # Which side a frame is, in Arma's terms: the marker-type prefix and the colour
 # used for everything that is not an icon.
+# Arma has four NATO marker prefixes and five marker colours we use, so the
+# civilian side shares the `u_` icons and keeps its own colour.
 ARMA_SIDES = {
     'friend': ('b', 'ColorWEST'),
     'hostile': ('o', 'ColorEAST'),
     'neutral': ('n', 'ColorGUER'),
+    'civ': ('u', 'ColorCIV'),
     'unknown': ('u', 'ColorUNKNOWN'),
 }
 
-# Our symbols against the NATO markers vanilla Arma 3 ships. Several have no
-# counterpart — there is no anti-tank or sniper marker — so they land on the
-# nearest thing that is in the game rather than on nothing.
+# Our symbols against the NATO markers vanilla Arma 3 ships. Every icon the
+# game has is in the palette now, so this is a straight mapping; only the four
+# symbols Arma has no marker for (sniper, machine gun, anti-tank, signals)
+# land on the nearest thing that is in the game rather than on nothing.
 ARMA_TYPES = {
     'generic': 'unknown', 'inf': 'inf', 'mech': 'mech_inf', 'motor': 'motor_inf',
     'armor': 'armor', 'recon': 'recon', 'sniper': 'recon', 'mg': 'inf',
     'at': 'support', 'aa': 'antiair', 'arty': 'art', 'mortar': 'mortar',
     'veh': 'motor_inf', 'air': 'plane', 'heli': 'air', 'uav': 'uav',
-    'engr': 'maint', 'med': 'med', 'logi': 'service', 'signal': 'support',
+    'naval': 'naval', 'med': 'med', 'engr': 'maint', 'maint': 'maint',
+    'logi': 'service', 'support': 'support', 'installation': 'installation',
+    'signal': 'support', 'unknown': 'unknown',
 }
 
-# The few markers a glyph obviously means; everything else is a plain dot with
-# its text, which is what the glyph was anyway.
+# What a glyph means when the point was drawn before the marker shapes
+# existed and so carries none: the same guesses as before, so an older map
+# exports as it always did.
 ARMA_POINTS = {
-    'OBJ': 'mil_objective', 'TGT': 'mil_destroy', 'SP': 'mil_start',
-    'RP': 'mil_end', 'IED': 'mil_warning', 'CP': 'mil_triangle',
-    'LZ': 'mil_pickup', 'PZ': 'mil_pickup',
+    'OBJ': 'objective', 'TGT': 'destroy', 'SP': 'start',
+    'RP': 'end', 'IED': 'warning', 'CP': 'triangle',
+    'LZ': 'pickup', 'PZ': 'pickup',
 }
-ARMA_POINT_DEFAULT = 'mil_dot'
 
 # Text drawn over a satellite image needs a halo or it disappears into the
 # terrain; white on a dark outline is what every map tool ends up at.
@@ -516,6 +594,14 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         item['rotation'] = round(_clamp(_number(raw.get('rotation'), 0.0), -360, 360), 1)
     elif kind == 'point':
         item['glyph'] = _text(raw.get('glyph'), MAX_GLYPH).upper()
+        # A map drawn before the marker shapes existed carries none. Its
+        # glyph is the only thing that says what the point was, so it is read
+        # the same way the export used to read it — a point typed `OBJ`
+        # becomes the objective marker rather than a nameless dot.
+        marker = raw.get('marker')
+        if marker not in MARKERS:
+            marker = ARMA_POINTS.get(item['glyph'], DEFAULT_MARKER)
+        item['marker'] = marker
 
     if kind in ('line', 'area', 'text'):
         # The side says whose a symbol is and must keep saying it, but a line
@@ -661,6 +747,10 @@ def catalog() -> dict:
              'hasIcon': bool(value['icon'])}
             for key, value in SYMBOLS.items()
         ],
+        'markers': [
+            {'key': key, 'label': value['label'], 'text': value['text']}
+            for key, value in MARKERS.items()
+        ],
         'points': [{'glyph': glyph, 'label': label} for glyph, label in POINT_PRESETS],
         'terrains': [{'name': name, 'size': size} for name, size in ARMA_TERRAINS],
         'lineStyles': list(LINE_STYLES),
@@ -676,6 +766,7 @@ def catalog() -> dict:
         },
         'kindOrder': dict(KIND_ORDER),
         'minLabel': MIN_LABEL,
+        'defaultMarker': DEFAULT_MARKER,
     }
 
 
@@ -705,12 +796,12 @@ def defs() -> str:
     Emitted into the editor page and into any standalone render, so a `<use>`
     is all either renderer needs. Adding a symbol here adds it to both.
     """
-    parts = ['<defs>']
-    for side, frame in _FRAMES.items():
-        parts.append(f'<g id="tmf-{side}">{frame}</g>')
-    parts.append(f'<g id="tmf-hq">{_HQ_STAFF}</g>')
+    parts = ['<defs>', f'<g id="tmf-frame">{_FRAME}</g>',
+             f'<g id="tmf-hq">{_HQ_STAFF}</g>']
     for key, symbol in SYMBOLS.items():
         parts.append(f'<g id="tmi-{key}">{symbol["icon"]}</g>')
+    for key, marker in MARKERS.items():
+        parts.append(f'<g id="tmm-{key}">{marker["icon"]}</g>')
     parts.append('</defs>')
     return ''.join(parts)
 
@@ -765,7 +856,7 @@ def _unit_svg(item: dict) -> str:
                  f"rotate({item.get('rotation', 0)}) scale({round(scale, 4)}) "
                  f"translate(-50,-50)")
     parts = [
-        f'<use href="#tmf-{item["side"]}" fill="{colours["fill"]}" '
+        f'<use href="#tmf-frame" fill="{colours["fill"]}" '
         f'stroke="{colours["edge"]}" stroke-width="5"/>'
     ]
     if item.get('hq'):
@@ -784,24 +875,48 @@ def _unit_svg(item: dict) -> str:
 
 
 def _point_svg(item: dict) -> str:
+    """One task marker — Arma's `mil_*` shape, in the side's colour.
+
+    Unlike a unit symbol this is line art rather than a filled block, which is
+    how the game tells a task from a unit, and it is drawn twice: once thick in
+    the side's dark edge and once on top in its colour, so the shape holds its
+    own over a satellite image without an SVG filter.
+    """
     colours = AFFILIATIONS[item['side']]
-    radius = POINT_BOX * item['size'] / 2
-    parts = [
-        f'<circle cx="{round(item["x"], 2)}" cy="{round(item["y"], 2)}" '
-        f'r="{round(radius, 2)}" fill="{colours["fill"]}" '
-        f'stroke="{colours["edge"]}" stroke-width="{round(2.5 * item["size"], 2)}"/>'
-    ]
-    if item.get('glyph'):
-        parts.append(
-            f'<text x="{round(item["x"], 2)}" y="{round(item["y"] + radius * 0.36, 2)}" '
-            f'text-anchor="middle" font-size="{round(radius * 0.95, 1)}" '
-            f'font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" '
-            f'font-weight="700" fill="{colours["glyph"]}">'
-            f'{escape(item["glyph"])}</text>'
-        )
-    parts.append(_label_svg(item['label'], item['x'], item['y'] + radius + 16 * item['size'],
-                            item['size']))
+    marker = MARKERS.get(item.get('marker'), MARKERS[DEFAULT_MARKER])
+    scale = POINT_BOX * item['size'] / 100 * 1.55
+    transform = (f"translate({round(item['x'], 2)},{round(item['y'], 2)}) "
+                 f"scale({round(scale, 4)}) translate(-50,-50)")
+    shape = (
+        f'<g transform="{transform}">'
+        f'<use href="#tmm-{marker_key(item)}" fill="none" '
+        f'stroke="{colours["edge"]}" color="{colours["edge"]}" stroke-width="15" '
+        f'stroke-linecap="round" stroke-linejoin="round"/>'
+        f'<use href="#tmm-{marker_key(item)}" fill="none" '
+        f'stroke="{colours["fill"]}" color="{colours["fill"]}" stroke-width="7" '
+        f'stroke-linecap="round" stroke-linejoin="round"/>'
+        f'</g>'
+    )
+    reach = POINT_BOX * item['size'] * 0.8
+    glyph = item.get('glyph', '')
+    parts = [shape]
+    if glyph and marker['text']:
+        parts.append(_label_svg(glyph, item['x'],
+                                item['y'] + label_size(item['size']) * 0.36,
+                                item['size'] * 0.9))
+    label = item['label']
+    if glyph and not marker['text']:
+        # Nowhere to write it on the shape, so it goes in front of the name
+        # rather than being dropped.
+        label = f'{glyph} {label}'.strip()
+    parts.append(_label_svg(label, item['x'], item['y'] + reach + 8, item['size']))
     return ''.join(parts)
+
+
+def marker_key(item: dict) -> str:
+    """Which `mil_*` shape a point is drawn as — the dot when it says nothing."""
+    marker = item.get('marker')
+    return marker if marker in MARKERS else DEFAULT_MARKER
 
 
 def _text_svg(item: dict) -> str:
@@ -1052,7 +1167,7 @@ def _sqf_string(value: str) -> str:
 def _arma_type(item: dict) -> str:
     side = ARMA_SIDES.get(item['side'], ARMA_SIDES['unknown'])[0]
     if item['kind'] == 'point':
-        return ARMA_POINTS.get(item.get('glyph', ''), ARMA_POINT_DEFAULT)
+        return MARKERS[marker_key(item)]['arma']
     if item['kind'] == 'text':
         return 'Empty'
     # A headquarters is the one modifier Arma has a marker of its own for, and

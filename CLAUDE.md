@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(190 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(197 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1680,30 +1680,56 @@ still decides, which is what **Bring to front** moves.
 
 ### The symbol geometry is in Python, once
 
-`defs()` emits every frame, icon and arrowhead as `<g>` elements in one `<defs>`
-block, and **both** renderers only ever place a `<use href="#tmf-friend">` at
-coordinates. So the browser and the server draw the same infantry symbol, and
-adding one means adding one entry to `SYMBOLS`. What is written twice is the
-composition — three attributes per item — and `item_svg()` in the library and
-the mirror of it in `tacmap.js` have to change together. Anything more than that
-belongs in the defs.
+`defs()` emits every frame, icon, marker and arrowhead as `<g>` elements in one
+`<defs>` block, and **both** renderers only ever place a
+`<use href="#tmi-inf">` at coordinates. So the browser and the server draw the
+same infantry symbol, and adding one means adding one entry to `SYMBOLS` or
+`MARKERS`. What is written twice is the composition — three attributes per item
+— and `item_svg()` in the library and the mirror of it in `tacmap.js` have to
+change together. Anything more than that belongs in the defs.
 
 Referenced content is `<g>`, not `<symbol>`: a `<symbol>` establishes a viewport
 and clips, which would cut the staff off a headquarters.
 
-Frames are APP-6 shaped — friendly rectangle, hostile diamond, neutral square,
-unknown quatrefoil — and **headquarters is a modifier, not a symbol**, because
-any unit can be the one in charge. An HQ that is also a medical company is a
-medical icon on a staff.
+**The set is Arma's, not APP-6's**, and the difference is deliberate: whoever
+reads the plan is looking at the same icons in game ten minutes later, so
+matching what the game draws is worth more here than being right about the
+standard.
 
-**They are painted the way Arma paints its own markers**: a solid block of the
-side's colour with a white pictogram on it, from Arma's own marker colours
-(`ColorWEST`, `ColorEAST`, `ColorGUER`, `ColorUNKNOWN`), lifted enough to hold
-up on a satellite image. That match is the whole point of the styling — whoever
-reads the plan is looking at the same icons in game ten minutes later, and a
-symbol set with its own look makes them translate. An affiliation therefore
-carries three colours, not two: `fill` for the shape, `edge` for its outline,
-`glyph` for what is drawn on it.
+- **One frame for every side.** Arma's NATO markers are a rectangle whatever
+  side they belong to and say whose a unit is by colour alone, so the APP-6
+  diamond, square and quatrefoil are gone. `_FRAME` is one path now, not a
+  dict keyed by side.
+- **The colours are `CfgMarkerColors` exactly** — `ColorWEST`, `ColorEAST`,
+  `ColorGUER`, `ColorCIV`, `ColorUNKNOWN` — rather than lifted versions of
+  them, and the civilian side exists because the game has it. An affiliation
+  carries three colours: `fill` for the shape, `edge` for its outline, `glyph`
+  for what is drawn on it.
+- **`SYMBOLS` covers every icon in `a3\ui_f\data\map\markers\nato`**, which
+  is what makes `ARMA_TYPES` a mapping rather than a guess. Four entries are
+  ours (sniper, machine gun, anti-tank, signals): the game has no marker for
+  them and a platoon plan needs them more than it needs the gaps to be honest.
+- **Headquarters is still a modifier, not a symbol**, because any unit can be
+  the one in charge. An HQ that is also a medical company is a medical icon on
+  a staff.
+
+**`MARKERS` is the other half of the game's set** — `mil_dot`, `mil_objective`,
+`mil_destroy`, `mil_flag` and the rest. A point carries one of those shapes and
+is drawn the way the game draws them, as line art in the side's colour rather
+than a filled block, which is what tells a task marker from a unit at a glance.
+Three things about them:
+
+- **Each is drawn twice**, once thick in the side's dark edge and once in its
+  colour on top, so the shape holds up over terrain without an SVG filter.
+- **That costs a hit area.** Line art has no fill, so a click in the middle of
+  an X or a circle would land on the terrain behind it — `hitSVG()` in
+  `tacmap.js` gives a point an invisible disc, the same reason a line carries
+  a fat invisible copy of itself.
+- **The glyph survives.** Only the dot, circle, box and triangle have room to
+  write in (`text` in the table); on the others the glyph goes in front of the
+  label rather than being dropped. A point drawn before the shapes existed has
+  no marker, so `parse()` reads its glyph — one typed `OBJ` becomes the
+  objective marker, which is what the export already assumed it meant.
 
 `UNIT_BOX` is small on purpose. A platoon plan puts twenty symbols on one
 sheet, and what reads as comfortable with three of them is a wall of colour
