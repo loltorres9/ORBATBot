@@ -24,7 +24,8 @@
         <label>Layer <select id="tmlayerpick"></select></label>
         <label data-for="unit">Symbol <select id="tmsymbol"></select></label>
         <label data-for="unit" class="tmcheck"><input type="checkbox" id="tmhq"> HQ</label>
-        <label data-for="point">Marker <select id="tmglyph"></select></label>
+        <label data-for="point">Marker <select id="tmmarker"></select></label>
+        <label data-for="point">Text <select id="tmglyph"></select></label>
       </div>
       <div class="tmdo">
         <span class="tmstatus" id="tmstatus"></span>
@@ -55,8 +56,12 @@
             <select id="tmf-symbol"></select></label>
           <label class="field tmcheck" data-for="unit">
             <input type="checkbox" id="tmf-hq"> <span>Headquarters</span></label>
+          <label class="field" data-for="point"><span>Marker</span>
+            <select id="tmf-marker"></select></label>
           <label class="field" data-for="point"><span>Marker text</span>
-            <input id="tmf-glyph" maxlength="4"></label>
+            <input id="tmf-glyph" maxlength="4">
+            <span class="hint">Only the dot, circle, box and triangle have room
+              for it; on the others it goes in front of the name.</span></label>
           <label class="field" data-for="unit"><span>Rotation</span>
             <input type="range" id="tmf-rotation" min="-180" max="180" step="5"></label>
           <label class="field"><span>Size</span>

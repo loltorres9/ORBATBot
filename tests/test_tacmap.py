@@ -19,6 +19,13 @@ def unit(**overrides):
     return item
 
 
+def _parse_one(raw):
+    """One item, as the document holds it after parsing — never the raw dict."""
+    result = tacmap.parse(_doc(items=[raw]))
+    assert result.doc['items'], result.warnings
+    return result.doc['items'][0]
+
+
 # -- the document -----------------------------------------------------------
 
 def test_a_blank_map_parses_to_itself():
@@ -386,16 +393,89 @@ def test_an_imported_terrain_lands_where_arma_puts_it():
 
 # -- drawing -----------------------------------------------------------------
 
-def test_every_symbol_and_frame_is_in_the_defs():
+def test_every_symbol_frame_and_marker_is_in_the_defs():
     defs = tacmap.defs()
-    for side in tacmap.AFFILIATIONS:
-        assert f'id="tmf-{side}"' in defs
     for symbol in tacmap.SYMBOLS:
         assert f'id="tmi-{symbol}"' in defs
+    for marker in tacmap.MARKERS:
+        assert f'id="tmm-{marker}"' in defs
+    assert 'id="tmf-frame"' in defs
     assert 'id="tmf-hq"' in defs
     # No arrow markers: a marker cannot take a line's own colour, so the head
     # is a polygon the renderer works out.
     assert '<marker' not in defs
+
+
+def test_one_frame_carries_every_side():
+    """Arma says whose a unit is by colour alone, and so do we now."""
+    defs = tacmap.defs()
+    assert defs.count('id="tmf-') == 2  # the frame and the headquarters staff
+    drawn = {
+        side: tacmap.item_svg(_parse_one({'kind': 'unit', 'side': side, 'x': 10,
+                                          'y': 10, 'symbol': 'inf'}))
+        for side in tacmap.AFFILIATIONS
+    }
+    for side, svg in drawn.items():
+        assert '#tmf-frame' in svg
+        assert tacmap.AFFILIATIONS[side]['fill'] in svg
+    # …and the colours are the game's own, not a palette of our own devising.
+    assert tacmap.AFFILIATIONS['friend']['fill'] == '#004d99'   # ColorWEST
+    assert tacmap.AFFILIATIONS['hostile']['fill'] == '#800000'  # ColorEAST
+    assert tacmap.AFFILIATIONS['neutral']['fill'] == '#008000'  # ColorGUER
+    assert tacmap.AFFILIATIONS['civ']['fill'] == '#66007f'      # ColorCIV
+    assert tacmap.AFFILIATIONS['unknown']['fill'] == '#b39900'  # ColorUNKNOWN
+
+
+def test_every_nato_marker_arma_ships_has_a_symbol():
+    """The palette covers a3\\ui_f\\data\\map\\markers\\nato, so the export maps."""
+    wanted = {
+        'inf', 'motor_inf', 'mech_inf', 'armor', 'recon', 'air', 'plane', 'uav',
+        'naval', 'med', 'art', 'mortar', 'installation', 'maint', 'service',
+        'support', 'antiair', 'unknown',
+    }
+    assert wanted <= set(tacmap.ARMA_TYPES.values())
+
+
+def test_a_point_carries_one_of_armas_markers():
+    item = _parse_one({'kind': 'point', 'x': 10, 'y': 10, 'marker': 'objective'})
+    assert item['marker'] == 'objective'
+    assert tacmap._arma_type(item) == 'mil_objective'
+    assert '#tmm-objective' in tacmap.item_svg(item)
+
+
+def test_an_unknown_marker_falls_back_to_the_dot():
+    item = _parse_one({'kind': 'point', 'x': 10, 'y': 10, 'marker': 'spaceship'})
+    assert item['marker'] == tacmap.DEFAULT_MARKER
+    assert tacmap._arma_type(item) == 'mil_dot'
+
+
+def test_a_point_drawn_before_the_shapes_existed_reads_its_glyph():
+    """An older map said what a point was by typing OBJ or LZ into it."""
+    item = _parse_one({'kind': 'point', 'x': 10, 'y': 10, 'glyph': 'obj'})
+    assert item['marker'] == 'objective'
+    plain = _parse_one({'kind': 'point', 'x': 10, 'y': 10, 'glyph': 'AB'})
+    assert plain['marker'] == tacmap.DEFAULT_MARKER
+
+
+def test_a_glyph_with_nowhere_to_go_joins_the_label():
+    """Only the round and boxy markers have room to write in."""
+    inside = tacmap.item_svg(_parse_one({'kind': 'point', 'x': 10, 'y': 10,
+                                         'marker': 'box', 'glyph': 'A1',
+                                         'label': 'Cache'}))
+    assert '>A1<' in inside and '>Cache<' in inside
+    beside = tacmap.item_svg(_parse_one({'kind': 'point', 'x': 10, 'y': 10,
+                                         'marker': 'flag', 'glyph': 'A1',
+                                         'label': 'Cache'}))
+    assert '>A1 Cache<' in beside
+
+
+def test_the_civilian_side_exports_as_its_own_colour():
+    doc = tacmap.blank_doc()
+    doc['items'] = [{'kind': 'unit', 'side': 'civ', 'x': 10, 'y': 10,
+                     'symbol': 'installation'}]
+    script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='m1')
+    assert 'ColorCIV' in script
+    assert 'u_installation' in script
 
 
 def test_the_catalog_offers_exactly_what_can_be_drawn():

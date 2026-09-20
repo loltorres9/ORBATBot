@@ -36,6 +36,7 @@
     side: 'friend',
     symbol: 'inf',
     glyph: catalog.points.length ? catalog.points[0].glyph : 'OBJ',
+    marker: catalog.defaultMarker,
     layer: '',
     hq: false,
     selected: -1,
@@ -51,6 +52,8 @@
   catalog.sides.forEach(function (side) { colours[side.key] = side; });
   var symbols = {};
   catalog.symbols.forEach(function (symbol) { symbols[symbol.key] = symbol; });
+  var markers = {};
+  catalog.markers.forEach(function (marker) { markers[marker.key] = marker; });
 
   var layer = svg.querySelector('.tm-items');
   var back = svg.querySelector('#tm-back');
@@ -95,7 +98,7 @@
     var scale = catalog.unitBox * item.size / 100;
     var transform = 'translate(' + round(item.x) + ',' + round(item.y) + ') rotate(' +
       (item.rotation || 0) + ') scale(' + scale + ') translate(-50,-50)';
-    var parts = ['<use href="#tmf-' + item.side + '" fill="' + paint.fill +
+    var parts = ['<use href="#tmf-frame" fill="' + paint.fill +
       '" stroke="' + paint.edge + '" stroke-width="5"/>'];
     if (item.hq) {
       parts.push('<use href="#tmf-hq" stroke="' + paint.edge + '" stroke-width="5"/>');
@@ -110,19 +113,36 @@
       label(item.label, item.x, item.y + drop, item.size);
   }
 
+  function markerKey(item) {
+    return markers[item.marker] ? item.marker : catalog.defaultMarker;
+  }
+
   function pointSVG(item) {
+    // Mirrors _point_svg() in utils/tacmap.py: line art in the side's colour,
+    // drawn twice so the shape holds up over terrain.
     var paint = colours[item.side];
-    var radius = catalog.pointBox * item.size / 2;
-    var parts = ['<circle cx="' + round(item.x) + '" cy="' + round(item.y) + '" r="' +
-      round(radius) + '" fill="' + paint.fill + '" stroke="' + paint.edge +
-      '" stroke-width="' + round(2.5 * item.size) + '"/>'];
-    if (item.glyph) {
-      parts.push('<text x="' + round(item.x) + '" y="' + round(item.y + radius * 0.36) +
-        '" text-anchor="middle" font-size="' + round(radius * 0.95) + '"' +
-        ' font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif"' +
-        ' font-weight="700" fill="' + paint.glyph + '">' + esc(item.glyph) + '</text>');
+    var key = markerKey(item);
+    var scale = catalog.pointBox * item.size / 100 * 1.55;
+    var transform = 'translate(' + round(item.x) + ',' + round(item.y) + ') scale(' +
+      scale + ') translate(-50,-50)';
+    var shape = '<g transform="' + transform + '">' +
+      '<use href="#tmm-' + key + '" fill="none" stroke="' + paint.edge +
+      '" color="' + paint.edge + '" stroke-width="15"' +
+      ' stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<use href="#tmm-' + key + '" fill="none" stroke="' + paint.fill +
+      '" color="' + paint.fill + '" stroke-width="7"' +
+      ' stroke-linecap="round" stroke-linejoin="round"/></g>';
+    var parts = [shape];
+    var glyph = item.glyph || '';
+    var name = item.label;
+    if (glyph && markers[key].text) {
+      parts.push(label(glyph, item.x, item.y + labelSize(item.size) * 0.36,
+        item.size * 0.9));
+    } else if (glyph) {
+      name = (glyph + ' ' + name).trim();
     }
-    parts.push(label(item.label, item.x, item.y + radius + 16 * item.size, item.size));
+    parts.push(label(name, item.x, item.y + catalog.pointBox * item.size * 0.8 + 8,
+      item.size));
     return parts.join('');
   }
 
@@ -190,7 +210,14 @@
 
   function hitSVG(item) {
     // A hair-thin line is impossible to grab, so every line and area carries an
-    // invisible fat copy of itself for the pointer to land on.
+    // invisible fat copy of itself for the pointer to land on. A task marker
+    // needs one too: it is line art with no fill, so without this a click in
+    // the middle of an X or a circle lands on the terrain behind it.
+    if (item.kind === 'point') {
+      return '<circle cx="' + round(item.x) + '" cy="' + round(item.y) + '" r="' +
+        round(catalog.pointBox * item.size * 0.8) +
+        '" fill="#000" fill-opacity="0"/>';
+    }
     if (item.kind !== 'line' && item.kind !== 'area') return '';
     var points = item.points.map(function (point) {
       return round(point[0]) + ',' + round(point[1]);
@@ -521,6 +548,7 @@
       item.x = round(point.x);
       item.y = round(point.y);
       item.glyph = state.glyph;
+      item.marker = state.marker;
     } else if (kind === 'text') {
       item.x = round(point.x);
       item.y = round(point.y);
@@ -665,15 +693,20 @@
   var glyphOptions = catalog.points.map(function (preset) {
     return { value: preset.glyph, label: preset.glyph + ' · ' + preset.label };
   });
+  var markerOptions = catalog.markers.map(function (marker) {
+    return { value: marker.key, label: marker.label };
+  });
 
   var sidePick = document.getElementById('tmside');
   var symbolPick = document.getElementById('tmsymbol');
   var glyphPick = document.getElementById('tmglyph');
+  var markerPick = document.getElementById('tmmarker');
   var hqPick = document.getElementById('tmhq');
 
   fillOptions(sidePick, sideOptions, state.side);
   fillOptions(symbolPick, symbolOptions, state.symbol);
   fillOptions(glyphPick, glyphOptions, state.glyph);
+  fillOptions(markerPick, markerOptions, state.marker);
 
   var layerPick = document.getElementById('tmlayerpick');
   var layerAdd = document.getElementById('tmlayeradd');
@@ -725,6 +758,7 @@
   sidePick.addEventListener('change', function () { state.side = sidePick.value; });
   symbolPick.addEventListener('change', function () { state.symbol = symbolPick.value; });
   glyphPick.addEventListener('change', function () { state.glyph = glyphPick.value; });
+  markerPick.addEventListener('change', function () { state.marker = markerPick.value; });
   hqPick.addEventListener('change', function () { state.hq = hqPick.checked; });
 
   /* -- the inspector -------------------------------------------------------- */
@@ -736,6 +770,7 @@
     symbol: document.getElementById('tmf-symbol'),
     hq: document.getElementById('tmf-hq'),
     glyph: document.getElementById('tmf-glyph'),
+    marker: document.getElementById('tmf-marker'),
     rotation: document.getElementById('tmf-rotation'),
     size: document.getElementById('tmf-size'),
     style: document.getElementById('tmf-style'),
@@ -746,6 +781,7 @@
   };
   fillOptions(fields.side, sideOptions, state.side);
   fillOptions(fields.symbol, symbolOptions, state.symbol);
+  fillOptions(fields.marker, markerOptions, state.marker);
 
   function fillInspector() {
     var item = selected();
@@ -760,6 +796,7 @@
     fields.symbol.value = item.symbol || 'inf';
     fields.hq.checked = !!item.hq;
     fields.glyph.value = item.glyph || '';
+    fields.marker.value = markerKey(item);
     fields.rotation.value = item.rotation || 0;
     fields.size.value = item.size;
     fields.style.value = item.style || 'solid';
@@ -783,6 +820,14 @@
   editField(fields.side, function (item) { item.side = fields.side.value; });
   editField(fields.symbol, function (item) { item.symbol = fields.symbol.value; });
   editField(fields.hq, function (item) { item.hq = fields.hq.checked; });
+  fields.marker.addEventListener('change', function () {
+    var item = selected();
+    if (!item) return;
+    item.marker = fields.marker.value;
+    touched();
+    render();
+  });
+
   editField(fields.glyph, function (item) {
     item.glyph = fields.glyph.value.toUpperCase().slice(0, catalog.limits.glyph);
     fields.glyph.value = item.glyph;
