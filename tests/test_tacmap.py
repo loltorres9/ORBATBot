@@ -146,9 +146,100 @@ def test_a_normal_background_is_kept():
     doc = tacmap.blank_doc()
     doc['background'] = {'url': 'https://example.com/altis.jpg', 'opacity': 0.5}
     result = tacmap.parse(doc)
-    assert result.doc['background'] == {'url': 'https://example.com/altis.jpg',
-                                        'opacity': 0.5}
+    assert result.doc['background']['url'] == 'https://example.com/altis.jpg'
+    assert result.doc['background']['opacity'] == 0.5
+    # A document written before tile sets existed has no kind, and is a picture.
+    assert result.doc['background']['kind'] == 'image'
     assert not result.warnings
+
+
+# -- tile sets ---------------------------------------------------------------
+
+def _tiled(zoom=2, max_zoom=5, url='https://ocap.example/maps/tanoa'):
+    doc = tacmap.blank_doc()
+    doc['background'] = {'kind': 'tiles', 'url': url, 'opacity': 1.0,
+                         'zoom': zoom, 'max_zoom': max_zoom, 'name': 'Tanoa'}
+    return tacmap.parse(doc).doc
+
+
+def test_a_tile_set_draws_one_image_per_tile_from_the_top_left():
+    svg = tacmap.render(_tiled(zoom=2))
+    assert svg.count('<image') == 16          # 4 per side
+    assert 'href="https://ocap.example/maps/tanoa/2/0/0.png" x="0.0" y="0.0"' in svg
+    # Column is x and row is y, counted downward — which is the only way OCAP's
+    # own tiles assemble into the terrain the right way up.
+    assert 'href="https://ocap.example/maps/tanoa/2/3/0.png" x="750.0" y="0.0"' in svg
+    assert 'href="https://ocap.example/maps/tanoa/2/0/3.png" x="0.0" y="750.0"' in svg
+
+
+def test_each_tile_is_drawn_over_its_neighbour_to_hide_the_seam():
+    svg = tacmap.render(_tiled(zoom=2))
+    first = svg.split('<image')[1]
+    width = float(first.split('width="')[1].split('"')[0])
+    assert width > 250                        # the cell is 1000 / 4
+    assert width < 250 + tacmap.DEFAULT_WIDTH * 0.01
+
+
+def test_a_tile_zoom_is_held_to_what_the_folder_has():
+    assert _tiled(zoom=9, max_zoom=3)['background']['zoom'] == 3
+    # And to what this editor is willing to draw, whatever the folder says.
+    assert _tiled(zoom=9, max_zoom=9)['background']['zoom'] == tacmap.MAX_TILE_ZOOM
+
+
+def test_a_tile_base_keeps_no_trailing_slash():
+    doc = _tiled(url='https://ocap.example/maps/tanoa/')
+    assert doc['background']['url'] == 'https://ocap.example/maps/tanoa'
+    assert '/maps/tanoa/2/0/0.png' in tacmap.render(doc)
+
+
+def test_a_tile_set_with_no_address_is_just_an_empty_sheet():
+    doc = _tiled(url='')
+    assert '<image' not in tacmap.render(doc)
+
+
+# -- reading OCAP's map.json -------------------------------------------------
+
+_CHAM = {'name': 'Cham', 'worldName': 'tem_cham', 'worldSize': 8192,
+         'imageSize': 16384, 'multiplier': 2, 'hasTopo': True, 'maxZoom': 6,
+         'attribution': 'Temppa'}
+
+
+def test_an_ocap_map_gives_both_the_background_and_the_calibration():
+    settings = tacmap.ocap_settings(_CHAM, 'https://ocap.example/maps/tem_cham/')
+    assert settings['background']['kind'] == 'tiles'
+    assert settings['background']['url'] == 'https://ocap.example/maps/tem_cham'
+    assert settings['background']['name'] == 'Cham'
+    # The pyramid covers the whole terrain, so the corners are the world's.
+    assert settings['arma'] == {'terrain': 'Cham', 'left': 0.0, 'bottom': 0.0,
+                                'right': 8192.0, 'top': 8192.0}
+
+
+def test_the_deepest_zoom_comes_from_the_image_the_folder_actually_holds():
+    # 16384 px of 256 px tiles is 64 per side, which is six doublings.
+    assert tacmap.ocap_settings(_CHAM, 'https://x/y')['background']['max_zoom'] == 6
+    # A map.json claiming more levels than its image has is not believed.
+    small = dict(_CHAM, imageSize=1024, maxZoom=6)
+    assert tacmap.ocap_settings(small, 'https://x/y')['background']['max_zoom'] == 2
+
+
+def test_a_map_json_without_a_world_size_is_refused_with_a_message():
+    for payload in ({}, {'name': 'Cham'}, {'worldSize': 0}, {'worldSize': 'big'}):
+        try:
+            tacmap.ocap_settings(payload, 'https://x/y')
+        except ValueError as e:
+            assert 'worldSize' in str(e)
+        else:
+            raise AssertionError(f'{payload} should have been refused')
+
+
+def test_an_imported_terrain_lands_where_arma_puts_it():
+    settings = tacmap.ocap_settings(_CHAM, 'https://x/y')
+    doc = tacmap.blank_doc()
+    doc['background'] = settings['background']
+    doc['arma'] = settings['arma']
+    doc = tacmap.parse(doc).doc
+    assert tacmap.to_world(doc, 500, 500) == (4096.0, 4096.0)
+    assert tacmap.to_world(doc, 0, 1000) == (0.0, 0.0)
 
 
 # -- drawing -----------------------------------------------------------------

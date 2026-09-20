@@ -139,6 +139,40 @@ _HQ_STAFF = '<path d="M8,74 V116" fill="none" stroke-linecap="square"/>'
 
 LINE_STYLES = ('solid', 'dashed')
 
+# ---------------------------------------------------------------------------
+# Backgrounds
+# ---------------------------------------------------------------------------
+#
+# Two kinds. `image` is one picture stretched across the sheet, which is what a
+# screenshot or a map export is. `tiles` is the pyramid of 256 px squares that
+# GDAL2Tiles produces and that **OCAP already ships for every terrain a unit
+# plays on** — `{z}/{x}/{y}.png` under one folder per world. Pointing at that
+# folder is worth the second kind on its own: it is a real map of the terrain,
+# at a resolution one image could not carry, that the unit is already hosting.
+BACKGROUND_KINDS = ('image', 'tiles')
+
+# The pyramid doubles each level, so a level holds 4^z tiles: zoom 4 is 256
+# requests and 256 elements, which is a lot already, and 6 would be 4096.
+TILE_SIZE = 256
+MAX_TILE_ZOOM = 5
+DEFAULT_TILE_ZOOM = 4
+
+# Tiles are counted from the **top** left, the way GDAL2Tiles writes them and
+# the way OCAP reads them back — checked against OCAP's own Tanoa set, which
+# only assembles into Tanoa this way up. There is deliberately no switch for
+# the other convention: nothing we have seen uses it.
+#
+# Neighbouring tiles share an edge exactly, and a browser scaling each one to a
+# fractional pixel size anti-aliases both sides of that edge — which reads as a
+# grid of bright hairlines drawn over the terrain. So every tile is drawn
+# slightly over its neighbour, whose own edge then covers the seam.
+#
+# The overlap is a fraction of the **sheet**, not of a tile: the seam is about
+# one device pixel wide whatever zoom level is showing, so the fix has to be the
+# same width too. It costs each tile that much stretch — about fifteen metres on
+# a 15 km terrain, and always less than the seam it replaces.
+TILE_BLEED = 0.0012
+
 # What the editor offers as ready-made markers. The glyph is stored, not the
 # preset, so renaming one here never changes a map that was already drawn.
 POINT_PRESETS = (
@@ -225,7 +259,9 @@ def blank_doc(width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> dict:
     return {
         'width': width,
         'height': height,
-        'background': {'url': '', 'opacity': 1.0},
+        'background': {'kind': 'image', 'url': '', 'opacity': 1.0,
+                       'zoom': DEFAULT_TILE_ZOOM, 'max_zoom': MAX_TILE_ZOOM,
+                       'name': ''},
         'grid': {'show': False, 'cols': 10, 'rows': 10},
         # Where the sheet's corners are in Arma's world, in metres. Only the
         # export reads it, and only the person exporting can know it — which
@@ -315,12 +351,23 @@ def parse(raw) -> ParseResult:
         url = _safe_url(background.get('url'))
         if background.get('url') and not url:
             result.warnings.append(
-                'The background has to be an http:// or https:// image link — '
+                'The background has to be an http:// or https:// link — '
                 'that one was dropped.'
             )
+        kind = (background.get('kind') if background.get('kind') in BACKGROUND_KINDS
+                else 'image')
+        # What the tile set actually has, which bounds what may be asked for:
+        # a zoom above it is a folder of 404s where the map should be.
+        max_zoom = int(_clamp(_number(background.get('max_zoom'), MAX_TILE_ZOOM),
+                              0, MAX_TILE_ZOOM))
         doc['background'] = {
-            'url': url,
+            'kind': kind,
+            'url': url.rstrip('/') if kind == 'tiles' else url,
             'opacity': round(_clamp(_number(background.get('opacity'), 1.0), 0.1, 1.0), 2),
+            'zoom': int(_clamp(_number(background.get('zoom'), DEFAULT_TILE_ZOOM),
+                               0, max_zoom)),
+            'max_zoom': max_zoom,
+            'name': _text(background.get('name'), 80),
         }
 
     grid = raw.get('grid')
@@ -508,6 +555,8 @@ def catalog() -> dict:
         'lineStyles': list(LINE_STYLES),
         'unitBox': UNIT_BOX,
         'pointBox': POINT_BOX,
+        'tileBleed': TILE_BLEED,
+        'maxTileZoom': MAX_TILE_ZOOM,
         'limits': {
             'items': MAX_ITEMS, 'points': MAX_POINTS, 'label': MAX_LABEL,
             'note': MAX_NOTE, 'glyph': MAX_GLYPH,
@@ -667,17 +716,52 @@ def _shape_svg(item: dict) -> str:
                               item['size'])
 
 
+def tile_url(background: dict, zoom: int, column: int, row: int) -> str:
+    """One tile of the pyramid. Row counts from the top — see TILE_BLEED above."""
+    return f"{background['url']}/{zoom}/{column}/{row}.png"
+
+
+def _empty_sheet(doc: dict) -> str:
+    return (f'<rect x="0" y="0" width="{doc["width"]}" height="{doc["height"]}" '
+            f'fill="#20262e"/>')
+
+
+def _tiles_svg(doc: dict) -> str:
+    background = doc['background']
+    zoom = background['zoom']
+    per_side = 2 ** zoom
+    width = doc['width'] / per_side
+    height = doc['height'] / per_side
+    bleed_x = doc['width'] * TILE_BLEED
+    bleed_y = doc['height'] * TILE_BLEED
+    tiles = []
+    for column in range(per_side):
+        for row in range(per_side):
+            tiles.append(
+                f'<image href={quoteattr(tile_url(background, zoom, column, row))} '
+                f'x="{round(column * width, 3)}" y="{round(row * height, 3)}" '
+                f'width="{round(width + bleed_x, 3)}" '
+                f'height="{round(height + bleed_y, 3)}" '
+                f'preserveAspectRatio="none"/>'
+            )
+    # The dark sheet stays underneath: a tile that 404s draws nothing at all in
+    # SVG, and a hole in the terrain should read as terrain we have not got.
+    return (f'{_empty_sheet(doc)}<g opacity="{background["opacity"]}">'
+            f'{"".join(tiles)}</g>')
+
+
 def _background_svg(doc: dict) -> str:
-    url = doc['background']['url']
-    if not url:
-        return (f'<rect x="0" y="0" width="{doc["width"]}" height="{doc["height"]}" '
-                f'fill="#20262e"/>')
+    background = doc['background']
+    if not background['url']:
+        return _empty_sheet(doc)
+    if background['kind'] == 'tiles':
+        return _tiles_svg(doc)
     # preserveAspectRatio="none" because the document's own proportions are the
     # authority: the person sized the sheet to the image, not the other way round.
     return (
-        f'<image href={quoteattr(url)} x="0" y="0" width="{doc["width"]}" '
-        f'height="{doc["height"]}" opacity="{doc["background"]["opacity"]}" '
-        f'preserveAspectRatio="none"/>'
+        f'<image href={quoteattr(background["url"])} x="0" y="0" '
+        f'width="{doc["width"]}" height="{doc["height"]}" '
+        f'opacity="{background["opacity"]}" preserveAspectRatio="none"/>'
     )
 
 
@@ -719,6 +803,52 @@ def render(doc: dict, *, standalone: bool = False, extra_class: str = '') -> str
 # ---------------------------------------------------------------------------
 # Putting the plan into a running mission
 # ---------------------------------------------------------------------------
+
+
+def ocap_settings(payload: dict, base_url: str) -> dict:
+    """An OCAP `map.json` turned into a background and an Arma extent.
+
+    OCAP already renders every terrain its users play on, and its `map.json`
+    carries the one number the export could not work out for itself:
+    `worldSize`, the terrain's edge in metres. So pointing at an OCAP map
+    folder settles the background **and** the calibration in one step — which
+    is the whole reason this import exists rather than a tile-URL field.
+
+        {"name": "Cham", "worldName": "tem_cham", "worldSize": 8192,
+         "imageSize": 16384, "multiplier": 2, "maxZoom": 6, ...}
+
+    `imageSize` is the pyramid's edge in pixels; the bottom level therefore
+    holds `imageSize / 256` tiles per side, and `maxZoom` is its level. Both are
+    read, and the smaller is believed: asking for a level the folder does not
+    have is a screenful of missing tiles.
+    """
+    world = _number(payload.get('worldSize')) if isinstance(payload, dict) else None
+    if not world or world <= 0:
+        raise ValueError(
+            "That map.json has no usable worldSize — it may not be an OCAP map folder."
+        )
+
+    image = _number(payload.get('imageSize'), 0) or 0
+    from_image = int(math.log2(image / TILE_SIZE)) if image >= TILE_SIZE else MAX_TILE_ZOOM
+    stated = _number(payload.get('maxZoom'))
+    max_zoom = min(int(stated) if stated and stated > 0 else from_image, from_image)
+
+    name = (_text(payload.get('name'), 80) or _text(payload.get('worldName'), 80))
+    return {
+        'background': {
+            'kind': 'tiles',
+            'url': base_url.rstrip('/'),
+            'opacity': 1.0,
+            'zoom': min(DEFAULT_TILE_ZOOM, max_zoom),
+            'max_zoom': max_zoom,
+            'name': name,
+        },
+        # The pyramid covers the whole terrain, so the sheet's corners are the
+        # world's corners — which is exactly what the Arma export needs.
+        'arma': {'terrain': name, 'left': 0.0, 'bottom': 0.0,
+                 'right': round(world, 2), 'top': round(world, 2)},
+        'name': name,
+    }
 
 
 def to_world(doc: dict, x: float, y: float) -> tuple:

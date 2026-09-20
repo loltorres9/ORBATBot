@@ -104,7 +104,7 @@ Draw the plan on the terrain and share it with a link — unit symbols, movement
 
 - **APP-6-style symbols** — friendly, hostile, neutral and unknown frames with infantry, armour, mortars, air, medical, logistics and the rest, plus a headquarters staff
 - **Movement lines with arrow heads, areas, markers and free text** — everything a briefing needs to say where people are going
-- **Any background image** — a terrain screenshot, a map export, whatever the browser can load — with an optional grid over it
+- **Your actual terrain as the background** — point it at an [OCAP](https://github.com/OCAP2/OCAP) map folder and it loads the tiles *and* works out the Arma coordinates from them; any other image works too
 - **A share link** anyone can open without signing in, read-only or with drawing rights, and **replaceable** the moment it has travelled further than intended
 - **Straight into Arma 3** — the whole plan as markers in a running mission, pasted into the debug console, no mod on either side
 - **Post it in a channel** as a link, so it stays current while the plan is still being drawn
@@ -933,9 +933,16 @@ Pick the side (friendly, hostile, neutral, unknown) and the symbol in the toolba
 
 ### The background
 
-Under **Map settings**, paste the URL of any image the browser can load — a terrain screenshot, a map export from the mission editor, a satellite image. It is stretched across the sheet, so pick the sheet shape (square, landscape, portrait) that matches it. An optional grid can be laid over the top.
+**If your unit runs OCAP, use it.** OCAP already renders every terrain you play on, as a folder of map tiles with a `map.json` beside it. Open **🛰️ Load a terrain from OCAP**, paste the address of one of those folders — e.g. `https://ocap.your-unit.net/images/maps/tanoa` — and the map takes that terrain as its background **and** its Arma coordinates in one step, so the export later lands in the right place without you typing a single number.
 
-The map works without a background too: a plain dark sheet with a grid is enough for a schematic.
+Two things to know about it:
+
+- The tiles are loaded by whoever opens the map, so your OCAP server has to be reachable for them too — including anyone you send a share link to.
+- **Detail** under *Map settings* picks how deep into the tile pyramid to go. One step deeper is four times as many tiles to load; level 4 (256 tiles) is the default and is plenty for planning.
+
+Otherwise, paste the URL of any image the browser can load — a terrain screenshot, a map export from the mission editor — under **Map settings**. It is stretched across the sheet, so pick the sheet shape (square, landscape, portrait) that matches it, and set the Arma corners yourself if you want the export.
+
+Either way an optional grid can be laid over the top, and the map works with no background at all: a plain dark sheet with a grid is enough for a schematic.
 
 ### Sharing it
 
@@ -955,7 +962,7 @@ The link looks like `https://your-domain/m/xxxxxxxx`, works without a Discord lo
 
 The map can be dropped into a **running mission** as ordinary Arma markers, with **no mod** on the server or the client. Arma cannot fetch anything from outside without one, so the way in is the debug console:
 
-1. In **Map settings → Arma 3 coordinates**, pick the terrain (or type the corner coordinates if your background image is a crop of the map). Get this right before the first export, or everything lands on the wrong terrain.
+1. Make sure the coordinates are set. Loading the terrain from OCAP does this for you; otherwise pick the terrain under **Map settings → Arma 3 coordinates**, or type the corner coordinates if your background image is a crop of the map. Get this right before the first export, or everything lands on the wrong terrain.
 2. Save the map, then open **🎯 Put it into Arma 3** and copy the script — or download it as a `.sqf`.
 3. In game, log in as admin (`#login <password>`), open the debug console, paste it and press **GLOBAL EXEC**.
 

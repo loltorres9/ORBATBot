@@ -1003,6 +1003,20 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         context = await map_context(request, guild_id, map_id)
         return PlainTextResponse(tacmap_service.sqf(context['record']))
 
+    @app.post('/g/{guild_id}/maps/{map_id}/ocap')
+    async def map_ocap(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = await tacmap_service.import_ocap(
+                context['record'], form.get('url'), context['member'].display_name
+            )
+        except ValueError as e:
+            return map_editor(request, context, error=str(e), status=400, panel='ocap')
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
+
     @app.post('/g/{guild_id}/maps/{map_id}/rename')
     async def map_rename(request: Request, guild_id: str, map_id: int):
         context = await map_context(request, guild_id, map_id)
