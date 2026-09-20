@@ -1,8 +1,10 @@
 {# The map itself, shared by the editor page and the share link.
 
    The `<svg>` inside is the one `utils/tacmap.py` rendered: with scripting off
-   that is the whole feature — a map you can look at. `web/static/tacmap.js`
-   takes it over when it loads and keeps it up to date in the browser. #}
+   that is the whole feature — a map you can look at, on its visible layers.
+   `web/static/tacmap.js` takes it over when it loads and keeps it up to date in
+   the browser, which is also what makes the layer switches work for somebody
+   who only has the link. #}
 <div class="tmapp" id="tmapp"
      data-save="{{ save_url }}"
      data-editable="{{ '1' if editable else '0' }}"
@@ -19,6 +21,7 @@
       </div>
       <div class="tmpick">
         <label>Side <select id="tmside"></select></label>
+        <label>Layer <select id="tmlayerpick"></select></label>
         <label data-for="unit">Symbol <select id="tmsymbol"></select></label>
         <label data-for="unit" class="tmcheck"><input type="checkbox" id="tmhq"> HQ</label>
         <label data-for="point">Marker <select id="tmglyph"></select></label>
@@ -32,15 +35,20 @@
   {% endif %}
 
   <div class="tmstage">
-    <div class="tmcanvas" id="tmcanvas">{{ svg|safe }}</div>
-    {% if editable %}
-      <aside class="tmside">
+    <div class="tmcanvas" id="tmcanvas">
+      <button type="button" class="tmfull" id="tmfull">⛶ Full screen</button>
+      {{ svg|safe }}
+    </div>
+    <aside class="tmside">
+      {% if editable %}
         <div class="tmpanel" id="tminspector" hidden>
           <h3>Selected</h3>
           <label class="field"><span>Label</span>
             <input id="tmf-label" maxlength="48"></label>
           <label class="field" data-for="unit point line area"><span>Note</span>
             <textarea id="tmf-note" rows="2" maxlength="240"></textarea></label>
+          <label class="field"><span>Layer</span>
+            <select id="tmf-layer"></select></label>
           <label class="field"><span>Side</span>
             <select id="tmf-side"></select></label>
           <label class="field" data-for="unit"><span>Symbol</span>
@@ -52,7 +60,13 @@
           <label class="field" data-for="unit"><span>Rotation</span>
             <input type="range" id="tmf-rotation" min="-180" max="180" step="5"></label>
           <label class="field"><span>Size</span>
-            <input type="range" id="tmf-size" min="0.4" max="4" step="0.1"></label>
+            <input type="range" id="tmf-size" min="0.15" max="4" step="0.05"></label>
+          <div class="field" data-for="line area text"><span>Colour</span>
+            <div class="tmcolour">
+              <input type="color" id="tmf-color">
+              <button type="button" class="linkish" id="tmf-plain">Use the side's</button>
+            </div>
+          </div>
           <label class="field" data-for="line area"><span>Line</span>
             <select id="tmf-style">
               <option value="solid">Solid</option>
@@ -65,18 +79,35 @@
             <button type="button" class="button danger" id="tmf-delete">Delete</button>
           </div>
         </div>
+      {% endif %}
 
+      {# Layers are for whoever is looking, not only for whoever may draw. #}
+      <div class="tmpanel tmlayerbox" id="tmlayers" hidden>
+        <h3>Layers</h3>
+        <ul class="tmlayerlist" id="tmlayerlist"></ul>
+        {% if editable %}
+          <div class="tmaddlayer">
+            <input id="tmlayernew" maxlength="40" placeholder="Phase 2">
+            <button type="button" class="button" id="tmlayeradd">Add</button>
+          </div>
+          <span class="hint">What is on a hidden layer is still there and still
+            saved — the switch decides what is drawn, for you and for anyone you
+            send the link to.</span>
+        {% endif %}
+      </div>
+
+      {% if editable %}
         <details class="tmpanel">
           <summary>Map settings</summary>
           <label class="field" data-bg="image"><span>Background image URL</span>
             <input id="tmf-bg" placeholder="https://…/altis.jpg">
             <span class="hint">Any image the browser can load — a terrain
               screenshot or a map export. For a whole terrain, load it from
-              OCAP instead: the panel below the map.</span></label>
+              OCAP or upload it: the panels below the map.</span></label>
           <label class="field" data-bg="tiles"><span>Terrain tiles</span>
             <input id="tmf-tiles" readonly>
-            <span class="hint">Loaded from OCAP. Use that panel again to point
-              this map at another terrain.</span></label>
+            <span class="hint">Use the panels below the map to point this map at
+              another terrain.</span></label>
           <label class="field" data-bg="tiles"><span>Detail</span>
             <input type="number" id="tmf-zoom" min="0" step="1">
             <span class="hint">One step deeper is four times as many tiles to
@@ -104,9 +135,8 @@
         <details class="tmpanel">
           <summary>Arma 3 coordinates</summary>
           <p class="hint">What the sheet's corners are in the mission's world,
-            in metres. Only the Arma export reads this — pick the terrain if
-            the background is its whole map, or read the corners off the map
-            in game if it is a crop.</p>
+            in metres. Only the Arma export reads this — a terrain loaded from
+            OCAP or uploaded here fills it in by itself.</p>
           <label class="field"><span>Terrain</span>
             <select id="tmf-terrain"></select></label>
           <div class="row">
@@ -135,8 +165,8 @@
             <li>Scroll to zoom, drag the background to pan</li>
           </ul>
         </div>
-      </aside>
-    {% endif %}
+      {% endif %}
+    </aside>
   </div>
 </div>
 

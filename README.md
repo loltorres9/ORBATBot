@@ -925,12 +925,24 @@ Open **Operations → Maps**. Every member of the server can read the maps; crea
 | **Area** | A shaded boundary or a suspected position | `A` |
 | **Text** | A free label — phase names, timings | `T` |
 
-Pick the side (friendly, hostile, neutral, unknown) and the symbol in the toolbar before you place something; everything can be changed afterwards in the panel on the right. A **line** or an **area** is drawn by clicking each corner in turn — `Enter` finishes it, `Esc` throws it away.
+Pick the side (friendly, hostile, neutral, unknown), the layer and the symbol in the toolbar before you place something; everything can be changed afterwards in the panel on the right. A **line** or an **area** is drawn by clicking each corner in turn — `Enter` finishes it, `Esc` throws it away.
 
-- **Scroll** to zoom, **drag the background** to pan
+The symbols are drawn the way Arma draws its own map markers — a solid block of the side's colour with a white pictogram — so what you plan looks like what everyone sees in game. A **line or an area can take a colour of its own**; a unit symbol can't, because its colour is what says whose it is.
+
+- **Scroll** to zoom, **drag the background** to pan, **⛶ Full screen** gives the map the whole window
 - `Del` removes what is selected, `Ctrl`+`Z` undoes, `Ctrl`+`S` saves
 - **Nothing is saved until you press Save** — the page warns you if you try to leave with unsaved work
 - Tick **HQ** on a unit to give it the headquarters staff
+- Symbols are deliberately small — twenty of them on one sheet still has to be readable — and the **Size** slider goes a long way further down for a crowded area
+
+### Layers
+
+A map holds up to twelve named layers, each with its own switch: *Phase 1*, *Phase 2*, *Feindlage*. Add one in the **Layers** panel, pick which layer you are drawing on in the toolbar, and move anything between layers from its properties.
+
+- **Hiding a layer hides nothing permanently** — what is on it stays in the map and stays saved. The switch only decides what is drawn.
+- **Anyone you send the share link to gets the same switches**, so one map covers the whole operation instead of one map per phase.
+- What is on a hidden layer **stays out of the Arma export** as well: markers you switched off are not part of the plan you are handing over, and Arma has no switch to turn them off again.
+- Areas are drawn under lines, lines under symbols, so nothing gets buried under a boundary somebody drew later. **Bring to front** decides between two of the same kind.
 
 ### The background
 

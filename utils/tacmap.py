@@ -47,22 +47,46 @@ MAX_POINTS = 120
 MAX_LABEL = 48
 MAX_NOTE = 240
 MAX_GLYPH = 4
-MIN_SIZE = 0.4
+# Named layers, each switchable on its own, so one map holds phase 1, phase 2
+# and the enemy picture instead of being copied three times.
+MAX_LAYERS = 12
+MAX_LAYER_NAME = 40
+DEFAULT_LAYER = {'id': 'plan', 'name': 'Plan', 'visible': True}
+MIN_SIZE = 0.15
 MAX_SIZE = 4.0
 
-# The box a size-1 symbol occupies, in document units.
-UNIT_BOX = 54
-POINT_BOX = 34
+# The box a size-1 symbol occupies, in document units. Small on purpose: a
+# platoon plan puts twenty of these on one sheet, and a symbol that reads as
+# comfortable with three on screen is a wall of colour with twenty.
+UNIT_BOX = 40
+POINT_BOX = 26
+
+# However small a symbol is dragged, its name has to stay readable — the label
+# is what the plan is for.
+MIN_LABEL = 9
 
 KINDS = ('unit', 'point', 'line', 'area', 'text')
 
-# APP-6-ish: the frame says whose it is, the icon says what it is. The fill is
-# the tint the frame is painted with, the stroke everything drawn on top of it.
+# What gets drawn over what. A symbol under an area was the one thing people
+# lost on a busy sheet, so the order is fixed by kind rather than left to
+# whatever was added last; `sort_order` only breaks ties within a kind.
+KIND_ORDER = {'area': 0, 'line': 1, 'text': 2, 'point': 3, 'unit': 4}
+
+# APP-6 shapes, painted the way Arma paints its own map markers: a solid block
+# of the side's colour with a white pictogram on it. That match is the point —
+# whoever reads the plan is looking at the same icons in game ten minutes
+# later, and a differently-styled symbol set makes them translate. The values
+# are Arma's marker colours (ColorWEST, ColorEAST, ColorGUER, ColorUNKNOWN),
+# lifted just enough to hold their own on a satellite image.
 AFFILIATIONS = {
-    'friend': {'label': 'Friendly', 'fill': '#9dc2ff', 'stroke': '#14418f'},
-    'hostile': {'label': 'Hostile', 'fill': '#ff9f9f', 'stroke': '#8f1414'},
-    'neutral': {'label': 'Neutral', 'fill': '#9fe3a0', 'stroke': '#146b28'},
-    'unknown': {'label': 'Unknown', 'fill': '#ffdf8a', 'stroke': '#8a5c00'},
+    'friend': {'label': 'Friendly', 'fill': '#13508f', 'edge': '#08263f',
+               'glyph': '#ffffff'},
+    'hostile': {'label': 'Hostile', 'fill': '#8f1717', 'edge': '#3f0808',
+                'glyph': '#ffffff'},
+    'neutral': {'label': 'Neutral', 'fill': '#13702f', 'edge': '#083317',
+                'glyph': '#ffffff'},
+    'unknown': {'label': 'Unknown', 'fill': '#9c7a0c', 'edge': '#453505',
+                'glyph': '#ffffff'},
 }
 DEFAULT_SIDE = 'friend'
 
@@ -268,6 +292,7 @@ def blank_doc(width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> dict:
         # export reads it, and only the person exporting can know it — which
         # image of which terrain this is, and whether it is the whole map.
         'arma': dict(DEFAULT_EXTENT),
+        'layers': [dict(DEFAULT_LAYER)],
         'items': [],
     }
 
@@ -309,6 +334,24 @@ def _clamp(value, low, high):
 
 def _text(value, limit: int) -> str:
     return (value or '').strip()[:limit] if isinstance(value, str) else ''
+
+
+_HEX_COLOUR = re.compile(r'^#[0-9a-fA-F]{6}$')
+_SLUG = re.compile(r'[^a-z0-9_-]+')
+
+
+def _colour(raw) -> str:
+    """A colour somebody picked, or '' meaning "use the side's".
+
+    Only `#rrggbb`: it goes into a `stroke` attribute, and a colour value is
+    one of the places CSS lets a string be more than a colour.
+    """
+    value = (raw or '').strip() if isinstance(raw, str) else ''
+    return value.lower() if _HEX_COLOUR.match(value) else ''
+
+
+def _slug(raw) -> str:
+    return _SLUG.sub('', (raw or '').strip().lower() if isinstance(raw, str) else '')[:24]
 
 
 # A terrain this bot serves itself, from an uploaded archive. It is a path
@@ -404,6 +447,8 @@ def parse(raw) -> ParseResult:
                        for name in ('left', 'bottom', 'right', 'top')}
         doc['arma'] = {'terrain': _text(arma.get('terrain'), 60), **corners}
 
+    doc['layers'] = _parse_layers(raw.get('layers'))
+
     items = raw.get('items')
     if items is None:
         items = []
@@ -437,9 +482,14 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         return None
 
     side = raw.get('side') if raw.get('side') in AFFILIATIONS else DEFAULT_SIDE
+    # An item on a layer this document does not have would be invisible and
+    # unreachable, so it lands on the first one rather than nowhere.
+    layers = {layer['id'] for layer in doc['layers']}
+    layer = raw.get('layer') if raw.get('layer') in layers else doc['layers'][0]['id']
     item = {
         'kind': kind,
         'side': side,
+        'layer': layer,
         'label': _text(raw.get('label'), MAX_LABEL),
         'note': _text(raw.get('note'), MAX_NOTE),
         'size': round(_clamp(_number(raw.get('size'), 1.0), MIN_SIZE, MAX_SIZE), 2),
@@ -466,7 +516,14 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         item['rotation'] = round(_clamp(_number(raw.get('rotation'), 0.0), -360, 360), 1)
     elif kind == 'point':
         item['glyph'] = _text(raw.get('glyph'), MAX_GLYPH).upper()
-    elif kind in ('line', 'area'):
+
+    if kind in ('line', 'area', 'text'):
+        # The side says whose a symbol is and must keep saying it, but a line
+        # is a route or a boundary — those are told apart by colour on every
+        # paper map there has ever been.
+        item['color'] = _colour(raw.get('color'))
+
+    if kind in ('line', 'area'):
         points = _parse_points(raw.get('points'), doc)
         least = 2 if kind == 'line' else 3
         if len(points) < least:
@@ -480,6 +537,50 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         if kind == 'line':
             item['arrow'] = bool(raw.get('arrow'))
     return item
+
+
+def _parse_layers(raw) -> list:
+    """The document's layers, always at least one.
+
+    A layer is only a name and a switch — items point at it by id. Nothing
+    hangs off a layer, so a document that arrives without them, or with
+    nonsense in them, gets the default one rather than an error: losing the
+    plan because its layer list is broken would be the worse failure.
+    """
+    if not isinstance(raw, list):
+        return [dict(DEFAULT_LAYER)]
+    layers, seen = [], set()
+    for entry in raw[:MAX_LAYERS]:
+        if not isinstance(entry, dict):
+            continue
+        key = _slug(entry.get('id'))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        layers.append({
+            'id': key,
+            'name': _text(entry.get('name'), MAX_LAYER_NAME) or key,
+            'visible': bool(entry.get('visible', True)),
+        })
+    return layers or [dict(DEFAULT_LAYER)]
+
+
+def ordered_items(doc: dict, *, include_hidden: bool = False) -> list:
+    """Every item that should be drawn, in the order it should be drawn.
+
+    Layer by layer, and inside a layer by kind — areas, then lines, then
+    labels, then markers, then symbols. Leaving the order to whatever was
+    added last is what buried a platoon under a boundary somebody drew after
+    it; within one kind the document's own order still decides, which is what
+    **Bring to front** moves.
+    """
+    layers = doc.get('layers') or [dict(DEFAULT_LAYER)]
+    rank = {layer['id']: index for index, layer in enumerate(layers)}
+    hidden = {layer['id'] for layer in layers if not layer.get('visible', True)}
+    items = [item for item in (doc.get('items') or [])
+             if include_hidden or item.get('layer') not in hidden]
+    return sorted(items, key=lambda item: (rank.get(item.get('layer'), 0),
+                                           KIND_ORDER.get(item['kind'], 0)))
 
 
 def _parse_point(raw_x, raw_y, doc: dict):
@@ -552,7 +653,7 @@ def catalog() -> dict:
     return {
         'sides': [
             {'key': key, 'label': value['label'], 'fill': value['fill'],
-             'stroke': value['stroke']}
+             'edge': value['edge'], 'glyph': value['glyph']}
             for key, value in AFFILIATIONS.items()
         ],
         'symbols': [
@@ -571,7 +672,10 @@ def catalog() -> dict:
             'items': MAX_ITEMS, 'points': MAX_POINTS, 'label': MAX_LABEL,
             'note': MAX_NOTE, 'glyph': MAX_GLYPH,
             'minSize': MIN_SIZE, 'maxSize': MAX_SIZE,
+            'layers': MAX_LAYERS, 'layerName': MAX_LAYER_NAME,
         },
+        'kindOrder': dict(KIND_ORDER),
+        'minLabel': MIN_LABEL,
     }
 
 
@@ -607,27 +711,37 @@ def defs() -> str:
     parts.append(f'<g id="tmf-hq">{_HQ_STAFF}</g>')
     for key, symbol in SYMBOLS.items():
         parts.append(f'<g id="tmi-{key}">{symbol["icon"]}</g>')
-    for side, colours in AFFILIATIONS.items():
-        parts.append(
-            f'<marker id="tma-{side}" viewBox="0 0 10 10" refX="8" refY="5" '
-            f'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
-            f'<path d="M0,0 L10,5 L0,10 Z" fill="{colours["stroke"]}"/></marker>'
-        )
     parts.append('</defs>')
     return ''.join(parts)
 
 
-def _label_svg(text: str, x: float, y: float, size: float, anchor: str = 'middle') -> str:
+def label_size(size: float) -> float:
+    """How big a label is drawn at that item size — never below MIN_LABEL.
+
+    A symbol shrunk to nothing is still a symbol; its name shrunk to nothing is
+    a smudge, and the name is what the plan is read for.
+    """
+    return round(max(MIN_LABEL, 14 * size), 1)
+
+
+def _label_svg(text: str, x: float, y: float, size: float, anchor: str = 'middle',
+               fill: str = '') -> str:
     if not text:
         return ''
+    font = label_size(size)
     return (
         f'<text{_attrs(x=round(x, 2), y=round(y, 2), text_anchor=anchor)} '
-        f'class="tm-label" font-size="{round(14 * size, 1)}" '
+        f'class="tm-label" font-size="{font}" '
         f'font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" '
-        f'font-weight="600" fill="{_LABEL_FILL}" stroke="{_LABEL_HALO}" '
-        f'stroke-width="{round(3 * size, 1)}" paint-order="stroke" '
+        f'font-weight="600" fill="{fill or _LABEL_FILL}" stroke="{_LABEL_HALO}" '
+        f'stroke-width="{round(font * 0.22, 2)}" paint-order="stroke" '
         f'stroke-linejoin="round">{escape(text)}</text>'
     )
+
+
+def item_colour(item: dict) -> str:
+    """What an item is drawn in: its own colour, or its side's."""
+    return item.get('color') or AFFILIATIONS[item['side']]['fill']
 
 
 def item_svg(item: dict) -> str:
@@ -652,15 +766,15 @@ def _unit_svg(item: dict) -> str:
                  f"translate(-50,-50)")
     parts = [
         f'<use href="#tmf-{item["side"]}" fill="{colours["fill"]}" '
-        f'stroke="{colours["stroke"]}" stroke-width="4"/>'
+        f'stroke="{colours["edge"]}" stroke-width="5"/>'
     ]
     if item.get('hq'):
-        parts.append(f'<use href="#tmf-hq" stroke="{colours["stroke"]}" stroke-width="4"/>')
+        parts.append(f'<use href="#tmf-hq" stroke="{colours["edge"]}" stroke-width="5"/>')
     if SYMBOLS[item['symbol']]['icon']:
         parts.append(
             f'<use href="#tmi-{item["symbol"]}" fill="none" '
-            f'stroke="{colours["stroke"]}" color="{colours["stroke"]}" '
-            f'stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>'
+            f'stroke="{colours["glyph"]}" color="{colours["glyph"]}" '
+            f'stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>'
         )
     # The label sits under the frame, and under the staff when there is one —
     # a headquarters would otherwise have its own name drawn over its staff.
@@ -675,14 +789,14 @@ def _point_svg(item: dict) -> str:
     parts = [
         f'<circle cx="{round(item["x"], 2)}" cy="{round(item["y"], 2)}" '
         f'r="{round(radius, 2)}" fill="{colours["fill"]}" '
-        f'stroke="{colours["stroke"]}" stroke-width="{round(3 * item["size"], 2)}"/>'
+        f'stroke="{colours["edge"]}" stroke-width="{round(2.5 * item["size"], 2)}"/>'
     ]
     if item.get('glyph'):
         parts.append(
             f'<text x="{round(item["x"], 2)}" y="{round(item["y"] + radius * 0.36, 2)}" '
             f'text-anchor="middle" font-size="{round(radius * 0.95, 1)}" '
             f'font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" '
-            f'font-weight="700" fill="{colours["stroke"]}">'
+            f'font-weight="700" fill="{colours["glyph"]}">'
             f'{escape(item["glyph"])}</text>'
         )
     parts.append(_label_svg(item['label'], item['x'], item['y'] + radius + 16 * item['size'],
@@ -691,7 +805,8 @@ def _point_svg(item: dict) -> str:
 
 
 def _text_svg(item: dict) -> str:
-    return _label_svg(item['label'] or ' ', item['x'], item['y'], item['size'] * 1.6)
+    return _label_svg(item['label'] or ' ', item['x'], item['y'], item['size'] * 1.6,
+                      fill=item.get('color') or _LABEL_FILL)
 
 
 def _centroid(points: list) -> tuple:
@@ -699,31 +814,59 @@ def _centroid(points: list) -> tuple:
             sum(point[1] for point in points) / len(points))
 
 
+def arrow_head(points: list, size: float) -> list:
+    """The three corners of the head on the end of a line, or [].
+
+    Drawn as a polygon rather than an SVG `marker`, because a marker cannot
+    take its colour from the line it sits on — `context-stroke` is not
+    everywhere — and a line with a colour of its own would have kept the
+    side's arrow.
+    """
+    (x1, y1), (x2, y2) = points[-2], points[-1]
+    length = math.hypot(x2 - x1, y2 - y1)
+    if not length:
+        return []
+    along = ((x2 - x1) / length, (y2 - y1) / length)
+    back, wide = 13 * size, 5.5 * size
+    return [
+        (round(x2 + along[0] * 2 * size, 2), round(y2 + along[1] * 2 * size, 2)),
+        (round(x2 - along[0] * back - along[1] * wide, 2),
+         round(y2 - along[1] * back + along[0] * wide, 2)),
+        (round(x2 - along[0] * back + along[1] * wide, 2),
+         round(y2 - along[1] * back - along[0] * wide, 2)),
+    ]
+
+
 def _shape_svg(item: dict) -> str:
-    colours = AFFILIATIONS[item['side']]
+    colour = item_colour(item)
     path = ' '.join(f'{round(x, 2)},{round(y, 2)}' for x, y in item['points'])
     width = round(4 * item['size'], 2)
     dash = f' stroke-dasharray="{round(14 * item["size"], 1)} {round(9 * item["size"], 1)}"' \
         if item['style'] == 'dashed' else ''
     if item['kind'] == 'area':
         shape = (
-            f'<polygon points="{path}" fill="{colours["fill"]}" fill-opacity="0.3" '
-            f'stroke="{colours["stroke"]}" stroke-width="{width}"{dash} '
+            f'<polygon points="{path}" fill="{colour}" fill-opacity="0.22" '
+            f'stroke="{colour}" stroke-width="{width}"{dash} '
             f'stroke-linejoin="round"/>'
         )
         centre = _centroid(item['points'])
         return shape + _label_svg(item['label'], centre[0], centre[1], item['size'])
-    marker = f' marker-end="url(#tma-{item["side"]})"' if item.get('arrow') else ''
-    shape = (
-        f'<polyline points="{path}" fill="none" stroke="{colours["stroke"]}" '
+
+    parts = [
+        f'<polyline points="{path}" fill="none" stroke="{colour}" '
         f'stroke-width="{width}"{dash} stroke-linecap="round" '
-        f'stroke-linejoin="round"{marker}/>'
-    )
-    if not item['label']:
-        return shape
-    middle = item['points'][len(item['points']) // 2]
-    return shape + _label_svg(item['label'], middle[0], middle[1] - 10 * item['size'],
-                              item['size'])
+        f'stroke-linejoin="round"/>'
+    ]
+    if item.get('arrow'):
+        head = arrow_head(item['points'], item['size'])
+        if head:
+            corners = ' '.join(f'{x},{y}' for x, y in head)
+            parts.append(f'<polygon points="{corners}" fill="{colour}"/>')
+    if item['label']:
+        middle = item['points'][len(item['points']) // 2]
+        parts.append(_label_svg(item['label'], middle[0], middle[1] - 10 * item['size'],
+                                item['size']))
+    return ''.join(parts)
 
 
 def tile_url(background: dict, zoom: int, column: int, row: int) -> str:
@@ -799,7 +942,7 @@ def render(doc: dict, *, standalone: bool = False, extra_class: str = '') -> str
     """
     classes = ('tacmap ' + extra_class).strip()
     namespace = ' xmlns="http://www.w3.org/2000/svg"' if standalone else ''
-    body = ''.join(item_svg(item) for item in doc.get('items') or [])
+    body = ''.join(item_svg(item) for item in ordered_items(doc))
     # The sheet and the plan are separate groups so the editor can redraw either
     # on its own — changing the background must not touch what is drawn on it.
     return (
@@ -950,7 +1093,10 @@ def to_sqf(doc: dict, *, prefix: str, title: str = '') -> str:
                      if character.isalnum() or character == '_')
     prefix = (prefix or 'tacmap') + '_'
 
-    items = doc.get('items') or []
+    # Only what is on a visible layer: a marker somebody switched off is not
+    # part of the plan they are handing over, and Arma has no way to switch it
+    # off again once it is drawn.
+    items = ordered_items(doc)
     lines = [
         f'// {title or "Tactical map"} — {summarise(doc)}',
         '// Paste into the Arma 3 debug console and press GLOBAL EXEC as a',

@@ -36,6 +36,7 @@
     side: 'friend',
     symbol: 'inf',
     glyph: catalog.points.length ? catalog.points[0].glyph : 'OBJ',
+    layer: '',
     hq: false,
     selected: -1,
     draft: null,
@@ -70,13 +71,23 @@
 
   function round(value) { return Math.round(value * 100) / 100; }
 
-  function label(text, x, y, size) {
+  function labelSize(size) {
+    return Math.round(Math.max(catalog.minLabel, 14 * size) * 10) / 10;
+  }
+
+  function label(text, x, y, size, fill) {
     if (!text) return '';
+    var font = labelSize(size);
     return '<text x="' + round(x) + '" y="' + round(y) + '" text-anchor="middle"' +
-      ' font-size="' + round(14 * size) + '" font-weight="600"' +
+      ' font-size="' + font + '" font-weight="600"' +
       ' font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif"' +
-      ' fill="#ffffff" stroke="#11161c" stroke-width="' + round(3 * size) + '"' +
+      ' fill="' + (fill || '#ffffff') + '" stroke="#11161c"' +
+      ' stroke-width="' + round(font * 0.22) + '"' +
       ' paint-order="stroke" stroke-linejoin="round">' + esc(text) + '</text>';
+  }
+
+  function itemColour(item) {
+    return item.color || colours[item.side].fill;
   }
 
   function unitSVG(item) {
@@ -85,13 +96,13 @@
     var transform = 'translate(' + round(item.x) + ',' + round(item.y) + ') rotate(' +
       (item.rotation || 0) + ') scale(' + scale + ') translate(-50,-50)';
     var parts = ['<use href="#tmf-' + item.side + '" fill="' + paint.fill +
-      '" stroke="' + paint.stroke + '" stroke-width="4"/>'];
+      '" stroke="' + paint.edge + '" stroke-width="5"/>'];
     if (item.hq) {
-      parts.push('<use href="#tmf-hq" stroke="' + paint.stroke + '" stroke-width="4"/>');
+      parts.push('<use href="#tmf-hq" stroke="' + paint.edge + '" stroke-width="5"/>');
     }
     if ((symbols[item.symbol] || {}).hasIcon) {
       parts.push('<use href="#tmi-' + item.symbol + '" fill="none" stroke="' +
-        paint.stroke + '" color="' + paint.stroke + '" stroke-width="7"' +
+        paint.glyph + '" color="' + paint.glyph + '" stroke-width="8"' +
         ' stroke-linecap="round" stroke-linejoin="round"/>');
     }
     var drop = catalog.unitBox * item.size * (item.hq ? 0.8 : 0.62) + 6;
@@ -103,20 +114,38 @@
     var paint = colours[item.side];
     var radius = catalog.pointBox * item.size / 2;
     var parts = ['<circle cx="' + round(item.x) + '" cy="' + round(item.y) + '" r="' +
-      round(radius) + '" fill="' + paint.fill + '" stroke="' + paint.stroke +
-      '" stroke-width="' + round(3 * item.size) + '"/>'];
+      round(radius) + '" fill="' + paint.fill + '" stroke="' + paint.edge +
+      '" stroke-width="' + round(2.5 * item.size) + '"/>'];
     if (item.glyph) {
       parts.push('<text x="' + round(item.x) + '" y="' + round(item.y + radius * 0.36) +
         '" text-anchor="middle" font-size="' + round(radius * 0.95) + '"' +
         ' font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif"' +
-        ' font-weight="700" fill="' + paint.stroke + '">' + esc(item.glyph) + '</text>');
+        ' font-weight="700" fill="' + paint.glyph + '">' + esc(item.glyph) + '</text>');
     }
     parts.push(label(item.label, item.x, item.y + radius + 16 * item.size, item.size));
     return parts.join('');
   }
 
+  function arrowHead(points, size) {
+    // Mirrors arrow_head() in utils/tacmap.py — a polygon rather than a marker,
+    // because a marker cannot take the colour of the line it sits on.
+    var from = points[points.length - 2];
+    var to = points[points.length - 1];
+    var length = Math.hypot(to[0] - from[0], to[1] - from[1]);
+    if (!length) return null;
+    var ax = (to[0] - from[0]) / length;
+    var ay = (to[1] - from[1]) / length;
+    var back = 13 * size;
+    var wide = 5.5 * size;
+    return [
+      [round(to[0] + ax * 2 * size), round(to[1] + ay * 2 * size)],
+      [round(to[0] - ax * back - ay * wide), round(to[1] - ay * back + ax * wide)],
+      [round(to[0] - ax * back + ay * wide), round(to[1] - ay * back - ax * wide)]
+    ];
+  }
+
   function shapeSVG(item) {
-    var paint = colours[item.side];
+    var colour = itemColour(item);
     var points = item.points.map(function (point) {
       return round(point[0]) + ',' + round(point[1]);
     }).join(' ');
@@ -127,26 +156,35 @@
       var centre = item.points.reduce(function (sum, point) {
         return [sum[0] + point[0] / item.points.length, sum[1] + point[1] / item.points.length];
       }, [0, 0]);
-      return '<polygon points="' + points + '" fill="' + paint.fill +
-        '" fill-opacity="0.3" stroke="' + paint.stroke + '" stroke-width="' + width +
+      return '<polygon points="' + points + '" fill="' + colour +
+        '" fill-opacity="0.22" stroke="' + colour + '" stroke-width="' + width +
         '"' + dash + ' stroke-linejoin="round"/>' +
         label(item.label, centre[0], centre[1], item.size);
     }
-    var marker = item.arrow ? ' marker-end="url(#tma-' + item.side + ')"' : '';
-    var line = '<polyline points="' + points + '" fill="none" stroke="' + paint.stroke +
+    var parts = ['<polyline points="' + points + '" fill="none" stroke="' + colour +
       '" stroke-width="' + width + '"' + dash +
-      ' stroke-linecap="round" stroke-linejoin="round"' + marker + '/>';
+      ' stroke-linecap="round" stroke-linejoin="round"/>'];
+    if (item.arrow) {
+      var head = arrowHead(item.points, item.size);
+      if (head) {
+        parts.push('<polygon points="' + head.map(function (corner) {
+          return corner[0] + ',' + corner[1];
+        }).join(' ') + '" fill="' + colour + '"/>');
+      }
+    }
     if (item.label) {
       var middle = item.points[Math.floor(item.points.length / 2)];
-      line += label(item.label, middle[0], middle[1] - 10 * item.size, item.size);
+      parts.push(label(item.label, middle[0], middle[1] - 10 * item.size, item.size));
     }
-    return line;
+    return parts.join('');
   }
 
   function itemSVG(item) {
     if (item.kind === 'unit') return unitSVG(item);
     if (item.kind === 'point') return pointSVG(item);
-    if (item.kind === 'text') return label(item.label || ' ', item.x, item.y, item.size * 1.6);
+    if (item.kind === 'text') {
+      return label(item.label || ' ', item.x, item.y, item.size * 1.6, item.color);
+    }
     return shapeSVG(item);
   }
 
@@ -222,12 +260,49 @@
       state.draft.cursor ? [state.draft.cursor] : []
     ).map(function (point) { return round(point[0]) + ',' + round(point[1]); }).join(' ');
     var tag = state.draft.kind === 'area' ? 'polygon' : 'polyline';
-    return '<' + tag + ' points="' + points + '" fill="none" stroke="' + paint.stroke +
+    return '<' + tag + ' points="' + points + '" fill="none" stroke="' + paint.fill +
       '" stroke-width="4" stroke-dasharray="10 8" stroke-linecap="round"/>';
   }
 
+  function layers() {
+    if (!state.doc.layers || !state.doc.layers.length) {
+      state.doc.layers = [{ id: 'plan', name: 'Plan', visible: true }];
+    }
+    return state.doc.layers;
+  }
+
+  function layerRank(id) {
+    var found = layers().findIndex(function (entry) { return entry.id === id; });
+    return found < 0 ? 0 : found;
+  }
+
+  function hiddenLayers() {
+    var hidden = {};
+    layers().forEach(function (entry) { if (!entry.visible) hidden[entry.id] = true; });
+    return hidden;
+  }
+
+  // Mirrors ordered_items() in utils/tacmap.py: layer, then kind, then the
+  // document's own order — so a symbol is never buried under an area drawn
+  // after it, and Bring to front still decides between two of the same kind.
+  function drawOrder() {
+    var hidden = hiddenLayers();
+    var order = [];
+    state.doc.items.forEach(function (item, index) {
+      if (!hidden[item.layer]) order.push(index);
+    });
+    return order.sort(function (a, b) {
+      var first = state.doc.items[a];
+      var second = state.doc.items[b];
+      return (layerRank(first.layer) - layerRank(second.layer)) ||
+        ((catalog.kindOrder[first.kind] || 0) - (catalog.kindOrder[second.kind] || 0)) ||
+        (a - b);
+    });
+  }
+
   function render() {
-    layer.innerHTML = state.doc.items.map(function (item, index) {
+    layer.innerHTML = drawOrder().map(function (index) {
+      var item = state.doc.items[index];
       return '<g class="tm-item" data-i="' + index + '">' + itemSVG(item) + hitSVG(item) + '</g>';
     }).join('');
     back.innerHTML = backgroundSVG() + gridSVG();
@@ -292,9 +367,104 @@
     applyView();
   }, { passive: false });
 
+  /* -- layers: a switch each, for whoever is looking ------------------------ */
+
+  var layerPanel = document.getElementById('tmlayers');
+  var layerList = document.getElementById('tmlayerlist');
+
+  function drawLayers() {
+    if (!layerPanel) return;
+    // One layer and no way to add another is nothing worth a panel — and with
+    // nothing else in it, the sidebar is only taking room from the map.
+    layerPanel.hidden = !editable && layers().length < 2;
+    var aside = app.querySelector('.tmside');
+    if (aside && !editable) aside.hidden = layerPanel.hidden;
+    layerList.innerHTML = '';
+    layers().forEach(function (entry, index) {
+      var row = document.createElement('li');
+      row.className = 'tmlayer';
+
+      var shown = document.createElement('input');
+      shown.type = 'checkbox';
+      shown.checked = entry.visible !== false;
+      shown.title = 'Show this layer';
+      shown.addEventListener('change', function () {
+        entry.visible = shown.checked;
+        if (editable) touched();
+        render();
+      });
+      row.appendChild(shown);
+
+      if (editable) {
+        var name = document.createElement('input');
+        name.className = 'tmlayername';
+        name.value = entry.name;
+        name.maxLength = catalog.limits.layerName;
+        name.addEventListener('input', function () {
+          entry.name = name.value;
+          touched();
+          fillInspector();
+        });
+        row.appendChild(name);
+
+        if (layers().length > 1) {
+          var drop = document.createElement('button');
+          drop.type = 'button';
+          drop.className = 'linkish';
+          drop.textContent = '✕';
+          drop.title = 'Delete this layer — what is on it moves to the first one';
+          drop.addEventListener('click', function () { removeLayer(index); });
+          row.appendChild(drop);
+        }
+      } else {
+        var text = document.createElement('span');
+        text.textContent = entry.name;
+        row.appendChild(text);
+      }
+      layerList.appendChild(row);
+    });
+  }
+
+  function removeLayer(index) {
+    var list = layers();
+    if (list.length < 2) return;
+    var going = list[index];
+    var keep = list[index === 0 ? 1 : 0].id;
+    snapshot();
+    // Never take the items with it: a layer is a switch, not a folder anybody
+    // meant to throw work into.
+    state.doc.items.forEach(function (item) {
+      if (item.layer === going.id) item.layer = keep;
+    });
+    list.splice(index, 1);
+    touched();
+    render();
+    drawLayers();
+    fillInspector();
+  }
+
+  /* -- more room: the map takes the whole screen ---------------------------- */
+
+  var fullButton = document.getElementById('tmfull');
+  if (fullButton) {
+    fullButton.addEventListener('click', function () {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else if (app.requestFullscreen) {
+        app.requestFullscreen().catch(function () { app.classList.toggle('tm-tall'); });
+      } else {
+        app.classList.toggle('tm-tall');
+      }
+    });
+    document.addEventListener('fullscreenchange', function () {
+      fullButton.textContent = document.fullscreenElement ? '✕ Close' : '⛶ Full screen';
+    });
+  }
+
   /* -- everything below is the editor and only runs when it may draw -------- */
 
   if (!editable) {
+    drawLayers();
     render();
     return;
   }
@@ -339,7 +509,8 @@
   }
 
   function newItem(kind, point) {
-    var item = { kind: kind, side: state.side, label: '', note: '', size: 1 };
+    var item = { kind: kind, side: state.side, layer: state.layer, label: '',
+                 note: '', size: 1 };
     if (kind === 'unit') {
       item.x = round(point.x);
       item.y = round(point.y);
@@ -454,8 +625,8 @@
       return;
     }
     add({
-      kind: draft.kind, side: state.side, label: '', note: '', size: 1,
-      points: draft.points, style: 'solid',
+      kind: draft.kind, side: state.side, layer: state.layer, label: '', note: '',
+      size: 1, color: '', points: draft.points, style: 'solid',
       arrow: draft.kind === 'line'
     });
   }
@@ -504,6 +675,53 @@
   fillOptions(symbolPick, symbolOptions, state.symbol);
   fillOptions(glyphPick, glyphOptions, state.glyph);
 
+  var layerPick = document.getElementById('tmlayerpick');
+  var layerAdd = document.getElementById('tmlayeradd');
+  var layerName = document.getElementById('tmlayernew');
+
+  function slug(value) {
+    return String(value || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '').slice(0, 24);
+  }
+
+  function fillLayerPickers() {
+    var options = layers().map(function (entry) {
+      return { value: entry.id, label: entry.name };
+    });
+    fillOptions(layerPick, options, state.layer);
+    fillOptions(fields.layer, options, state.layer);
+    var item = selected();
+    if (item) fields.layer.value = item.layer;
+  }
+
+  function addLayer(name) {
+    var list = layers();
+    if (list.length >= catalog.limits.layers) {
+      say('That is as many layers as one map holds.', 'err');
+      return;
+    }
+    var base = slug(name) || 'layer';
+    var id = base;
+    var suffix = 2;
+    while (list.some(function (entry) { return entry.id === id; })) {
+      id = base + '-' + (suffix++);
+    }
+    snapshot();
+    list.push({ id: id, name: (name || base).slice(0, catalog.limits.layerName),
+                visible: true });
+    state.layer = id;
+    touched();
+    drawLayers();
+    fillLayerPickers();
+  }
+
+  if (layerAdd) {
+    layerAdd.addEventListener('click', function () {
+      addLayer(layerName.value.trim());
+      layerName.value = '';
+    });
+  }
+  layerPick.addEventListener('change', function () { state.layer = layerPick.value; });
+
   sidePick.addEventListener('change', function () { state.side = sidePick.value; });
   symbolPick.addEventListener('change', function () { state.symbol = symbolPick.value; });
   glyphPick.addEventListener('change', function () { state.glyph = glyphPick.value; });
@@ -521,7 +739,10 @@
     rotation: document.getElementById('tmf-rotation'),
     size: document.getElementById('tmf-size'),
     style: document.getElementById('tmf-style'),
-    arrow: document.getElementById('tmf-arrow')
+    arrow: document.getElementById('tmf-arrow'),
+    layer: document.getElementById('tmf-layer'),
+    color: document.getElementById('tmf-color'),
+    plain: document.getElementById('tmf-plain')
   };
   fillOptions(fields.side, sideOptions, state.side);
   fillOptions(fields.symbol, symbolOptions, state.symbol);
@@ -543,6 +764,8 @@
     fields.size.value = item.size;
     fields.style.value = item.style || 'solid';
     fields.arrow.checked = !!item.arrow;
+    fields.layer.value = item.layer;
+    fields.color.value = item.color || colours[item.side].fill;
   }
 
   function editField(field, read) {
@@ -568,6 +791,16 @@
   editField(fields.size, function (item) { item.size = Number(fields.size.value); });
   editField(fields.style, function (item) { item.style = fields.style.value; });
   editField(fields.arrow, function (item) { item.arrow = fields.arrow.checked; });
+  editField(fields.layer, function (item) { item.layer = fields.layer.value; });
+  editField(fields.color, function (item) { item.color = fields.color.value; });
+  fields.plain.addEventListener('click', function () {
+    var item = selected();
+    if (!item) return;
+    item.color = '';
+    fields.color.value = colours[item.side].fill;
+    touched();
+    render();
+  });
 
   document.getElementById('tmf-delete').addEventListener('click', removeSelected);
   document.getElementById('tmf-front').addEventListener('click', function () {
@@ -770,6 +1003,12 @@
     }
   });
 
+  fields.size.min = catalog.limits.minSize;
+  fields.size.max = catalog.limits.maxSize;
+
+  state.layer = layers()[0].id;
+  drawLayers();
+  fillLayerPickers();
   setTool('select');
   render();
   say('');
