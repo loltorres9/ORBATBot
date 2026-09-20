@@ -104,7 +104,7 @@ Draw the plan on the terrain and share it with a link — unit symbols, movement
 
 - **APP-6-style symbols** — friendly, hostile, neutral and unknown frames with infantry, armour, mortars, air, medical, logistics and the rest, plus a headquarters staff
 - **Movement lines with arrow heads, areas, markers and free text** — everything a briefing needs to say where people are going
-- **Your actual terrain as the background** — point it at an [OCAP](https://github.com/OCAP2/OCAP) map folder and it loads the tiles *and* works out the Arma coordinates from them; any other image works too
+- **Your actual terrain as the background** — upload the same tile archive you prepare for [OCAP](https://github.com/OCAP2/OCAP) (zip or 7z) and the bot serves it itself, or point it at a running OCAP server; either way the Arma coordinates come along with the terrain
 - **A share link** anyone can open without signing in, read-only or with drawing rights, and **replaceable** the moment it has travelled further than intended
 - **Straight into Arma 3** — the whole plan as markers in a running mission, pasted into the debug console, no mod on either side
 - **Post it in a channel** as a link, so it stays current while the plan is still being drawn
@@ -178,6 +178,7 @@ Editing and cancelling go by **who created the event**, not by rank — one Unit
 |---|---|---|---|
 | Open and read a map — web only | ✅ | ✅ | ✅ |
 | Draw on one, create, copy or delete one — web only | ❌ | ✅ | ✅ |
+| Upload a terrain, or delete one — web only | ❌ | ❌ | ✅ |
 | Share it with a link, or post it in a channel — web only | ❌ | ✅ | ✅ |
 | Open a map through a share link | anyone holding the link | | |
 
@@ -933,16 +934,19 @@ Pick the side (friendly, hostile, neutral, unknown) and the symbol in the toolba
 
 ### The background
 
-**If your unit runs OCAP, use it.** OCAP already renders every terrain you play on, as a folder of map tiles with a `map.json` beside it. Open **🛰️ Load a terrain from OCAP**, paste the address of one of those folders — e.g. `https://ocap.your-unit.net/images/maps/tanoa` — and the map takes that terrain as its background **and** its Arma coordinates in one step, so the export later lands in the right place without you typing a single number.
+Best: **upload the terrain**. The tile archives you already prepare for OCAP work as they are — a zip or 7z holding the numbered folders `0/ 1/ 2/ …` and, if it came from OCAP, a `map.json`. Go to **Terrains** (linked from the Maps page), upload it once, and from then on every map can be put on it from the editor's **🗻 Put it on a terrain** panel.
 
-Two things to know about it:
+Uploading is worth the storage for one reason: the bot then serves the tiles itself, so **nothing outside has to be reachable** — not for your members, and not for whoever you send a share link to.
 
-- The tiles are loaded by whoever opens the map, so your OCAP server has to be reachable for them too — including anyone you send a share link to.
-- **Detail** under *Map settings* picks how deep into the tile pyramid to go. One step deeper is four times as many tiles to load; level 4 (256 tiles) is the default and is plenty for planning.
+- The name and the world size are read out of `map.json`, so usually you only pick the file. Without one, type the world size (Altis 30720, Tanoa 15360, Stratis 8192).
+- **Deepest level to keep** decides the size: each step is four times the tiles. Level 4 is around 7 MB per terrain and is plenty for planning; deeper levels in the archive are simply left out, and the reply tells you how many.
+- A terrain can't be deleted while a map is drawn on it — the reply names the maps.
 
-Otherwise, paste the URL of any image the browser can load — a terrain screenshot, a map export from the mission editor — under **Map settings**. It is stretched across the sheet, so pick the sheet shape (square, landscape, portrait) that matches it, and set the Arma corners yourself if you want the export.
+Alternative: **point at a running OCAP server**. Open **🛰️ Load a terrain from OCAP** and paste the address of one of its map folders — e.g. `https://ocap.your-unit.net/images/maps/tanoa`. Same terrain, same automatic Arma coordinates, nothing stored here; the catch is that everyone opening the map loads the tiles from that server, so it has to be reachable for them too.
 
-Either way an optional grid can be laid over the top, and the map works with no background at all: a plain dark sheet with a grid is enough for a schematic.
+Or paste the URL of **any image** the browser can load — a terrain screenshot, a map export — under **Map settings**. It is stretched across the sheet, so pick the sheet shape (square, landscape, portrait) that matches it, and set the Arma corners yourself if you want the export.
+
+However the background got there, **Detail** under *Map settings* picks how deep into the tile pyramid to draw, an optional grid can be laid over the top, and the map works with no background at all: a plain dark sheet with a grid is enough for a schematic.
 
 ### Sharing it
 

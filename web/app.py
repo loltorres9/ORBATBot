@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import (
-    HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
+    HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -34,6 +34,7 @@ from web import (
     service,
     slots as slots_service,
     tacmap as tacmap_service,
+    terrain as terrain_service,
     voice as voice_service,
 )
 from web.auth import Forbidden, NotAuthenticated
@@ -918,10 +919,11 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'error': error,
         }, status=status)
 
-    def map_editor(request: Request, context: dict, error: str = None,
-                   status: int = 200, panel: str = None):
+    async def map_editor(request: Request, context: dict, error: str = None,
+                         status: int = 200, panel: str = None):
         record = context['record']
         doc = tacmap_service.load(record)
+        terrains = await database.get_guild_tac_terrains(str(context['guild'].id))
         return render(request, 'tacmap_edit.html', {
             **context,
             'doc_json': tacmap_lib.json_payload(doc),
@@ -936,6 +938,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'share_url': (f"{origin(request)}{tacmap_service.share_path(record)}"
                           if record['share_token'] else ''),
             'channels': postable_channels(context['guild']),
+            'terrains': terrains,
             'panel': panel,
             'error': error,
         }, status=status)
@@ -975,7 +978,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
     @app.get('/g/{guild_id}/maps/{map_id}', response_class=HTMLResponse)
     async def map_edit(request: Request, guild_id: str, map_id: int):
         context = await map_context(request, guild_id, map_id)
-        return map_editor(request, context)
+        return await map_editor(request, context)
 
     @app.post('/g/{guild_id}/maps/{map_id}/save')
     async def map_save(request: Request, guild_id: str, map_id: int):
@@ -1003,6 +1006,95 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         context = await map_context(request, guild_id, map_id)
         return PlainTextResponse(tacmap_service.sqf(context['record']))
 
+    # -- terrains, uploaded and served from here ----------------------------
+
+    async def terrain_page(request: Request, context: dict, error: str = None,
+                           status: int = 200):
+        terrains = await database.get_guild_tac_terrains(str(context['guild'].id))
+        return render(request, 'terrains.html', {
+            **context,
+            'terrains': [
+                {'record': row,
+                 'size': terrain_service.megabytes(row['bytes']),
+                 'used_by': await database.tac_terrain_usage(row['id'])}
+                for row in terrains
+            ],
+            'may_upload': context['is_admin'],
+            'zoom_choices': terrain_service.ZOOM_CHOICES,
+            'default_zoom': terrain_service.DEFAULT_ZOOM,
+            'error': error,
+        }, status=status)
+
+    @app.get('/g/{guild_id}/terrains', response_class=HTMLResponse)
+    async def terrain_list(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_draw(context)
+        return await terrain_page(request, context)
+
+    @app.post('/g/{guild_id}/terrains')
+    async def terrain_upload(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        archive = form.get('archive')
+        if archive is None or not getattr(archive, 'filename', ''):
+            return await terrain_page(request, context, status=400,
+                                      error='Choose a zip or 7z of the tile folder.')
+        try:
+            note = await terrain_service.upload(
+                context['guild'], context['member'], archive.file, archive.filename,
+                form.get('name'), form.get('world_size'), form.get('max_zoom'),
+            )
+        except ValueError as e:
+            return await terrain_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/terrains", 'ok', note)
+
+    @app.post('/g/{guild_id}/terrains/{terrain_id}/delete')
+    async def terrain_delete(request: Request, guild_id: str, terrain_id: int):
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        record = await database.get_tac_terrain(terrain_id)
+        if record is None or record['guild_id'] != str(context['guild'].id):
+            raise Forbidden('No such terrain on this server.')
+        try:
+            note = await terrain_service.delete(record)
+        except ValueError as e:
+            return await terrain_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/terrains", 'ok', note)
+
+    # One tile. No session: a map's background has to load for everybody the
+    # share link was sent to, and a terrain render is not a secret. The cache
+    # headers are what keep a page of 256 tiles to one round of requests.
+    @app.get('/t/{terrain_id}/{zoom}/{column}/{row}.png')
+    async def terrain_tile(terrain_id: int, zoom: int, column: int, row: int):
+        image = await database.get_tac_terrain_tile(terrain_id, zoom, column, row)
+        if image is None:
+            return Response(status_code=404)
+        return Response(content=bytes(image), media_type='image/png', headers={
+            'Cache-Control': 'public, max-age=31536000, immutable',
+        })
+
+    @app.post('/g/{guild_id}/maps/{map_id}/terrain')
+    async def map_terrain(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        terrain = await database.get_tac_terrain(int(form.get('terrain_id') or 0))
+        if terrain is None or terrain['guild_id'] != str(context['guild'].id):
+            return await map_editor(request, context, panel='terrain', status=400,
+                              error='Pick one of this server\'s terrains.')
+        note = await terrain_service.apply_to_map(
+            context['record'], terrain, context['member'].display_name
+        )
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
+
     @app.post('/g/{guild_id}/maps/{map_id}/ocap')
     async def map_ocap(request: Request, guild_id: str, map_id: int):
         context = await map_context(request, guild_id, map_id)
@@ -1014,7 +1106,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                 context['record'], form.get('url'), context['member'].display_name
             )
         except ValueError as e:
-            return map_editor(request, context, error=str(e), status=400, panel='ocap')
+            return await map_editor(request, context, error=str(e), status=400, panel='ocap')
         return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
 
     @app.post('/g/{guild_id}/maps/{map_id}/rename')
@@ -1028,7 +1120,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                 context['record'], form.get('name'), form.get('description')
             )
         except ValueError as e:
-            return map_editor(request, context, error=str(e), status=400, panel='about')
+            return await map_editor(request, context, error=str(e), status=400, panel='about')
         return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', 'Renamed.')
 
     @app.post('/g/{guild_id}/maps/{map_id}/duplicate')
@@ -1042,7 +1134,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                 context['record'], context['member'], form.get('name')
             )
         except ValueError as e:
-            return map_editor(request, context, error=str(e), status=400, panel='about')
+            return await map_editor(request, context, error=str(e), status=400, panel='about')
         return redirect(request, f"/g/{guild_id}/maps/{new_id}", 'ok',
                         'Copied — the plan, not the share link.')
 
@@ -1057,7 +1149,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                     if form.get('action') == 'new'
                     else await tacmap_service.share(context['record'], form.get('mode')))
         except ValueError as e:
-            return map_editor(request, context, error=str(e), status=400, panel='share')
+            return await map_editor(request, context, error=str(e), status=400, panel='share')
         return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
 
     @app.post('/g/{guild_id}/maps/{map_id}/post')
@@ -1073,7 +1165,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                 context['member'],
             )
         except ValueError as e:
-            return map_editor(request, context, error=str(e), status=400, panel='post')
+            return await map_editor(request, context, error=str(e), status=400, panel='post')
         return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
 
     @app.post('/g/{guild_id}/maps/{map_id}/delete')

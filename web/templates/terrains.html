@@ -1,0 +1,102 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Terrains{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'maps' %}{% include '_nav.html' %}{% endwith %}
+
+<p class="crumbs"><a href="/g/{{ guild.id }}/maps">Maps</a> › Terrains</p>
+
+<h2>Terrains</h2>
+<p class="hint">
+  The map tiles a plan is drawn on, uploaded once and served by this bot — the
+  same archives you prepare for OCAP. Once a terrain is here, nothing outside
+  has to be reachable for a map to render: not for the people who open the
+  editor, and not for whoever you send a share link to.
+</p>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if terrains %}
+  <ul class="eventlist">
+    {% for item in terrains %}
+      <li class="event">
+        <div class="eventmain">
+          <span class="title">{{ item.record.name }}</span>
+          <span class="meta">
+            {{ item.record.world_size|int }} m across ·
+            {{ item.record.tile_count }} tiles to level {{ item.record.max_zoom }} ·
+            {{ item.size }}
+            {% if item.record.created_by_name %} · by {{ item.record.created_by_name }}{% endif %}
+          </span>
+        </div>
+        {% if item.used_by %}
+          <span class="chip">{{ item.used_by|length }} map{{ '' if item.used_by|length == 1 else 's' }}</span>
+        {% endif %}
+        {% if may_upload %}
+          <form class="inlineform" method="post"
+                action="/g/{{ guild.id }}/terrains/{{ item.record.id }}/delete">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="button danger" type="submit">Delete</button>
+          </form>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="empty">No terrain uploaded yet.</p>
+{% endif %}
+
+{% if may_upload %}
+  <h2 style="margin-top:28px">Upload a terrain</h2>
+  <p class="hint">
+    A <strong>zip or 7z</strong> of the tile folder — the one holding the
+    numbered folders <code>0/ 1/ 2/ …</code> and, if it came from OCAP, a
+    <code>map.json</code>. The name and the world size are read from that file
+    when it is there, so usually you only have to choose the file.
+  </p>
+  <form class="form" method="post" action="/g/{{ guild.id }}/terrains"
+        enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">
+      <span>Archive</span>
+      <input type="file" name="archive" accept=".zip,.7z" required>
+    </label>
+    <div class="row">
+      <label class="field">
+        <span>Name</span>
+        <input name="name" maxlength="80" placeholder="From map.json">
+      </label>
+      <label class="field">
+        <span>World size in metres</span>
+        <input name="world_size" placeholder="From map.json">
+        <span class="hint">Altis 30720 · Tanoa 15360 · Stratis 8192</span>
+      </label>
+    </div>
+    <label class="field">
+      <span>Deepest level to keep</span>
+      <select name="max_zoom">
+        {% for zoom in zoom_choices %}
+          <option value="{{ zoom }}" {% if zoom == default_zoom %}selected{% endif %}>
+            Level {{ zoom }} — {{ 4 ** zoom }} tiles on the bottom level</option>
+        {% endfor %}
+      </select>
+      <span class="hint">Each step is four times the tiles, four times the
+        storage and four times as many requests when somebody opens the map.
+        Level 4 is around 7 MB for a terrain and is plenty for planning;
+        anything deeper in the archive is left out.</span>
+    </label>
+    <div class="actions">
+      <button class="button primary" type="submit">Upload</button>
+    </div>
+  </form>
+{% else %}
+  <p class="hint">Uploading a terrain needs Manage Server.</p>
+{% endif %}
+{% endblock %}

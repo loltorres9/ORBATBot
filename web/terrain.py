@@ -1,0 +1,134 @@
+"""Terrains uploaded as tile archives, and kept by this bot.
+
+The other way to get a terrain onto a map is `web/tacmap.import_ocap()`, which
+reads an OCAP server's map folder over HTTP. This is the same tile pyramid
+arriving as a file instead: a unit that already prepares these archives for its
+own OCAP hands the bot the same one, and then **nothing outside has to be
+reachable** for a map to render — not for a member opening the editor, and not
+for whoever was sent a share link.
+
+The reading is `utils/tiles.py`, the storing is `utils/database.py`, and the
+rules about what a background is are `utils/tacmap.py`. What is left here is
+the shape of the form and the messages a person gets back.
+"""
+
+import asyncio
+
+from utils import database, tacmap, tiles
+
+MAX_NAME = 80
+
+# What may be asked for as the deepest level to keep. Below 3 a terrain is too
+# coarse to plan on; above what the editor draws it would be storage nobody
+# ever sees. Each step is four times the tiles of the one before.
+ZOOM_CHOICES = (3, 4, 5)
+DEFAULT_ZOOM = tacmap.DEFAULT_TILE_ZOOM
+
+
+def megabytes(count) -> str:
+    return f'{(count or 0) / (1024 * 1024):.1f} MB'
+
+
+def _name(raw, archive, fallback: str) -> str:
+    name = (raw or '').strip()
+    if not name and isinstance(archive.map_json, dict):
+        name = (str(archive.map_json.get('name') or '').strip()
+                or str(archive.map_json.get('worldName') or '').strip())
+    return (name or fallback or 'Terrain')[:MAX_NAME]
+
+
+def _world_size(raw, archive):
+    """The terrain's edge in metres — from the form, or from its own map.json.
+
+    Without it the tiles would draw and the Arma export would be nonsense, so
+    this is the one thing an upload cannot go ahead without.
+    """
+    typed = (raw or '').strip()
+    if typed:
+        try:
+            size = float(typed.replace(',', '.'))
+        except ValueError:
+            raise ValueError('The world size has to be a number of metres, e.g. 15360.')
+        if size <= 0:
+            raise ValueError('The world size has to be a number of metres, e.g. 15360.')
+        return size
+    if isinstance(archive.map_json, dict):
+        size = archive.map_json.get('worldSize')
+        try:
+            if size and float(size) > 0:
+                return float(size)
+        except (TypeError, ValueError):
+            pass
+    raise ValueError(
+        "That archive has no map.json to read the terrain's size from, so type "
+        "it in — Altis is 30720, Tanoa 15360, Stratis 8192."
+    )
+
+
+async def upload(guild, member, handle, filename: str, name: str,
+                 world_size: str, max_zoom: str) -> str:
+    try:
+        deepest = int(max_zoom)
+    except (TypeError, ValueError):
+        deepest = DEFAULT_ZOOM
+    if deepest not in ZOOM_CHOICES:
+        deepest = DEFAULT_ZOOM
+
+    # Decompressing tens of megabytes is seconds of CPU, and this event loop is
+    # also holding the Discord connection open — so it happens off it, the same
+    # way `web/orbat.py` treats a sheet export. A ValueError from in there is
+    # still a message for the person.
+    archive = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: tiles.read_archive(handle, max_zoom=deepest)
+    )
+    stored_name = _name(name, archive, (filename or '').rsplit('.', 1)[0])
+    size = _world_size(world_size, archive)
+
+    await database.create_tac_terrain(
+        str(guild.id), stored_name, size, archive.deepest, archive.tiles,
+        str(member.id), member.display_name,
+    )
+    note = (f'Stored {stored_name} — {len(archive.tiles)} tiles up to level '
+            f'{archive.deepest}, {megabytes(archive.bytes)}, '
+            f'{int(size)} m across.')
+    if archive.skipped_deeper:
+        note += (f' {archive.skipped_deeper} tiles from deeper levels were left '
+                 f'out, which is what choosing level {deepest} means.')
+    return note
+
+
+async def delete(record) -> str:
+    """Remove a terrain, unless a map is drawn on it.
+
+    The maps would not break loudly: the tiles would simply stop answering and
+    every plan drawn on that terrain would render on an empty sheet. Naming the
+    maps is more use than a confirmation prompt.
+    """
+    used_by = await database.tac_terrain_usage(record['id'])
+    if used_by:
+        names = ', '.join(f"“{row['name']}”" for row in used_by[:5])
+        more = f' and {len(used_by) - 5} more' if len(used_by) > 5 else ''
+        raise ValueError(
+            f"{names}{more} {'is' if len(used_by) == 1 else 'are'} drawn on "
+            f"{record['name']}. Point those maps at another terrain first."
+        )
+    await database.delete_tac_terrain(record['id'])
+    return f"Deleted {record['name']} and its tiles."
+
+
+async def apply_to_map(map_record, terrain, member_name: str = None) -> str:
+    """Put this terrain under that map, corners and all."""
+    settings = tacmap.terrain_settings(
+        terrain['id'], terrain['name'], terrain['world_size'], terrain['max_zoom']
+    )
+    doc = tacmap.parse(map_record['doc']).doc
+    doc['background'] = settings['background']
+    doc['arma'] = settings['arma']
+    # The pyramid is square, so the sheet has to be.
+    doc['width'] = doc['height'] = tacmap.DEFAULT_WIDTH
+    checked = tacmap.parse(doc)
+    await database.save_tac_map_doc(
+        map_record['id'], tacmap.dumps(checked.doc), member_name
+    )
+    return (f"{terrain['name']} is the background now, and the Arma corners are "
+            f"0–{int(terrain['world_size'])} m.")
