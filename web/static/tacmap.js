@@ -161,15 +161,40 @@
       ' stroke-opacity="0" stroke-width="' + round(20 * item.size) + '"/>';
   }
 
-  function backgroundSVG() {
-    var background = state.doc.background || {};
-    if (!background.url) {
-      return '<rect x="0" y="0" width="' + state.doc.width + '" height="' +
-        state.doc.height + '" fill="#20262e"/>';
+  function emptySheet() {
+    return '<rect x="0" y="0" width="' + state.doc.width + '" height="' +
+      state.doc.height + '" fill="#20262e"/>';
+  }
+
+  function tilesSVG() {
+    var background = state.doc.background;
+    var perSide = Math.pow(2, background.zoom);
+    var width = state.doc.width / perSide;
+    var height = state.doc.height / perSide;
+    var bleedX = state.doc.width * catalog.tileBleed;
+    var bleedY = state.doc.height * catalog.tileBleed;
+    var tiles = [];
+    for (var column = 0; column < perSide; column++) {
+      for (var row = 0; row < perSide; row++) {
+        tiles.push('<image href="' + attr(background.url + '/' + background.zoom +
+          '/' + column + '/' + row + '.png') +
+          '" x="' + round(column * width) + '" y="' + round(row * height) +
+          '" width="' + round(width + bleedX) +
+          '" height="' + round(height + bleedY) +
+          '" preserveAspectRatio="none"/>');
+      }
     }
+    return emptySheet() + '<g opacity="' + background.opacity + '">' +
+      tiles.join('') + '</g>';
+  }
+
+  function backgroundSVG() {
+    var background = state.doc.background;
+    if (!background.url) return emptySheet();
+    if (background.kind === 'tiles') return tilesSVG();
     return '<image href="' + attr(background.url) + '" x="0" y="0" width="' +
       state.doc.width + '" height="' + state.doc.height + '" opacity="' +
-      (background.opacity || 1) + '" preserveAspectRatio="none"/>';
+      background.opacity + '" preserveAspectRatio="none"/>';
   }
 
   function gridSVG() {
@@ -572,13 +597,21 @@
     cols: document.getElementById('tmf-cols'),
     rows: document.getElementById('tmf-rows'),
     shape: document.getElementById('tmf-shape'),
+    zoom: document.getElementById('tmf-zoom'),
     terrain: document.getElementById('tmf-terrain'),
     left: document.getElementById('tmf-left'),
     right: document.getElementById('tmf-right'),
     bottom: document.getElementById('tmf-bottom'),
     top: document.getElementById('tmf-top')
   };
-  settings.bg.value = state.doc.background.url || '';
+  var tiled = state.doc.background.kind === 'tiles';
+  settings.bg.value = tiled ? '' : (state.doc.background.url || '');
+  settings.zoom.value = state.doc.background.zoom;
+  settings.zoom.max = state.doc.background.max_zoom;
+  document.getElementById('tmf-tiles').value = state.doc.background.url || '';
+  Array.prototype.forEach.call(app.querySelectorAll('[data-bg]'), function (field) {
+    field.hidden = (field.dataset.bg === 'tiles') !== tiled;
+  });
   settings.opacity.value = state.doc.background.opacity;
   settings.grid.checked = !!state.doc.grid.show;
   settings.cols.value = state.doc.grid.cols;
@@ -610,7 +643,13 @@
   });
 
   function settingsChanged() {
-    state.doc.background.url = settings.bg.value.trim();
+    // A tile set's address comes from the OCAP import and is not typed here,
+    // so only an image background reads the URL field back.
+    if (state.doc.background.kind !== 'tiles') {
+      state.doc.background.url = settings.bg.value.trim();
+    }
+    state.doc.background.zoom = Math.max(0, Math.min(
+      Number(settings.zoom.value) || 0, state.doc.background.max_zoom));
     state.doc.background.opacity = Number(settings.opacity.value);
     state.doc.grid.show = settings.grid.checked;
     state.doc.grid.cols = Math.max(1, Number(settings.cols.value) || 10);

@@ -68,10 +68,19 @@
 
         <details class="tmpanel">
           <summary>Map settings</summary>
-          <label class="field"><span>Background image URL</span>
+          <label class="field" data-bg="image"><span>Background image URL</span>
             <input id="tmf-bg" placeholder="https://…/altis.jpg">
             <span class="hint">Any image the browser can load — a terrain
-              screenshot, a map export, a satellite tile sheet.</span></label>
+              screenshot or a map export. For a whole terrain, load it from
+              OCAP instead: the panel below the map.</span></label>
+          <label class="field" data-bg="tiles"><span>Terrain tiles</span>
+            <input id="tmf-tiles" readonly>
+            <span class="hint">Loaded from OCAP. Use that panel again to point
+              this map at another terrain.</span></label>
+          <label class="field" data-bg="tiles"><span>Detail</span>
+            <input type="number" id="tmf-zoom" min="0" step="1">
+            <span class="hint">One step deeper is four times as many tiles to
+              load.</span></label>
           <label class="field"><span>Background opacity</span>
             <input type="range" id="tmf-bgop" min="0.1" max="1" step="0.05"></label>
           <label class="field tmcheck">
@@ -82,7 +91,7 @@
             <label class="field"><span>Rows</span>
               <input type="number" id="tmf-rows" min="1" max="100"></label>
           </div>
-          <label class="field"><span>Sheet shape</span>
+          <label class="field" data-bg="image"><span>Sheet shape</span>
             <select id="tmf-shape">
               <option value="1000x1000">Square</option>
               <option value="1400x1000">Landscape</option>

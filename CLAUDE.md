@@ -79,7 +79,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(137 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(157 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1176,6 +1176,7 @@ POST /g/{guild}/maps/{id}/duplicate     the plan, not the share link
 POST /g/{guild}/maps/{id}/share         off / view / edit, or action=new for a fresh link
 POST /g/{guild}/maps/{id}/post          announce it in a channel, as a link
 GET  /g/{guild}/maps/{id}/arma.sqf      the markers as a script for a live mission
+POST /g/{guild}/maps/{id}/ocap          read an OCAP map folder: terrain + calibration
 POST /g/{guild}/maps/{id}/delete
 GET  /m/{token}                         the share link — no sign-in, no guild
 POST /m/{token}/save                    only when the link's mode is edit
@@ -1666,6 +1667,54 @@ signed in here. Three things follow:
   escaping paths are tested: `render()` escapes into the SVG, and
   `json_payload()` escapes `<` so a `</script>` in a label cannot end the tag
   the document is handed to the page in.
+
+### The background is a picture, or a terrain from OCAP
+
+`background.kind` is `image` — one picture stretched across the sheet — or
+`tiles`, the `{z}/{x}/{y}.png` pyramid GDAL2Tiles produces. The second kind
+exists because **OCAP already renders every terrain the unit plays on** and
+serves exactly that layout, so a unit running OCAP has a real map of its own
+terrains sitting there, at a resolution no single image would carry.
+
+`POST …/ocap` takes the address of one of those map folders, reads its
+`map.json` and settles both halves of setting a map up:
+
+```json
+{"name": "Cham", "worldName": "tem_cham", "worldSize": 8192,
+ "imageSize": 16384, "multiplier": 2, "maxZoom": 6}
+```
+
+- `worldSize` is the terrain's edge in metres, so **the Arma corners fall out of
+  the import** — the one number the export could not work out for itself, and
+  the reason this is an import rather than a tile-URL field.
+- `imageSize / 256` is how many tiles the bottom level has per side, so its zoom
+  is `log₂` of that. `ocap_settings()` believes the smaller of that and the
+  stated `maxZoom`: asking for a level the folder has not got is a screenful of
+  missing tiles.
+
+Four details are load-bearing:
+
+- **Tiles are counted from the top left** (XYZ, not TMS). Checked against
+  OCAP's own Tanoa set, which only assembles into Tanoa this way up — and there
+  is deliberately no switch for the other convention, because nothing we have
+  seen writes it.
+- **`web/tacmap.import_ocap()` reads `map.json` server-side**, with `aiohttp`
+  imported inside the function the way `utils/sheets.py` treats its
+  credentials. Not a preference: the tile server is somebody else's origin, and
+  a fetch from the page would need CORS headers nobody has set. The tiles
+  themselves are loaded by the browser, so that server has to be reachable for
+  whoever opens the map, not only for the bot.
+- **The zoom is capped at `MAX_TILE_ZOOM`** and defaults to 4. A level holds
+  4^z tiles, so 4 is 256 elements and 256 requests and 6 would be 4096.
+- **Every tile is drawn slightly over its neighbour** (`TILE_BLEED`). Scaling
+  each tile to a fractional pixel size anti-aliases both sides of a shared edge,
+  which reads as a grid of bright hairlines over the terrain; the overlap is a
+  fraction of the *sheet* rather than of a tile, because the seam is about one
+  device pixel wide whatever zoom level is showing. It costs each tile that much
+  stretch — about fifteen metres on a 15 km terrain.
+
+An OCAP import also squares the sheet, since the pyramid is square and a
+landscape sheet would stretch the terrain sideways.
 
 ### Getting the plan into Arma 3
 

@@ -95,6 +95,62 @@ async def save(record, raw_doc: str, member_name: str = None) -> list:
     return checked.warnings
 
 
+# Long enough for a home server on a slow line, short enough that a page does
+# not sit on a request nobody is going to answer.
+OCAP_TIMEOUT = 15
+
+
+async def import_ocap(record, raw_url: str, member_name: str = None) -> str:
+    """Point this map at an OCAP terrain, and take its calibration with it.
+
+    OCAP renders the terrains a unit actually plays on and serves them as a
+    tile folder with a `map.json` beside it, so one address settles both halves
+    of setting a map up: what it looks like, and where its corners are in
+    Arma's world. Reading it here rather than in the browser is not a
+    preference — the tile server is somebody else's origin and a fetch from the
+    page would need CORS headers nobody has set.
+    """
+    base = (raw_url or '').strip().rstrip('/')
+    if base.endswith('/map.json'):
+        base = base[:-len('/map.json')]
+    if not base.startswith(('http://', 'https://')):
+        raise ValueError(
+            'Paste the address of the OCAP map folder, starting with https://'
+        )
+
+    import aiohttp                      # as utils/sheets.py does with its own
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=OCAP_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f'{base}/map.json') as response:
+                if response.status != 200:
+                    raise ValueError(
+                        f'{base}/map.json answered {response.status}. The address '
+                        'should be the folder holding map.json and the numbered '
+                        'tile folders.'
+                    )
+                # OCAP serves it as text/plain often enough that the content
+                # type is not worth failing over.
+                payload = await response.json(content_type=None)
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(f'Could not read {base}/map.json — {e}')
+
+    settings = tacmap.ocap_settings(payload, base)
+    doc = load(record)
+    doc['background'] = settings['background']
+    doc['arma'] = settings['arma']
+    # An OCAP pyramid is square, so the sheet has to be: a landscape sheet would
+    # stretch the terrain sideways.
+    doc['width'] = doc['height'] = tacmap.DEFAULT_WIDTH
+    checked = tacmap.parse(doc)
+    await database.save_tac_map_doc(record['id'], tacmap.dumps(checked.doc), member_name)
+    return (f"Loaded {settings['name']} — the terrain is the background, and the "
+            f"Arma corners are 0–{int(settings['arma']['right'])} m.")
+
+
 async def share(record, mode: str) -> str:
     """Turn sharing on, change what the link may do, or take it away."""
     if mode not in SHARE_MODES:
