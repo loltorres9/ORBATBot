@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(175 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(190 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1649,6 +1649,35 @@ draw: finite bounded coordinates, known enumerations, strings cut to length, and
 a background URL that is http(s) or nothing. Nothing downstream has to trust the
 column.
 
+### Layers, and what is drawn over what
+
+A map holds **named layers** — phase 1, phase 2, the enemy picture — each with a
+switch of its own. `doc['layers']` is a list of `{id, name, visible}` and every
+item names one; an item pointing at a layer the document does not have lands on
+the first rather than nowhere, because an invisible, unreachable item is worse
+than a misfiled one.
+
+Three things about them are deliberate:
+
+- **A switch is not a delete.** Hiding a layer leaves its items in the document
+  and in every save; `ordered_items()` is the only thing that skips them.
+  Deleting a layer moves its items to the first one rather than taking them
+  with it.
+- **The switches work for whoever is looking**, including somebody who only has
+  the share link and cannot edit. That is why the layer panel is outside the
+  editor half of `tacmap.js` — the viewer's toggles change what their browser
+  draws and nothing else, while `visible` as saved is what the server renders
+  for the no-JavaScript fallback and for the first paint.
+- **A hidden layer stays out of the Arma export.** Markers somebody switched
+  off are not part of the plan being handed over, and Arma has no switch to
+  turn them off again once they are drawn.
+
+`ordered_items()` also fixes what gets drawn over what: layer first, then
+`KIND_ORDER` — areas, lines, labels, markers, symbols — and only then the
+document's own order. Leaving it to whatever was added last is what buried a
+platoon under a boundary drawn after it. Within one kind the document order
+still decides, which is what **Bring to front** moves.
+
 ### The symbol geometry is in Python, once
 
 `defs()` emits every frame, icon and arrowhead as `<g>` elements in one `<defs>`
@@ -1666,6 +1695,30 @@ Frames are APP-6 shaped — friendly rectangle, hostile diamond, neutral square,
 unknown quatrefoil — and **headquarters is a modifier, not a symbol**, because
 any unit can be the one in charge. An HQ that is also a medical company is a
 medical icon on a staff.
+
+**They are painted the way Arma paints its own markers**: a solid block of the
+side's colour with a white pictogram on it, from Arma's own marker colours
+(`ColorWEST`, `ColorEAST`, `ColorGUER`, `ColorUNKNOWN`), lifted enough to hold
+up on a satellite image. That match is the whole point of the styling — whoever
+reads the plan is looking at the same icons in game ten minutes later, and a
+symbol set with its own look makes them translate. An affiliation therefore
+carries three colours, not two: `fill` for the shape, `edge` for its outline,
+`glyph` for what is drawn on it.
+
+`UNIT_BOX` is small on purpose. A platoon plan puts twenty symbols on one
+sheet, and what reads as comfortable with three of them is a wall of colour
+with twenty; `MIN_SIZE` goes down to a sixth of that again. **`label_size()`
+floors the type at `MIN_LABEL` however small the symbol gets** — a symbol
+shrunk to nothing is still a symbol, but its name shrunk to nothing is a
+smudge, and the name is what the plan is read for.
+
+**A line or an area may carry a colour of its own** (`item['color']`, plain
+`#rrggbb` or empty). A symbol may not: whose a unit is has to stay readable
+from its colour, while a line is a route or a boundary or a phase line, and
+those have been told apart by colour on every paper map there has ever been.
+`arrow_head()` therefore computes the head as a polygon rather than using an
+SVG `marker` — a marker cannot take the colour of the line it sits on, so a
+recoloured line would have kept its side's arrow.
 
 ### There is JavaScript here, and only here
 

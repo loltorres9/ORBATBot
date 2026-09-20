@@ -132,6 +132,120 @@ def test_size_is_held_between_its_limits():
     assert items[1]['size'] == tacmap.MIN_SIZE
 
 
+# -- layers ------------------------------------------------------------------
+
+def _layered(*layers, items=()):
+    doc = tacmap.blank_doc()
+    if layers:
+        doc['layers'] = list(layers)
+    doc['items'] = list(items)
+    return tacmap.parse(doc).doc
+
+
+def test_a_document_always_has_at_least_one_layer():
+    for raw in (None, [], 'phase one', [1, 2], [{'name': 'no id'}]):
+        doc = tacmap.blank_doc()
+        doc['layers'] = raw
+        assert tacmap.parse(doc).doc['layers'] == [dict(tacmap.DEFAULT_LAYER)]
+
+
+def test_layer_ids_are_slugged_and_never_repeat():
+    doc = _layered({'id': 'Phase One!', 'name': 'Phase 1'},
+                   {'id': 'phaseone', 'name': 'A second one'},
+                   {'id': 'enemy', 'name': 'Feindlage', 'visible': False})
+    assert [layer['id'] for layer in doc['layers']] == ['phaseone', 'enemy']
+    assert doc['layers'][1]['visible'] is False
+
+
+def test_an_item_on_a_layer_that_is_not_there_lands_on_the_first():
+    doc = _layered({'id': 'plan', 'name': 'Plan'}, {'id': 'enemy', 'name': 'Enemy'},
+                   items=[unit(layer='ghosts'), unit(layer='enemy')])
+    assert doc['items'][0]['layer'] == 'plan'
+    assert doc['items'][1]['layer'] == 'enemy'
+
+
+def test_what_is_on_a_hidden_layer_is_kept_but_not_drawn():
+    doc = _layered({'id': 'plan', 'name': 'Plan'},
+                   {'id': 'enemy', 'name': 'Enemy', 'visible': False},
+                   items=[unit(label='ours'), unit(label='theirs', layer='enemy')])
+    # Both are still in the document — a switch is not a delete.
+    assert len(doc['items']) == 2
+    assert [item['label'] for item in tacmap.ordered_items(doc)] == ['ours']
+    assert len(tacmap.ordered_items(doc, include_hidden=True)) == 2
+    assert 'theirs' not in tacmap.render(doc)
+
+
+def test_the_plan_of_a_hidden_layer_stays_out_of_the_arma_export():
+    doc = _layered({'id': 'plan', 'name': 'Plan'},
+                   {'id': 'enemy', 'name': 'Enemy', 'visible': False},
+                   items=[unit(label='ours'), unit(label='theirs', layer='enemy')])
+    script = tacmap.to_sqf(doc, prefix='map1')
+    assert script.count('createMarker') == 1
+    assert 'theirs' not in script
+
+
+def test_a_symbol_is_drawn_over_an_area_whatever_order_they_were_added_in():
+    doc = _layered(items=[
+        unit(label='on top'),
+        {'kind': 'area', 'side': 'hostile', 'points': [[1, 1], [9, 1], [5, 9]]},
+    ])
+    assert [item['kind'] for item in tacmap.ordered_items(doc)] == ['area', 'unit']
+
+
+def test_two_of_the_same_kind_keep_the_order_the_document_gives_them():
+    doc = _layered(items=[unit(label='first'), unit(label='second')])
+    assert [item['label'] for item in tacmap.ordered_items(doc)] == ['first', 'second']
+
+
+def test_a_layer_orders_before_the_kinds_inside_it():
+    doc = _layered({'id': 'under', 'name': 'Under'}, {'id': 'over', 'name': 'Over'},
+                   items=[
+                       unit(label='on the lower layer', layer='under'),
+                       {'kind': 'area', 'side': 'hostile', 'layer': 'over',
+                        'points': [[1, 1], [9, 1], [5, 9]]},
+                   ])
+    # The area is on the upper layer, so it wins over the symbol below it.
+    assert [item['kind'] for item in tacmap.ordered_items(doc)] == ['unit', 'area']
+
+
+# -- colours -----------------------------------------------------------------
+
+def test_a_line_may_carry_its_own_colour():
+    doc = _layered(items=[{'kind': 'line', 'side': 'friend', 'color': '#FF8A00',
+                           'points': [[1, 1], [9, 9]]}])
+    assert doc['items'][0]['color'] == '#ff8a00'
+    assert '#ff8a00' in tacmap.render(doc)
+
+
+def test_anything_that_is_not_a_plain_hex_colour_is_dropped():
+    for bad in ('red', '#fff', 'rgb(1,2,3)', 'url(#x)', '#12345g', ''):
+        doc = _layered(items=[{'kind': 'line', 'color': bad,
+                               'points': [[1, 1], [9, 9]]}])
+        assert doc['items'][0]['color'] == '', bad
+
+
+def test_without_one_a_line_is_drawn_in_its_sides_colour():
+    doc = _layered(items=[{'kind': 'line', 'side': 'hostile',
+                           'points': [[1, 1], [9, 9]]}])
+    assert tacmap.item_colour(doc['items'][0]) == tacmap.AFFILIATIONS['hostile']['fill']
+
+
+def test_a_symbol_takes_no_colour_of_its_own():
+    # Whose a unit is has to keep being readable from its colour.
+    doc = _layered(items=[unit(color='#ff00ff')])
+    assert 'color' not in doc['items'][0]
+
+
+# -- how small a symbol goes -------------------------------------------------
+
+def test_a_symbol_shrinks_further_than_its_label_does():
+    doc = _layered(items=[unit(label='1-1', size=0.05)])
+    item = doc['items'][0]
+    assert item['size'] == tacmap.MIN_SIZE
+    assert tacmap.label_size(item['size']) == tacmap.MIN_LABEL
+    assert tacmap.label_size(3) > tacmap.MIN_LABEL
+
+
 # -- the background ----------------------------------------------------------
 
 def test_a_background_has_to_be_an_http_link():
@@ -276,10 +390,12 @@ def test_every_symbol_and_frame_is_in_the_defs():
     defs = tacmap.defs()
     for side in tacmap.AFFILIATIONS:
         assert f'id="tmf-{side}"' in defs
-        assert f'id="tma-{side}"' in defs
     for symbol in tacmap.SYMBOLS:
         assert f'id="tmi-{symbol}"' in defs
     assert 'id="tmf-hq"' in defs
+    # No arrow markers: a marker cannot take a line's own colour, so the head
+    # is a polygon the renderer works out.
+    assert '<marker' not in defs
 
 
 def test_the_catalog_offers_exactly_what_can_be_drawn():
@@ -399,6 +515,19 @@ def test_a_headquarters_exports_as_the_headquarters_marker():
     doc = _altis()
     doc['items'] = [unit(hq=True, symbol='med')]
     assert '"b_hq"' in tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map7')
+
+
+def test_an_arrow_head_points_along_the_last_leg():
+    doc = _doc(items=[{'kind': 'line', 'points': [[0, 100], [200, 100]], 'arrow': True}])
+    item = tacmap.parse(doc).doc['items'][0]
+    tip, left, right = tacmap.arrow_head(item['points'], item['size'])
+    assert tip[0] > 200                       # beyond the end, pointing east
+    assert left[0] < 200 and right[0] < 200   # both corners trail behind it
+    assert left[1] != right[1]                # one either side of the line
+
+
+def test_an_arrow_on_a_line_of_no_length_is_simply_not_drawn():
+    assert tacmap.arrow_head([[10, 10], [10, 10]], 1) == []
 
 
 def test_a_line_becomes_a_polyline_and_its_arrow_a_second_marker():

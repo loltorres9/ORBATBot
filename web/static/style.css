@@ -523,7 +523,7 @@ code {
    whole page steps outside it rather than just the two columns, so the headings
    stay lined up with them. */
 .widepage {
-  width: min(1180px, 100vw - 40px);
+  width: min(1500px, 100vw - 32px);
   margin-left: 50%;
   transform: translateX(-50%);
 }
@@ -734,17 +734,43 @@ table.rawslots tr:last-child td { border-bottom: 0; }
 .tmstatus.warn { color: var(--warn); }
 .tmstatus.err { color: var(--err); }
 
-.tmstage { display: grid; grid-template-columns: 1fr 280px; gap: 0; }
-.tmcanvas { background: #10141a; min-width: 0; }
+.tmstage { display: grid; grid-template-columns: 1fr 250px; gap: 0; }
+.tmcanvas { background: #10141a; min-width: 0; position: relative; }
 
+/* A square terrain is limited by height, not width, so the sheet gets as much
+   of the window as the page chrome leaves — and the full-screen button gets
+   the rest of it when that is still not enough. */
 svg.tacmap {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 78vh;
+  max-height: max(420px, calc(100vh - 210px));
   /* The wheel zooms and a drag pans, so the browser must not also scroll. */
   touch-action: none;
 }
+
+.tmfull {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 20, 26, 0.82);
+  color: #e6eaf0;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tmfull:hover { border-color: var(--muted); }
+
+/* Full screen, and the fallback for a browser that refuses it. */
+.tmapp:fullscreen { background: #10141a; display: flex; flex-direction: column; }
+.tmapp:fullscreen .tmstage { flex: 1; min-height: 0; }
+.tmapp:fullscreen svg.tacmap { max-height: 100vh; }
+.tmapp:fullscreen .tmside { max-height: 100vh; }
+.tmapp.tm-tall svg.tacmap { max-height: 94vh; }
 svg.tacmap.tm-drawing { cursor: crosshair; }
 .tm-item { cursor: move; }
 .tm-ring {
@@ -761,7 +787,7 @@ svg.tacmap.tm-drawing { cursor: crosshair; }
   display: grid;
   gap: 12px;
   align-content: start;
-  max-height: 78vh;
+  max-height: max(420px, calc(100vh - 210px));
   overflow-y: auto;
 }
 .tmpanel {
@@ -805,6 +831,30 @@ svg.tacmap.tm-drawing { cursor: crosshair; }
   white-space: pre;
   overflow-wrap: normal;
   overflow-x: auto;
+}
+
+/* One switch per layer, for whoever is looking at the map — the editor also
+   gets the name and a way to remove one. */
+.tmlayerlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tmlayer { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.tmlayer .tmlayername {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+.tmaddlayer { display: flex; gap: 6px; }
+.tmaddlayer input { flex: 1; min-width: 0; padding: 5px 8px; font-size: 13px; }
+
+/* A line's own colour, and the way back to its side's. */
+.tmcolour { display: flex; align-items: center; gap: 10px; }
+.tmcolour input[type="color"] {
+  width: 46px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
 }
 
 /* The editor hides whatever doesn't apply to the current tool or selection.
