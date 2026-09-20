@@ -399,31 +399,39 @@ def test_every_symbol_frame_and_marker_is_in_the_defs():
         assert f'id="tmi-{symbol}"' in defs
     for marker in tacmap.MARKERS:
         assert f'id="tmm-{marker}"' in defs
-    assert 'id="tmf-frame"' in defs
-    assert 'id="tmf-hq"' in defs
+    for side in tacmap.AFFILIATIONS:
+        assert f'id="tmf-{side}"' in defs
+        assert f'id="tmh-{side}"' in defs
+    for echelon in tacmap.ECHELONS:
+        assert f'id="tmx-{echelon}"' in defs
     # No arrow markers: a marker cannot take a line's own colour, so the head
     # is a polygon the renderer works out.
     assert '<marker' not in defs
 
 
-def test_one_frame_carries_every_side():
-    """Arma says whose a unit is by colour alone, and so do we now."""
-    defs = tacmap.defs()
-    assert defs.count('id="tmf-') == 2  # the frame and the headquarters staff
-    drawn = {
-        side: tacmap.item_svg(_parse_one({'kind': 'unit', 'side': side, 'x': 10,
+def test_each_side_has_a_frame_of_its_own_shape():
+    """The shape says whose a unit is before the colour does."""
+    for side in tacmap.AFFILIATIONS:
+        svg = tacmap.item_svg(_parse_one({'kind': 'unit', 'side': side, 'x': 10,
                                           'y': 10, 'symbol': 'inf'}))
-        for side in tacmap.AFFILIATIONS
-    }
-    for side, svg in drawn.items():
-        assert '#tmf-frame' in svg
+        assert f'#tmf-{side}' in svg
         assert tacmap.AFFILIATIONS[side]['fill'] in svg
-    # …and the colours are the game's own, not a palette of our own devising.
-    assert tacmap.AFFILIATIONS['friend']['fill'] == '#004d99'   # ColorWEST
-    assert tacmap.AFFILIATIONS['hostile']['fill'] == '#800000'  # ColorEAST
-    assert tacmap.AFFILIATIONS['neutral']['fill'] == '#008000'  # ColorGUER
-    assert tacmap.AFFILIATIONS['civ']['fill'] == '#66007f'      # ColorCIV
-    assert tacmap.AFFILIATIONS['unknown']['fill'] == '#b39900'  # ColorUNKNOWN
+    paths = {frame['path'] for frame in tacmap._FRAMES.values()}
+    # Friendly and civilian share the rectangle; the other three do not share.
+    assert len(paths) == 4
+
+
+def test_the_pictogram_fits_inside_every_frame():
+    """The icon box is the largest one a diamond will take without clipping.
+
+    A diamond is narrowest exactly where the pictogram is tallest, which is
+    what this guards: a frame drawn as small as the rectangle cuts the arms
+    off an infantry X.
+    """
+    half = 50.0  # the hostile diamond runs corner to corner across the box
+    for y in (33, 67):
+        reach = half * (1 - abs(y - 50) / half)
+        assert 50 - reach <= 25 and 50 + reach >= 75
 
 
 def test_every_nato_marker_arma_ships_has_a_symbol():
@@ -524,7 +532,7 @@ def test_a_headquarters_carries_its_staff_and_moves_its_label_clear_of_it():
     hq = tacmap.item_svg(
         tacmap.parse(_doc(items=[unit(label='A', hq=True)])).doc['items'][0]
     )
-    assert '#tmf-hq' in hq and '#tmf-hq' not in plain
+    assert '#tmh-friend' in hq and '#tmh-friend' not in plain
     # The staff hangs below the frame, so the name has to hang below the staff.
     assert _label_y(hq) > _label_y(plain)
 
@@ -681,3 +689,45 @@ def test_the_summary_counts_what_is_on_the_map():
     ])).doc
     assert tacmap.summarise(doc) == '2 units · 1 line'
     assert tacmap.summarise(tacmap.blank_doc()) == 'empty'
+
+
+def test_a_unit_carries_its_size_strength_and_abbreviation():
+    item = _parse_one(unit(echelon='platoon', strength='reinforced', text='SF'))
+    assert (item['echelon'], item['strength'], item['text']) == (
+        'platoon', 'reinforced', 'SF')
+    svg = tacmap.item_svg(item)
+    assert '#tmx-platoon' in svg
+    assert '(+)' in svg
+    assert '>SF<' in svg
+
+
+def test_a_size_mark_this_version_does_not_know_is_dropped():
+    item = _parse_one(unit(echelon='corps', strength='doubled'))
+    assert item['echelon'] == '' and item['strength'] == ''
+    assert '#tmx-' not in tacmap.item_svg(item)
+
+
+def test_the_size_mark_clears_whatever_the_frame_reaches():
+    """A diamond reaches much higher than a rectangle, so the lift is per frame."""
+    tops = {side: tacmap._FRAMES[side]['top'] for side in tacmap.AFFILIATIONS}
+    assert tops['hostile'] < tops['friend']
+    for side in tacmap.AFFILIATIONS:
+        svg = tacmap.item_svg(_parse_one(unit(side=side, echelon='company')))
+        shift = round(tops[side] - tacmap.ECHELON_LIFT - 50, 2)
+        assert f'translate(0,{shift})' in svg
+
+
+def test_an_abbreviation_never_lands_on_the_pictogram():
+    """It sits in an empty frame, and beside a frame that has an icon in it."""
+    empty = tacmap.item_svg(_parse_one(unit(symbol='generic', text='CH')))
+    assert 'x="50" y="61"' in empty
+    busy = tacmap.item_svg(_parse_one(unit(symbol='inf', text='CH')))
+    assert 'x="102"' in busy
+
+
+def test_the_export_writes_what_arma_cannot_draw():
+    """Arma's markers have no echelon and no strength, so the text carries them."""
+    doc = _doc(items=[unit(label='1-1 Alpha', echelon='platoon',
+                           strength='reinforced')])
+    script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='m1')
+    assert '"1-1 Alpha (Plt +)"' in script

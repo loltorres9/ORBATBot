@@ -37,6 +37,7 @@
     symbol: 'inf',
     glyph: catalog.points.length ? catalog.points[0].glyph : 'OBJ',
     marker: catalog.defaultMarker,
+    echelon: '',
     layer: '',
     hq: false,
     selected: -1,
@@ -54,6 +55,10 @@
   catalog.symbols.forEach(function (symbol) { symbols[symbol.key] = symbol; });
   var markers = {};
   catalog.markers.forEach(function (marker) { markers[marker.key] = marker; });
+  var echelons = {};
+  catalog.echelons.forEach(function (entry) { echelons[entry.key] = entry; });
+  var strengths = {};
+  catalog.strengths.forEach(function (entry) { strengths[entry.key] = entry; });
 
   var layer = svg.querySelector('.tm-items');
   var back = svg.querySelector('#tm-back');
@@ -93,22 +98,66 @@
     return item.color || colours[item.side].fill;
   }
 
+  var FONT = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+
+  function chromeText(text, x, y, size, paint, anchor) {
+    // Mirrors _chrome_text() in utils/tacmap.py: dark over a pale outline, so
+    // what sits outside the frame reads on terrain of any colour.
+    return '<text x="' + round(x) + '" y="' + round(y) + '" text-anchor="' +
+      (anchor || 'middle') + '" font-size="' + size + '" font-weight="700"' +
+      ' font-family="' + FONT + '" fill="' + paint.glyph + '" stroke="' +
+      paint.fill + '" stroke-width="' + round(size * 0.3) +
+      '" paint-order="stroke" stroke-linejoin="round">' + esc(text) + '</text>';
+  }
+
+  function modifierSVG(item, paint) {
+    // Mirrors _modifier_svg() in utils/tacmap.py.
+    var parts = [];
+    var frame = catalog.frames[item.side] || { top: 30 };
+    var line = frame.top - catalog.echelonLift;
+    var hasEchelon = !!echelons[item.echelon];
+    if (hasEchelon) {
+      var shift = 'translate(0,' + round(line - 50) + ')';
+      [[paint.fill, 15], [paint.glyph, 7]].forEach(function (pass) {
+        parts.push('<use href="#tmx-' + item.echelon + '" fill="none" stroke="' +
+          pass[0] + '" color="' + pass[0] + '" stroke-width="' + pass[1] +
+          '" stroke-linecap="round" transform="' + shift + '"/>');
+      });
+    }
+    if (strengths[item.strength]) {
+      parts.push(chromeText(strengths[item.strength].text,
+        hasEchelon ? 103 : 50, line + 7, 20, paint));
+    }
+    if (item.text) {
+      if ((symbols[item.symbol] || {}).hasIcon) {
+        parts.push(chromeText(item.text, 102, 57, 22, paint, 'start'));
+      } else {
+        parts.push('<text x="50" y="61" text-anchor="middle" font-size="30"' +
+          ' font-weight="700" font-family="' + FONT + '" fill="' + paint.glyph +
+          '">' + esc(item.text) + '</text>');
+      }
+    }
+    return parts.join('');
+  }
+
   function unitSVG(item) {
     var paint = colours[item.side];
     var scale = catalog.unitBox * item.size / 100;
     var transform = 'translate(' + round(item.x) + ',' + round(item.y) + ') rotate(' +
       (item.rotation || 0) + ') scale(' + scale + ') translate(-50,-50)';
-    var parts = ['<use href="#tmf-frame" fill="' + paint.fill +
+    var parts = ['<use href="#tmf-' + item.side + '" fill="' + paint.fill +
       '" stroke="' + paint.edge + '" stroke-width="5"/>'];
     if (item.hq) {
-      parts.push('<use href="#tmf-hq" stroke="' + paint.edge + '" stroke-width="5"/>');
+      parts.push('<use href="#tmh-' + item.side + '" stroke="' + paint.edge +
+        '" stroke-width="5"/>');
     }
     if ((symbols[item.symbol] || {}).hasIcon) {
       parts.push('<use href="#tmi-' + item.symbol + '" fill="none" stroke="' +
-        paint.glyph + '" color="' + paint.glyph + '" stroke-width="8"' +
+        paint.glyph + '" color="' + paint.glyph + '" stroke-width="7"' +
         ' stroke-linecap="round" stroke-linejoin="round"/>');
     }
-    var drop = catalog.unitBox * item.size * (item.hq ? 0.8 : 0.62) + 6;
+    parts.push(modifierSVG(item, paint));
+    var drop = catalog.unitBox * item.size * (item.hq ? 0.85 : 0.62) + 6;
     return '<g transform="' + transform + '">' + parts.join('') + '</g>' +
       label(item.label, item.x, item.y + drop, item.size);
   }
@@ -544,6 +593,9 @@
       item.symbol = state.symbol;
       item.hq = state.hq;
       item.rotation = 0;
+      item.echelon = state.echelon;
+      item.strength = '';
+      item.text = '';
     } else if (kind === 'point') {
       item.x = round(point.x);
       item.y = round(point.y);
@@ -696,17 +748,27 @@
   var markerOptions = catalog.markers.map(function (marker) {
     return { value: marker.key, label: marker.label };
   });
+  var echelonOptions = [{ value: '', label: 'No size' }].concat(
+    catalog.echelons.map(function (entry) {
+      return { value: entry.key, label: entry.label };
+    }));
+  var strengthOptions = [{ value: '', label: 'As it stands' }].concat(
+    catalog.strengths.map(function (entry) {
+      return { value: entry.key, label: entry.label };
+    }));
 
   var sidePick = document.getElementById('tmside');
   var symbolPick = document.getElementById('tmsymbol');
   var glyphPick = document.getElementById('tmglyph');
   var markerPick = document.getElementById('tmmarker');
+  var echelonPick = document.getElementById('tmechelon');
   var hqPick = document.getElementById('tmhq');
 
   fillOptions(sidePick, sideOptions, state.side);
   fillOptions(symbolPick, symbolOptions, state.symbol);
   fillOptions(glyphPick, glyphOptions, state.glyph);
   fillOptions(markerPick, markerOptions, state.marker);
+  fillOptions(echelonPick, echelonOptions, state.echelon);
 
   var layerPick = document.getElementById('tmlayerpick');
   var layerAdd = document.getElementById('tmlayeradd');
@@ -759,6 +821,7 @@
   symbolPick.addEventListener('change', function () { state.symbol = symbolPick.value; });
   glyphPick.addEventListener('change', function () { state.glyph = glyphPick.value; });
   markerPick.addEventListener('change', function () { state.marker = markerPick.value; });
+  echelonPick.addEventListener('change', function () { state.echelon = echelonPick.value; });
   hqPick.addEventListener('change', function () { state.hq = hqPick.checked; });
 
   /* -- the inspector -------------------------------------------------------- */
@@ -771,6 +834,9 @@
     hq: document.getElementById('tmf-hq'),
     glyph: document.getElementById('tmf-glyph'),
     marker: document.getElementById('tmf-marker'),
+    echelon: document.getElementById('tmf-echelon'),
+    strength: document.getElementById('tmf-strength'),
+    text: document.getElementById('tmf-text'),
     rotation: document.getElementById('tmf-rotation'),
     size: document.getElementById('tmf-size'),
     style: document.getElementById('tmf-style'),
@@ -782,6 +848,8 @@
   fillOptions(fields.side, sideOptions, state.side);
   fillOptions(fields.symbol, symbolOptions, state.symbol);
   fillOptions(fields.marker, markerOptions, state.marker);
+  fillOptions(fields.echelon, echelonOptions, state.echelon);
+  fillOptions(fields.strength, strengthOptions, '');
 
   function fillInspector() {
     var item = selected();
@@ -797,6 +865,9 @@
     fields.hq.checked = !!item.hq;
     fields.glyph.value = item.glyph || '';
     fields.marker.value = markerKey(item);
+    fields.echelon.value = item.echelon || '';
+    fields.strength.value = item.strength || '';
+    fields.text.value = item.text || '';
     fields.rotation.value = item.rotation || 0;
     fields.size.value = item.size;
     fields.style.value = item.style || 'solid';
@@ -820,6 +891,21 @@
   editField(fields.side, function (item) { item.side = fields.side.value; });
   editField(fields.symbol, function (item) { item.symbol = fields.symbol.value; });
   editField(fields.hq, function (item) { item.hq = fields.hq.checked; });
+  [['echelon', fields.echelon], ['strength', fields.strength]].forEach(
+    function (pair) {
+      pair[1].addEventListener('change', function () {
+        var item = selected();
+        if (!item) return;
+        item[pair[0]] = pair[1].value;
+        touched();
+        render();
+      });
+    });
+
+  editField(fields.text, function (item) {
+    item.text = fields.text.value.slice(0, catalog.limits.mod);
+  });
+
   fields.marker.addEventListener('change', function () {
     var item = selected();
     if (!item) return;

@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(197 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(203 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1691,27 +1691,51 @@ change together. Anything more than that belongs in the defs.
 Referenced content is `<g>`, not `<symbol>`: a `<symbol>` establishes a viewport
 and clips, which would cut the staff off a headquarters.
 
-**The set is Arma's, not APP-6's**, and the difference is deliberate: whoever
-reads the plan is looking at the same icons in game ten minutes later, so
-matching what the game draws is worth more here than being right about the
-standard.
+**The set is APP-6**, drawn the way the planning tools and the pocket cards
+this hobby already uses draw it. That was reversed once — the symbols were
+briefly Arma's own flat markers, one rectangle for every side — and the
+reference everybody actually plans from put it back: a frame whose **shape**
+says whose a unit is reads when the plan is printed, projected, or looked at
+by somebody who is colour-blind, and Arma's own map is not where the plan is
+written.
 
-- **One frame for every side.** Arma's NATO markers are a rectangle whatever
-  side they belong to and say whose a unit is by colour alone, so the APP-6
-  diamond, square and quatrefoil are gone. `_FRAME` is one path now, not a
-  dict keyed by side.
-- **The colours are `CfgMarkerColors` exactly** — `ColorWEST`, `ColorEAST`,
-  `ColorGUER`, `ColorCIV`, `ColorUNKNOWN` — rather than lifted versions of
-  them, and the civilian side exists because the game has it. An affiliation
-  carries three colours: `fill` for the shape, `edge` for its outline, `glyph`
-  for what is drawn on it.
-- **`SYMBOLS` covers every icon in `a3\ui_f\data\map\markers\nato`**, which
-  is what makes `ARMA_TYPES` a mapping rather than a guess. Four entries are
-  ours (sniper, machine gun, anti-tank, signals): the game has no marker for
-  them and a platoon plan needs them more than it needs the gaps to be honest.
-- **Headquarters is still a modifier, not a symbol**, because any unit can be
-  the one in charge. An HQ that is also a medical company is a medical icon on
-  a staff.
+- **A frame per side.** Rectangle friendly, diamond hostile, square neutral,
+  quatrefoil unknown, rectangle again for civilian in its own colour. The
+  diamond and the quatrefoil are drawn **larger than the rectangle**: a
+  diamond is narrowest exactly where the pictogram is tallest, and one sized
+  like the rectangle cuts the arms off an infantry X.
+- **Pale fill, dark line work.** `fill` is the frame, `edge` its outline and
+  `glyph` both the pictogram and every modifier — so unlike a solid block
+  with a white icon, the whole symbol stays legible against a terrain that is
+  bright sand in one corner and dark jungle in the other.
+- **`SYMBOLS` covers both columns of the card**: the unit symbols (infantry,
+  recon, armour, mechanised, mortars, artillery, medical, engineers, supply
+  and the rest) and the equipment ones (truck, APC, IFV, tank, MMG, HMG,
+  grenade launcher), so a weapons det or a single vehicle goes on the plan as
+  itself.
+- **Headquarters is a modifier, not a symbol**, because any unit can be the
+  one in charge. Where its staff hangs from differs per frame, which is why
+  `_FRAMES` holds a record per side rather than a path.
+
+**`ECHELONS` and `STRENGTHS` are what a card has and a map marker does not.**
+The size marks sit above the frame — Ø team, • squad, •• section, ••• platoon,
+I company, II battalion, III regiment, X brigade, XX division — with `(+)`,
+`(-)` or `(±)` beside them, and a short abbreviation (SF, CH, MP) in the
+frame. Three things about them:
+
+- **The lift is per frame.** `ECHELON_LIFT` is measured from that frame's own
+  `top`, because a diamond reaches half the box higher than a rectangle and a
+  fixed offset would bury a hostile unit's size mark in its own frame.
+- **Everything outside the frame is drawn twice**, dark over a pale outline
+  (`_chrome_text()`, and the two passes on the echelon `<use>`). A pocket card
+  is ink on paper; these sit on satellite imagery and have to hold up over
+  both ends of it.
+- **The abbreviation never lands on the pictogram.** An empty frame has room
+  for it; a frame that already carries an icon does not, so it goes beside the
+  symbol — which is where APP-6 puts free text anyway.
+- **Arma has neither**, so `_marker_text()` writes them into the exported
+  marker's text: `1-1 Alpha (Plt +)` rather than a platoon that arrives in the
+  mission as an unqualified name.
 
 **`MARKERS` is the other half of the game's set** — `mil_dot`, `mil_objective`,
 `mil_destroy`, `mil_flag` and the rest. A point carries one of those shapes and
@@ -1931,8 +1955,10 @@ it stays current while the plan is still being edited.
   reason the document rules and the escaping are tested at all
   (`tests/test_tacmap.py`).
 - **Adding a symbol is one entry in `SYMBOLS`.** The icon is drawn in x 25–75,
-  y 33–67 of a 100 × 100 box, which fits inside every frame including the
-  diamond; `catalog()` puts it in the palette on its own.
+  y 33–67 of a 100 × 100 box, which is the largest box that fits inside every
+  frame — the diamond is the binding one, and `test_the_pictogram_fits_inside_
+  every_frame` is what keeps a new frame from quietly clipping every icon.
+  `catalog()` puts a new symbol in the palette on its own.
 - **The editor page is `.widepage`**, the same escape from the 900px column the
   ORBAT editor uses.
 - **Live collaboration is not here.** Two people drawing at once will overwrite

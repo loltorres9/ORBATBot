@@ -102,7 +102,7 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 
 Draw the plan on the terrain and share it with a link — unit symbols, movement lines, objectives and boundaries, in the browser. No slash command: the whole thing lives in the [web interface](#tactical-maps).
 
-- **Arma's own markers** — the NATO symbols the game ships (infantry, armour, mortars, air, naval, medical, supply and the rest) in Arma's marker colours for BLUFOR, OPFOR, Independent, Civilian and Unknown, plus a headquarters staff — and the `mil_*` task markers beside them, so what you draw here is what you see in the mission
+- **Proper APP-6 symbols** — a blue rectangle for friendly, a red diamond for hostile, a green square for neutral, a yellow quatrefoil for unknown, with infantry, recon, armour, mechanised, mortars, artillery, medical, engineers, supply, aircraft and vehicles on them, **size marks above the frame** (Ø team · • squad · ••• platoon · I company · II battalion) and `(+)` / `(-)` beside them — plus Arma's own `mil_*` task markers for objectives, rally points and the rest
 - **Movement lines with arrow heads, areas, markers and free text** — everything a briefing needs to say where people are going
 - **Your actual terrain as the background** — upload the same tile archive you prepare for [OCAP](https://github.com/OCAP2/OCAP) (zip or 7z) and the bot serves it itself, or point it at a running OCAP server; either way the Arma coordinates come along with the terrain
 - **A share link** anyone can open without signing in, read-only or with drawing rights, and **replaceable** the moment it has travelled further than intended
@@ -919,13 +919,13 @@ Open **Operations → Maps**. Every member of the server can read the maps; crea
 | Tool | What it places | Key |
 |---|---|---|
 | **Select** | Pick something up and move it; drag the background to pan | `V` |
-| **Unit** | One of Arma's NATO symbols — infantry, armour, mortars, air, naval, medical, supply… | `U` |
+| **Unit** | An APP-6 symbol — infantry, armour, mortars, air, medical, supply… — with its size mark | `U` |
 | **Marker** | One of Arma's task markers — objective, destroy, flag, warning, pick-up… with optional text | `M` |
 | **Line** | A movement line, with an arrow head | `L` |
 | **Area** | A shaded boundary or a suspected position | `A` |
 | **Text** | A free label — phase names, timings | `T` |
 
-Pick the side (BLUFOR, OPFOR, Independent, Civilian, Unknown), the layer and the symbol in the toolbar before you place something; everything can be changed afterwards in the panel on the right. A **line** or an **area** is drawn by clicking each corner in turn — `Enter` finishes it, `Esc` throws it away.
+Pick the side (friendly, hostile, neutral, civilian, unknown), the layer, the symbol and the size mark in the toolbar before you place something; everything can be changed afterwards in the panel on the right. A **line** or an **area** is drawn by clicking each corner in turn — `Enter` finishes it, `Esc` throws it away.
 
 The symbols are drawn the way Arma draws its own map markers — a solid block of the side's colour with a white pictogram — so what you plan looks like what everyone sees in game. A **line or an area can take a colour of its own**; a unit symbol can't, because its colour is what says whose it is.
 
