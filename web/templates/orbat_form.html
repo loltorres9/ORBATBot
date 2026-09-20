@@ -192,6 +192,24 @@ A leading number ("1. Rifleman") is stripped.</pre>
   </div>
 </div>
 
+<h2 style="margin-top:32px">Rename</h2>
+<form class="form" method="post" action="/g/{{ guild.id }}/orbats/{{ record.id }}/rename">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="row">
+    <label class="field">
+      <span>Name</span>
+      <input name="name" value="{{ record.name }}" required maxlength="120">
+    </label>
+    <label class="field">
+      <span>Description</span>
+      <input name="description" value="{{ record.description or '' }}" maxlength="300" placeholder="Optional">
+    </label>
+  </div>
+  <div class="actions">
+    <button class="button" type="submit">Save name</button>
+  </div>
+</form>
+
 <h2 style="margin-top:32px">Copy this ORBAT</h2>
 <p class="hint">A copy takes the structure and none of the bookings — which is
   what duplicating the sheet used to be for.</p>
