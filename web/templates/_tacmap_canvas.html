@@ -23,6 +23,7 @@
         <label>Side <select id="tmside"></select></label>
         <label>Layer <select id="tmlayerpick"></select></label>
         <label data-for="unit">Symbol <select id="tmsymbol"></select></label>
+        <label data-for="unit">Size <select id="tmechelon"></select></label>
         <label data-for="unit" class="tmcheck"><input type="checkbox" id="tmhq"> HQ</label>
         <label data-for="point">Marker <select id="tmmarker"></select></label>
         <label data-for="point">Text <select id="tmglyph"></select></label>
@@ -62,6 +63,14 @@
             <input id="tmf-glyph" maxlength="4">
             <span class="hint">Only the dot, circle, box and triangle have room
               for it; on the others it goes in front of the name.</span></label>
+          <label class="field" data-for="unit"><span>Size mark</span>
+            <select id="tmf-echelon"></select></label>
+          <label class="field" data-for="unit"><span>Strength</span>
+            <select id="tmf-strength"></select></label>
+          <label class="field" data-for="unit"><span>Abbreviation</span>
+            <input id="tmf-text" maxlength="5" placeholder="SF">
+            <span class="hint">Written in an empty frame, or beside one that
+              already has a pictogram in it.</span></label>
           <label class="field" data-for="unit"><span>Rotation</span>
             <input type="range" id="tmf-rotation" min="-180" max="180" step="5"></label>
           <label class="field"><span>Size</span>

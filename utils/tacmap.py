@@ -72,47 +72,106 @@ KINDS = ('unit', 'point', 'line', 'area', 'text')
 # whatever was added last; `sort_order` only breaks ties within a kind.
 KIND_ORDER = {'area': 0, 'line': 1, 'text': 2, 'point': 3, 'unit': 4}
 
-# Painted as Arma paints its own map markers, because that is the whole point:
-# whoever reads the plan is looking at the same icons in game ten minutes
-# later. Two things come straight from the game rather than from APP-6:
+# APP-6, drawn the way the planning tools and the pocket cards this hobby
+# already uses draw it: a pale frame with the pictogram in dark line work on
+# it. The frame says whose a unit is before the colour does — a rectangle is
+# friendly, a diamond hostile, a square neutral, a quatrefoil unknown — which
+# is what keeps a plan readable when it is printed, projected or looked at by
+# somebody who is colour-blind.
 #
-# * the colours are `CfgMarkerColors` exactly — ColorWEST, ColorEAST,
-#   ColorGUER, ColorCIV, ColorUNKNOWN — not a lifted version of them;
-# * **every side uses the same rectangle.** Arma's NATO markers say whose a
-#   unit is by colour alone, so the APP-6 diamond, square and quatrefoil are
-#   gone. That is a readability trade the game itself makes, and matching it
-#   is worth more here than being right about the standard.
+# `fill` is the frame, `edge` its outline, `glyph` the pictogram and every
+# modifier drawn around it.
 AFFILIATIONS = {
-    'friend': {'label': 'BLUFOR', 'fill': '#004d99', 'edge': '#01223f',
-               'glyph': '#ffffff'},
-    'hostile': {'label': 'OPFOR', 'fill': '#800000', 'edge': '#2d0000',
-                'glyph': '#ffffff'},
-    'neutral': {'label': 'Independent', 'fill': '#008000', 'edge': '#013301',
-                'glyph': '#ffffff'},
-    'civ': {'label': 'Civilian', 'fill': '#66007f', 'edge': '#290033',
-            'glyph': '#ffffff'},
-    'unknown': {'label': 'Unknown', 'fill': '#b39900', 'edge': '#453c00',
-                'glyph': '#ffffff'},
+    'friend': {'label': 'Friendly', 'fill': '#8cbde2', 'edge': '#16344c',
+               'glyph': '#0d2438'},
+    'hostile': {'label': 'Hostile', 'fill': '#dd8b8b', 'edge': '#4a1616',
+                'glyph': '#3a1010'},
+    'neutral': {'label': 'Neutral', 'fill': '#8fd3a1', 'edge': '#14401f',
+                'glyph': '#0e3018'},
+    'civ': {'label': 'Civilian', 'fill': '#c9a6e0', 'edge': '#3a1c4d',
+            'glyph': '#2c1339'},
+    'unknown': {'label': 'Unknown', 'fill': '#f0dc8a', 'edge': '#4a3d0d',
+                'glyph': '#3a2f08'},
 }
 DEFAULT_SIDE = 'friend'
 
-# The frame, drawn in a 100 x 100 box centred on (50, 50). It carries no paint
-# of its own so the `<use>` that places it decides the colours.
-_FRAME = '<path d="M6,28 H94 V72 H6 Z"/>'
-
-# The icon sits in x 25-75, y 33-67, which is what fits inside the frame with
-# room for its outline.
+# The frames, drawn in a 100 x 100 box centred on (50, 50). They carry no
+# paint of their own so the `<use>` that places one decides the colours.
 #
-# The set is Arma's own — one entry per icon in `a3\ui_f\data\map\markers\nato`,
-# so `ARMA_TYPES` below is a one-to-one mapping rather than a best guess, and
-# what somebody places here is the marker they will see in the mission. The
-# four extras (sniper, machine gun, anti-tank, signals) are ours: the game has
-# no marker for them, and a platoon plan needs them more than it needs the
-# gaps to be honest.
+# `top` is where the echelon marks go above the frame, and `staff` is where a
+# headquarters staff hangs off it — both differ per shape, which is the whole
+# reason a frame is a record here rather than a path.
+_FRAMES = {
+    'friend': {'path': '<path d="M10,30 H90 V70 H10 Z"/>', 'top': 30,
+               'staff': (10, 70)},
+    # Wider than the frame it circumscribes: a diamond is narrowest exactly
+    # where the pictogram is tallest, so a diamond sized like the rectangle
+    # clips the X off an infantry symbol.
+    'hostile': {'path': '<path d="M50,0 L100,50 L50,100 L0,50 Z"/>', 'top': 0,
+                'staff': (25, 75)},
+    'neutral': {'path': '<path d="M14,14 H86 V86 H14 Z"/>', 'top': 14,
+                'staff': (14, 86)},
+    # A quatrefoil: four half-circles bulging out of a square.
+    'civ': {'path': '<path d="M10,30 H90 V70 H10 Z"/>', 'top': 30,
+            'staff': (10, 70)},
+    'unknown': {'path': ('<path d="M26,26 A22,22 0 0 1 74,26 A22,22 0 0 1 74,74 '
+                         'A22,22 0 0 1 26,74 A22,22 0 0 1 26,26 Z"/>'),
+                'top': 15, 'staff': (21, 79)},
+}
+
+# The size marks that sit above the frame. A symbol without one is a unit of
+# unsaid size, which is what most things on a plan are — so this is opt-in and
+# empty by default.
+ECHELONS = {
+    'team': {'label': 'Team / crew', 'short': 'Tm',
+             'icon': '<circle cx="50" cy="50" r="9" fill="none"/>'
+                     '<path d="M42,58 L58,42"/>'},
+    'squad': {'label': 'Squad', 'short': 'Sqd',
+              'icon': '<circle cx="50" cy="50" r="7" fill="currentColor" '
+                      'stroke="none"/>'},
+    'section': {'label': 'Section', 'short': 'Sect',
+                'icon': '<circle cx="38" cy="50" r="7" fill="currentColor" '
+                        'stroke="none"/>'
+                        '<circle cx="62" cy="50" r="7" fill="currentColor" '
+                        'stroke="none"/>'},
+    'platoon': {'label': 'Platoon', 'short': 'Plt',
+                'icon': '<circle cx="28" cy="50" r="7" fill="currentColor" '
+                        'stroke="none"/>'
+                        '<circle cx="50" cy="50" r="7" fill="currentColor" '
+                        'stroke="none"/>'
+                        '<circle cx="72" cy="50" r="7" fill="currentColor" '
+                        'stroke="none"/>'},
+    'company': {'label': 'Company', 'short': 'Coy',
+                'icon': '<path d="M50,36 V64"/>'},
+    'battalion': {'label': 'Battalion', 'short': 'Bn',
+                  'icon': '<path d="M40,36 V64 M60,36 V64"/>'},
+    'regiment': {'label': 'Regiment', 'short': 'Regt',
+                 'icon': '<path d="M30,36 V64 M50,36 V64 M70,36 V64"/>'},
+    'brigade': {'label': 'Brigade', 'short': 'Bde',
+                'icon': '<path d="M38,36 L62,64 M62,36 L38,64"/>'},
+    'division': {'label': 'Division', 'short': 'Div',
+                 'icon': '<path d="M18,36 L42,64 M42,36 L18,64'
+                         ' M58,36 L82,64 M82,36 L58,64"/>'},
+}
+
+# Reinforced and reduced, written beside the echelon exactly as the cards do.
+STRENGTHS = {
+    'reinforced': {'label': 'Reinforced (+)', 'text': '(+)'},
+    'reduced': {'label': 'Reduced (-)', 'text': '(-)'},
+    'both': {'label': 'Reinforced and reduced (\u00b1)', 'text': '(\u00b1)'},
+}
+
+# The icon sits in x 25-75, y 33-67, which is the largest box that fits inside
+# every frame — the diamond is narrowest exactly where the icon is tallest.
 #
 # An icon inherits `stroke` and `fill="none"` from the `<use>` that places it;
 # a shape that is meant to be solid says `fill="currentColor"` itself, and the
 # `<use>` sets `color` to the same colour as the stroke.
+#
+# The unit symbols are the left-hand column of every pocket card (infantry,
+# recon, armour, mechanised, mortars, artillery, medical, engineers, supply);
+# the equipment ones are the right-hand column, drawn the same way so a
+# weapons det or a single vehicle can go on the plan as itself.
 SYMBOLS = {
     'generic': {'label': 'Unspecified', 'group': 'Infantry', 'icon': ''},
     'inf': {'label': 'Infantry', 'group': 'Infantry',
@@ -134,16 +193,33 @@ SYMBOLS = {
             'icon': '<path d="M30,39 H70 V58 H30 Z"/>'
                     '<circle cx="39" cy="63" r="5" fill="currentColor"/>'
                     '<circle cx="61" cy="63" r="5" fill="currentColor"/>'},
+    'truck': {'label': 'Truck', 'group': 'Equipment',
+              'icon': '<path d="M30,38 V52 A20,20 0 0 0 70,52 V38"/>'
+                      '<circle cx="34" cy="64" r="6"/><circle cx="66" cy="64" r="6"/>'},
+    'apc': {'label': 'APC', 'group': 'Equipment',
+            'icon': '<path d="M28,66 V44 L50,33 L72,44 V66"/>'},
+    'ifv': {'label': 'IFV', 'group': 'Equipment',
+            'icon': '<path d="M28,66 V44 L50,33 L72,44 V66"/>'
+                    '<path d="M36,42 L64,60 M64,42 L36,60"/>'},
+    'tank': {'label': 'Tank', 'group': 'Equipment',
+             'icon': '<path d="M30,33 V67 M70,33 V67 M30,50 H70"/>'},
     'mg': {'label': 'Machine gun', 'group': 'Weapons',
-           'icon': '<path d="M50,33 V57 M33,67 L50,57 L67,67"/>'},
+           'icon': '<path d="M50,67 V36 M40,45 L50,34 L60,45" fill="none"/>'
+                   '<path d="M40,58 H60"/>'},
+    'hmg': {'label': 'Heavy machine gun', 'group': 'Weapons',
+            'icon': '<path d="M50,67 V36 M40,45 L50,34 L60,45" fill="none"/>'
+                    '<path d="M40,58 H60 M40,50 H60"/>'},
+    'gl': {'label': 'Grenade launcher', 'group': 'Weapons',
+           'icon': '<path d="M50,67 V44"/><circle cx="50" cy="38" r="6"/>'
+                   '<path d="M40,55 H60"/>'},
     'at': {'label': 'Anti-tank', 'group': 'Weapons',
-           'icon': '<path d="M27,67 L50,34 L73,67"/>'},
+           'icon': '<path d="M30,52 L50,33 L70,52 M30,67 L50,48 L70,67"/>'},
     'aa': {'label': 'Air defence', 'group': 'Weapons',
            'icon': '<path d="M27,64 A26,26 0 0 1 73,64"/>'},
     'arty': {'label': 'Artillery', 'group': 'Weapons',
              'icon': '<circle cx="50" cy="50" r="11" fill="currentColor"/>'},
     'mortar': {'label': 'Mortar', 'group': 'Weapons',
-               'icon': '<path d="M50,32 V68"/><circle cx="50" cy="50" r="10"/>'},
+               'icon': '<path d="M50,67 V44"/><circle cx="50" cy="38" r="6"/>'},
     'air': {'label': 'Fixed wing', 'group': 'Air',
             'icon': '<path d="M26,38 L50,50 L74,38 L74,62 L50,50 L26,62 Z"/>'},
     'heli': {'label': 'Rotary wing', 'group': 'Air',
@@ -180,10 +256,19 @@ SYMBOLS = {
 }
 DEFAULT_SYMBOL = 'inf'
 
-# The staff of a headquarters, hanging off the frame's lower-left corner. It is
-# a modifier rather than its own symbol because any unit can be the one in
-# charge — an HQ that is also a medical company is a medical icon on a staff.
-_HQ_STAFF = '<path d="M8,74 V116" fill="none" stroke-linecap="square"/>'
+# The staff of a headquarters, hanging off the frame. It is a modifier rather
+# than its own symbol because any unit can be the one in charge — an HQ that
+# is also a medical company is a medical icon on a staff. Where it hangs from
+# differs per frame, which is what `staff` in `_FRAMES` says.
+def _hq_staff(side: str) -> str:
+    x, y = _FRAMES[side]['staff']
+    return f'<path d="M{x},{y} V{y + 46}" fill="none" stroke-linecap="square"/>'
+
+
+# How far above the frame the echelon marks sit, and how much of the 100-box
+# the in-frame abbreviation may take.
+ECHELON_LIFT = 18
+MAX_MOD = 5
 
 # The markers Arma ships beside the NATO icons — `mil_dot`, `mil_objective`,
 # `mil_destroy` and the rest. They are drawn here the way the game draws them:
@@ -348,6 +433,7 @@ ARMA_POINTS = {
 
 # Text drawn over a satellite image needs a halo or it disappears into the
 # terrain; white on a dark outline is what every map tool ends up at.
+_FONT = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif'
 _LABEL_FILL = '#ffffff'
 _LABEL_HALO = '#11161c'
 
@@ -592,6 +678,11 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         item['symbol'] = symbol
         item['hq'] = bool(raw.get('hq'))
         item['rotation'] = round(_clamp(_number(raw.get('rotation'), 0.0), -360, 360), 1)
+        echelon = raw.get('echelon')
+        item['echelon'] = echelon if echelon in ECHELONS else ''
+        strength = raw.get('strength')
+        item['strength'] = strength if strength in STRENGTHS else ''
+        item['text'] = _text(raw.get('text'), MAX_MOD)
     elif kind == 'point':
         item['glyph'] = _text(raw.get('glyph'), MAX_GLYPH).upper()
         # A map drawn before the marker shapes existed carries none. Its
@@ -747,6 +838,14 @@ def catalog() -> dict:
              'hasIcon': bool(value['icon'])}
             for key, value in SYMBOLS.items()
         ],
+        'echelons': [
+            {'key': key, 'label': value['label']}
+            for key, value in ECHELONS.items()
+        ],
+        'strengths': [
+            {'key': key, 'label': value['label'], 'text': value['text']}
+            for key, value in STRENGTHS.items()
+        ],
         'markers': [
             {'key': key, 'label': value['label'], 'text': value['text']}
             for key, value in MARKERS.items()
@@ -760,13 +859,18 @@ def catalog() -> dict:
         'maxTileZoom': MAX_TILE_ZOOM,
         'limits': {
             'items': MAX_ITEMS, 'points': MAX_POINTS, 'label': MAX_LABEL,
-            'note': MAX_NOTE, 'glyph': MAX_GLYPH,
+            'note': MAX_NOTE, 'glyph': MAX_GLYPH, 'mod': MAX_MOD,
             'minSize': MIN_SIZE, 'maxSize': MAX_SIZE,
             'layers': MAX_LAYERS, 'layerName': MAX_LAYER_NAME,
         },
         'kindOrder': dict(KIND_ORDER),
         'minLabel': MIN_LABEL,
         'defaultMarker': DEFAULT_MARKER,
+        'echelonLift': ECHELON_LIFT,
+        'frames': {
+            side: {'top': frame['top'], 'staff': list(frame['staff'])}
+            for side, frame in _FRAMES.items()
+        },
     }
 
 
@@ -796,8 +900,12 @@ def defs() -> str:
     Emitted into the editor page and into any standalone render, so a `<use>`
     is all either renderer needs. Adding a symbol here adds it to both.
     """
-    parts = ['<defs>', f'<g id="tmf-frame">{_FRAME}</g>',
-             f'<g id="tmf-hq">{_HQ_STAFF}</g>']
+    parts = ['<defs>']
+    for side, frame in _FRAMES.items():
+        parts.append(f'<g id="tmf-{side}">{frame["path"]}</g>')
+        parts.append(f'<g id="tmh-{side}">{_hq_staff(side)}</g>')
+    for key, echelon in ECHELONS.items():
+        parts.append(f'<g id="tmx-{key}">{echelon["icon"]}</g>')
     for key, symbol in SYMBOLS.items():
         parts.append(f'<g id="tmi-{key}">{symbol["icon"]}</g>')
     for key, marker in MARKERS.items():
@@ -848,7 +956,9 @@ def item_svg(item: dict) -> str:
 
 
 def _unit_svg(item: dict) -> str:
+    """One unit symbol: the frame, what is in it, and what is written round it."""
     colours = AFFILIATIONS[item['side']]
+    side = item['side']
     scale = UNIT_BOX * item['size'] / 100
     # The symbol is drawn in its own 100 × 100 box and then moved onto the map,
     # so a rotation turns the symbol about its own centre rather than the sheet.
@@ -856,22 +966,82 @@ def _unit_svg(item: dict) -> str:
                  f"rotate({item.get('rotation', 0)}) scale({round(scale, 4)}) "
                  f"translate(-50,-50)")
     parts = [
-        f'<use href="#tmf-frame" fill="{colours["fill"]}" '
+        f'<use href="#tmf-{side}" fill="{colours["fill"]}" '
         f'stroke="{colours["edge"]}" stroke-width="5"/>'
     ]
     if item.get('hq'):
-        parts.append(f'<use href="#tmf-hq" stroke="{colours["edge"]}" stroke-width="5"/>')
+        parts.append(f'<use href="#tmh-{side}" stroke="{colours["edge"]}" '
+                     f'stroke-width="5"/>')
     if SYMBOLS[item['symbol']]['icon']:
         parts.append(
             f'<use href="#tmi-{item["symbol"]}" fill="none" '
             f'stroke="{colours["glyph"]}" color="{colours["glyph"]}" '
-            f'stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>'
+            f'stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>'
         )
+    parts.extend(_modifier_svg(item, colours))
     # The label sits under the frame, and under the staff when there is one —
     # a headquarters would otherwise have its own name drawn over its staff.
-    drop = UNIT_BOX * item['size'] * (0.8 if item.get('hq') else 0.62) + 6
+    drop = UNIT_BOX * item['size'] * (0.85 if item.get('hq') else 0.62) + 6
     label = _label_svg(item['label'], item['x'], item['y'] + drop, item['size'])
     return f'<g transform="{transform}">{"".join(parts)}</g>{label}'
+
+
+def _modifier_svg(item: dict, colours: dict) -> list:
+    """The echelon above the frame, the strength beside it, the text alongside.
+
+    All three are drawn in the symbol's own 100 × 100 box, so they scale and
+    rotate with it. Two things they must survive that a pocket card never has
+    to: the echelon is lifted clear of whatever the frame's top edge happens
+    to be — a diamond reaches much higher than a rectangle — and everything
+    outside the frame is drawn twice, dark over a pale outline, because it
+    sits on terrain rather than on paper and has to read over both.
+    """
+    parts = []
+    frame = _FRAMES[item['side']]
+    top = frame['top']
+    line = top - ECHELON_LIFT
+    echelon = item.get('echelon')
+    strength = item.get('strength')
+    if echelon in ECHELONS:
+        shift = f'translate(0,{round(line - 50, 2)})'
+        for colour, width in ((colours['fill'], 15), (colours['glyph'], 7)):
+            parts.append(
+                f'<use href="#tmx-{echelon}" fill="none" stroke="{colour}" '
+                f'color="{colour}" stroke-width="{width}" stroke-linecap="round" '
+                f'transform="{shift}"/>'
+            )
+    if strength in STRENGTHS:
+        # Beside the echelon when there is one, and where it would have been
+        # when there is not — the two are read as one line either way.
+        x = 103 if echelon in ECHELONS else 50
+        parts.append(_chrome_text(STRENGTHS[strength]['text'], x, line + 7, 20,
+                                  colours))
+    text = item.get('text', '')
+    if text:
+        # An empty frame has room for it; a frame with a pictogram in it does
+        # not, so it goes beside the symbol the way APP-6 puts free text in a
+        # field of its own rather than over the icon.
+        if SYMBOLS[item['symbol']]['icon']:
+            parts.append(_chrome_text(text, 102, 57, 22, colours, anchor='start'))
+        else:
+            parts.append(
+                f'<text x="50" y="61" text-anchor="middle" font-size="30" '
+                f'font-weight="700" font-family="{_FONT}" '
+                f'fill="{colours["glyph"]}">{escape(text)}</text>'
+            )
+    return parts
+
+
+def _chrome_text(text: str, x: float, y: float, size: float, colours: dict,
+                 anchor: str = 'middle') -> str:
+    """One piece of writing outside the frame: dark, over a pale outline."""
+    return (
+        f'<text x="{round(x, 2)}" y="{round(y, 2)}" text-anchor="{anchor}" '
+        f'font-size="{size}" font-weight="700" font-family="{_FONT}" '
+        f'fill="{colours["glyph"]}" stroke="{colours["fill"]}" '
+        f'stroke-width="{round(size * 0.3, 2)}" paint-order="stroke" '
+        f'stroke-linejoin="round">{escape(text)}</text>'
+    )
 
 
 def _point_svg(item: dict) -> str:
@@ -1183,7 +1353,24 @@ def _marker_text(item: dict) -> str:
         if item['label']:
             parts.append(item['label'])
         return ' '.join(parts)
-    return item['label']
+    if item['kind'] != 'unit':
+        return item['label']
+    # Arma's markers carry no echelon and no strength, so what the symbol says
+    # around its frame is written into the marker's text instead of being lost
+    # on the way into the mission.
+    extra = []
+    if item.get('text'):
+        extra.append(item['text'])
+    if item.get('echelon') in ECHELONS:
+        extra.append(ECHELONS[item['echelon']]['short'])
+    if item.get('strength') in STRENGTHS:
+        # Without its brackets: the whole tail is already in brackets, and
+        # "Alpha (Plt (+))" reads as a typo.
+        extra.append(STRENGTHS[item['strength']]['text'].strip('()'))
+    if not extra:
+        return item['label']
+    tail = ' '.join(extra)
+    return f'{item["label"]} ({tail})' if item['label'] else tail
 
 
 def _bearing(start: tuple, end: tuple) -> float:
