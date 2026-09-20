@@ -98,6 +98,18 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 - Unit roles and `Unit Leader` can never become game roles, so nobody self-assigns approval rights
 - Drop a role by unticking it, or via the **➖ Remove a role** button for a list of only what you have
 
+### 🗺️ Tactical maps
+
+Draw the plan on the terrain and share it with a link — unit symbols, movement lines, objectives and boundaries, in the browser. No slash command: the whole thing lives in the [web interface](#tactical-maps).
+
+- **APP-6-style symbols** — friendly, hostile, neutral and unknown frames with infantry, armour, mortars, air, medical, logistics and the rest, plus a headquarters staff
+- **Movement lines with arrow heads, areas, markers and free text** — everything a briefing needs to say where people are going
+- **Any background image** — a terrain screenshot, a map export, whatever the browser can load — with an optional grid over it
+- **A share link** anyone can open without signing in, read-only or with drawing rights, and **replaceable** the moment it has travelled further than intended
+- **Straight into Arma 3** — the whole plan as markers in a running mission, pasted into the debug console, no mod on either side
+- **Post it in a channel** as a link, so it stays current while the plan is still being drawn
+- Works read-only with JavaScript off, because the map is rendered on the server as well
+
 ### 📣 Reddit announcements
 
 Watch a Reddit user or a subreddit and announce every new post in a Discord channel, in your own words, pinging the roles and people you choose. Set up entirely in the [web interface](#reddit-announcements) — there is no slash command, and no Reddit API registration either. Full detail in [Reddit announcements](#reddit-announcements).
@@ -159,6 +171,15 @@ Editing and cancelling go by **who created the event**, not by rank — one Unit
 |---|---|---|---|
 | `/game-roles`, `/game-role-list` | ✅ | ✅ | ✅ |
 | `/game-role-add`, `/game-role-remove`, `/game-role-panel` | ❌ | ❌ | ✅ |
+
+### 🗺️ Tactical maps
+
+| Action | Members | Unit Leaders | Admins |
+|---|---|---|---|
+| Open and read a map — web only | ✅ | ✅ | ✅ |
+| Draw on one, create, copy or delete one — web only | ❌ | ✅ | ✅ |
+| Share it with a link, or post it in a channel — web only | ❌ | ✅ | ✅ |
+| Open a map through a share link | anyone holding the link | | |
 
 ### 📣 Reddit announcements
 
@@ -886,9 +907,86 @@ The page also names **the exact address it read and how many entries came back**
 
 ---
 
+## Tactical maps
+
+The mission plan, drawn on the terrain and shared with a link. It lives entirely in the [web interface](#web-ui) — there is no slash command, because dragging a symbol onto a hillside is not something a Discord modal can do.
+
+Open **Operations → Maps**. Every member of the server can read the maps; creating one and drawing on it needs the `Unit Leader` role or Manage Server.
+
+### Drawing
+
+| Tool | What it places | Key |
+|---|---|---|
+| **Select** | Pick something up and move it; drag the background to pan | `V` |
+| **Unit** | A symbol in an APP-6 frame — infantry, armour, mortars, air, medical, logistics… | `U` |
+| **Marker** | A labelled circle — OBJ, RP, LZ, CCP, TGT and the rest | `M` |
+| **Line** | A movement line, with an arrow head | `L` |
+| **Area** | A shaded boundary or a suspected position | `A` |
+| **Text** | A free label — phase names, timings | `T` |
+
+Pick the side (friendly, hostile, neutral, unknown) and the symbol in the toolbar before you place something; everything can be changed afterwards in the panel on the right. A **line** or an **area** is drawn by clicking each corner in turn — `Enter` finishes it, `Esc` throws it away.
+
+- **Scroll** to zoom, **drag the background** to pan
+- `Del` removes what is selected, `Ctrl`+`Z` undoes, `Ctrl`+`S` saves
+- **Nothing is saved until you press Save** — the page warns you if you try to leave with unsaved work
+- Tick **HQ** on a unit to give it the headquarters staff
+
+### The background
+
+Under **Map settings**, paste the URL of any image the browser can load — a terrain screenshot, a map export from the mission editor, a satellite image. It is stretched across the sheet, so pick the sheet shape (square, landscape, portrait) that matches it. An optional grid can be laid over the top.
+
+The map works without a background too: a plain dark sheet with a grid is enough for a schematic.
+
+### Sharing it
+
+A map is private to people who can sign in here until you give it a link. Under **Share link**, choose:
+
+- **Not shared** — only people signed in here can open it
+- **Anyone with the link can look at it** — for the people who just need the plan
+- **Anyone with the link can draw on it** — for co-planning with somebody who is not on the server
+
+The link looks like `https://your-domain/m/xxxxxxxx`, works without a Discord login, and **Replace the link** issues a new one — the old link stops opening the map immediately, for everyone who has it. That is how you take a plan back once it has been forwarded further than you meant.
+
+### Posting it in a channel
+
+**Post in a channel** sends an embed with the map's name, what is on it and a link. It posts a link rather than a picture on purpose: the plan usually keeps changing after the briefing is announced, and a link is always current where an image is not. If the map has a share link, that is what gets posted; otherwise the link only opens for people who can sign in here.
+
+### Putting the plan into Arma 3
+
+The map can be dropped into a **running mission** as ordinary Arma markers, with **no mod** on the server or the client. Arma cannot fetch anything from outside without one, so the way in is the debug console:
+
+1. In **Map settings → Arma 3 coordinates**, pick the terrain (or type the corner coordinates if your background image is a crop of the map). Get this right before the first export, or everything lands on the wrong terrain.
+2. Save the map, then open **🎯 Put it into Arma 3** and copy the script — or download it as a `.sqf`.
+3. In game, log in as admin (`#login <password>`), open the debug console, paste it and press **GLOBAL EXEC**.
+
+Every player sees the markers immediately, because `createMarker` is global. Pasting the script again after changing the plan **replaces** the markers instead of adding a second copy — each map owns its own marker names.
+
+The mission has to allow the debug console: `enableDebugConsole = 1;` (admins) or `2` (everyone) in its `description.ext`. Lines and areas need Arma **2.00 or newer**, which is anything current.
+
+What comes across:
+
+| On the map | In Arma |
+|---|---|
+| Unit symbols | The matching NATO marker, in the side's colour — `b_inf`, `o_armor`, `n_med` … |
+| Headquarters | The `hq` marker of that side |
+| Markers (OBJ, TGT, RP …) | `mil_objective`, `mil_destroy`, `mil_dot` and friends, with the text |
+| Lines and areas | Polyline markers; an area closes itself, a line's arrow becomes a `mil_arrow` |
+| Text labels | An empty marker carrying the text |
+
+Anti-tank, snipers and a few others have no marker in vanilla Arma, so they come across as the nearest one that exists. Dashed lines arrive solid — Arma has no dashed marker.
+
+### Good to know
+
+- **One map holds 400 items**, a line up to 120 points, labels up to 48 characters
+- **Two people drawing at the same time will overwrite each other** when they save — agree who has the pen, or share a read-only link and keep the drawing to one person
+- **Copy** is how you build phase 2: same plan, new name, no share link of its own
+- The map renders **without JavaScript** as well, so a read-only link opens on anything
+
+---
+
 ## Web UI
 
-An optional browser interface for most of what the bot does — events, the slot roster and its approvals, game roles, embeds and the logs — without touching a slash command. You sign in with your Discord account, and everything you do goes through the same code as the slash commands, so it produces the same messages, in the same channels, with the same buttons.
+An optional browser interface for most of what the bot does — events, the slot roster and its approvals, tactical maps, game roles, embeds and the logs — without touching a slash command. You sign in with your Discord account, and everything you do goes through the same code as the slash commands, so it produces the same messages, in the same channels, with the same buttons.
 
 It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` and `WEB_SECRET_KEY` unset, the bot starts exactly as it always did and opens no HTTP port. The startup log says which of the three is missing.
 
@@ -907,6 +1005,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | · Operation | Start an operation, set its start time, post the board and the announcement, empty the queue, read the raw roster |
 | · Slot Approvals | Approve, deny or withdraw the pending requests, release a booked slot, or put somebody on one outright |
 | · ORBATs | Build and edit the slot roster |
+| · Maps | Draw the tactical plan, share it with a link, post it in a channel |
 | · Settings | Which channels the bot posts into, and the server timezone |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
@@ -916,8 +1015,8 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 
 Who may do what is **read live from your Discord roles**, not from the login:
 
-- **Any member of the server** — view events, RSVP, pick their own game roles, see the voice leaderboard
-- **Unit Leader or Manage Server** — create events; approve and deny slot requests (Unit Leaders for their own unit only)
+- **Any member of the server** — view events, RSVP, pick their own game roles, see the voice leaderboard, read the tactical maps
+- **Unit Leader or Manage Server** — create events; draw, share and post tactical maps; approve and deny slot requests (Unit Leaders for their own unit only)
 - **The organiser, or an admin** — edit, cancel and delete that event
 - **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, build ORBATs, watch Reddit feeds, configure the member log and voice tracking
 

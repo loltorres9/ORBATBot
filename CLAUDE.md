@@ -17,7 +17,8 @@ request *is* the booking. See
 
 **Current state:** Fully operational bot deployed on Railway, plus an optional
 web UI (`web/`) with Discord OAuth2 login for events, game roles, embeds, the
-member log, voice time, the ORBAT editor and the slot-approval queue.
+member log, voice time, the ORBAT editor, the slot-approval queue and the
+[tactical map](#tactical-maps-utilstacmappy--webtacmappy).
 **Next phase:** *requesting* a slot is still Discord-side; approving one is not.
 The remaining steps are listed under
 [Slots on the web](#slots-on-the-web--what-is-done-and-what-is-left).
@@ -44,7 +45,8 @@ utils/
   orbat.py              # DB-held ORBATs: the text format, the safe edit, the board
   embeds.py             # Builder-made rich messages → discord.Embed, post and edit
   reddit.py             # One Reddit feed, read and rendered — no Discord, no database
-web/                    # Optional browser UI — Discord OAuth2 login, events, roster, approvals
+  tacmap.py             # One tactical map: the symbols, the document, the SVG
+web/                    # Optional browser UI — Discord OAuth2 login, events, roster, approvals, maps
   config.py             # Env-driven config; the feature is off until it is complete
   server.py             # uvicorn driven from inside the bot's event loop
   app.py                # FastAPI routes, session plumbing, template rendering
@@ -57,13 +59,14 @@ web/                    # Optional browser UI — Discord OAuth2 login, events, 
   slots.py              # The approval queue, on top of cogs/slots.py
   operations.py         # Starting and steering an operation, on top of cogs/admin.py
   reddit.py             # The Reddit watches, on top of cogs/redditfeed.py
+  tacmap.py             # Tactical maps, share links and posting, on top of utils/tacmap.py
   nav.py                # The two-level tab bar, built once rather than per template
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
-  templates/ static/    # Jinja2 templates and one stylesheet — no build step
+  templates/ static/    # Jinja2 templates, one stylesheet, one script (the map editor)
 lab/                    # Standalone ORBAT-editor playground — no Discord, no Postgres
-tests/                  # pytest — utils/reddit.py, and cogs/redditfeed.check_feed()
+tests/                  # pytest — utils/reddit.py, utils/tacmap.py, redditfeed.check_feed()
 requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
@@ -76,10 +79,11 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(110 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(137 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
-`utils/reddit.py`'s feed parsing, templating and how a refusal is handled, plus
-what `check_feed()` promises about announcing a post exactly once. The date logic in
+`utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
+`check_feed()` promises about announcing a post exactly once, and
+`utils/tacmap.py`'s document parsing and escaping. The date logic in
 `cogs/events.py` (`_next_occurrence()`, `_weekday_day()`, `_add_months()`,
 `_nth_occurrence()`) is pure and Discord-free, so it is the obvious next thing
 to cover.
@@ -249,6 +253,23 @@ One row is one watch — see [Reddit announcements](#reddit-announcements-utilsr
 `UNIQUE (guild_id, kind, lower(source))` — two rows for the same author would
 announce every post twice, which reads as the bot being broken. Both writers turn
 the violation into a `ValueError`, so it is a message rather than a 500.
+
+### `tac_maps`
+One row is one tactical map — see
+[Tactical maps](#tactical-maps-utilstacmappy--webtacmappy).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | |
+| `guild_id` | TEXT | |
+| `name` / `description` | TEXT | |
+| `doc` | TEXT | **The whole map, as JSON** — background, grid, the Arma corners and every symbol on it. Held as one document rather than a table of items because nothing hangs off a symbol: a save replaces the plan wholesale, the same reasoning as `orbat_nets`. `utils/tacmap.parse()` is what makes the column safe to render, and it runs on the way out as well as in |
+| `share_token` | TEXT | The `/m/{token}` link. NULL = never shared. Unique where it is set |
+| `share_mode` | TEXT | `off` / `view` / `edit` — what the link may do |
+| `channel_id` / `message_id` | TEXT | Where the map was last announced |
+| `created_by` / `created_by_name` | TEXT | |
+| `updated_by_name` | TEXT | Who last drew on it — including *someone with the link* |
+| `created_at` / `updated_at` | TIMESTAMP | |
 
 ### `guild_settings`
 | Column | Type | Notes |
@@ -473,6 +494,8 @@ needs one of these three channels must go through it**; a fresh
 | `/event-list`, RSVP buttons on an event | ✅ | ✅ | ✅ |
 | `/event-create` | ❌ | ✅ | ✅ |
 | `/event-edit`, `/event-cancel`, `/event-delete` | ❌ | ✅ own events | ✅ |
+| Reading a tactical map — web only | ✅ | ✅ | ✅ |
+| Drawing on one, sharing it, posting it — web only | ❌ | ✅ | ✅ |
 
 **Admin** = `manage_guild` or `administrator` Discord permission.
 **Unit gating:** `_can_action_request()` in `slots.py` — admins bypass all unit checks; anyone else needs the `Unit Leader` role **and** the requester's unit role; a request with no unit role can be actioned by any Unit Leader. The Unit Leader half is not optional: the buttons in `#slot-approvals` are visible to everyone who can read the channel, so without it any member of a unit could approve their own request by pressing the button on it.
@@ -1083,6 +1106,8 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Assign somebody to a slot outright | Unit Leader (own unit, and must have one) or admin | `check_can_assign()` |
 | Approve, deny or release slot requests | Unit Leader (own unit) or admin | `_can_action_request()` |
 | See the voice leaderboard | any member of the guild | — |
+| Read a tactical map | any member of the guild | — |
+| Draw on a map, share it, post it | Unit Leader or admin | `_is_unit_leader_or_admin()` |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
 the slash commands cannot drift apart on access control.
@@ -1143,6 +1168,17 @@ GET  /g/{guild}/embeds/{id}             preview, send, delete
 GET  /g/{guild}/embeds/{id}/edit        builder          POST to save
 POST /g/{guild}/embeds/{id}/send        post as a new message
 POST /g/{guild}/embeds/{id}/delete      optionally deletes the Discord message
+GET  /g/{guild}/maps                    the guild's tactical maps, POST to create
+GET  /g/{guild}/maps/{id}               the map, and the editor for those who may draw
+POST /g/{guild}/maps/{id}/save          the document, as JSON — the only JSON route here
+POST /g/{guild}/maps/{id}/rename        name and description
+POST /g/{guild}/maps/{id}/duplicate     the plan, not the share link
+POST /g/{guild}/maps/{id}/share         off / view / edit, or action=new for a fresh link
+POST /g/{guild}/maps/{id}/post          announce it in a channel, as a link
+GET  /g/{guild}/maps/{id}/arma.sqf      the markers as a script for a live mission
+POST /g/{guild}/maps/{id}/delete
+GET  /m/{token}                         the share link — no sign-in, no guild
+POST /m/{token}/save                    only when the link's mode is edit
 GET  /g/{guild}/reddit                  admin — the Reddit watches
 GET  /g/{guild}/reddit/new              add form           POST to create
 GET  /g/{guild}/reddit/{id}             edit form          POST to save
@@ -1286,7 +1322,8 @@ Three things about it are deliberate:
 - **Permissions decide what is in the structure, not what the template hides.**
   A group whose every page is out of reach is not built at all, and the group's
   own link is its *first reachable page* — an admin lands on Operation, a Unit
-  Leader on the queue.
+  Leader on the queue, a plain member on Maps, which is the one page in that
+  group everybody may open.
 - **A group of one renders no second row**, where it would only repeat the tab
   above it. That is exactly the Unit Leader's view.
 - **It is built in Python.** The shape of the bar — which groups exist, who sees
@@ -1554,6 +1591,144 @@ the cap rather than eight-and-a-bit: 8 × 3 + 1 is exactly 25.
 - **The editor page steps outside the 900px column** via `.widepage`, because
   the text field and the preview do not fit side by side inside it. It is the
   only page that does.
+
+---
+
+## Tactical maps (`utils/tacmap.py` + `web/tacmap.py`)
+
+The plan, drawn on the terrain — unit symbols, movement lines, objectives and
+boundaries — built in the browser and shared with a link, the way the mission
+planners in this hobby already work. Reading one is open to every member;
+drawing, sharing and posting need the same rights as creating an event.
+
+### The document is the map
+
+One map is one JSON document: a background image, a grid, and a list of items.
+`utils/tacmap.py` owns what an item is and nothing else does — `web/tacmap.py`
+translates HTTP into it, `web/app.py` serves it, `web/static/tacmap.js` edits it
+in the browser. There is no table of symbols, because **nothing hangs off a
+symbol**: a save replaces the plan wholesale, exactly as the net list does, and
+there is no identity for an edit to lose. That is the one thing that makes this
+much smaller than the ORBAT editor next door, where a slot id carries somebody's
+booking and the diff exists to protect it.
+
+`parse()` runs on the way **out** as well as in. A row written by a newer
+version, or by hand, only ever produces something this renderer is willing to
+draw: finite bounded coordinates, known enumerations, strings cut to length, and
+a background URL that is http(s) or nothing. Nothing downstream has to trust the
+column.
+
+### The symbol geometry is in Python, once
+
+`defs()` emits every frame, icon and arrowhead as `<g>` elements in one `<defs>`
+block, and **both** renderers only ever place a `<use href="#tmf-friend">` at
+coordinates. So the browser and the server draw the same infantry symbol, and
+adding one means adding one entry to `SYMBOLS`. What is written twice is the
+composition — three attributes per item — and `item_svg()` in the library and
+the mirror of it in `tacmap.js` have to change together. Anything more than that
+belongs in the defs.
+
+Referenced content is `<g>`, not `<symbol>`: a `<symbol>` establishes a viewport
+and clips, which would cut the staff off a headquarters.
+
+Frames are APP-6 shaped — friendly rectangle, hostile diamond, neutral square,
+unknown quatrefoil — and **headquarters is a modifier, not a symbol**, because
+any unit can be the one in charge. An HQ that is also a medical company is a
+medical icon on a staff.
+
+### There is JavaScript here, and only here
+
+The rest of the site is server-rendered with no script files on purpose. A map
+cannot be: placing a symbol on terrain and dragging it where it belongs *is* the
+feature, and a page of coordinate fields would be worse than the paper map it
+replaces. So `web/static/tacmap.js` exists — vanilla, no build step, no CDN,
+served from the bot's own container like everything else.
+
+**With scripting off the map still renders.** `render()` produces the whole SVG
+server-side and the editor takes that markup over rather than building it from
+nothing, so the fallback is a map you can read, not an empty box. That is also
+why the read-only page and the share link need no JavaScript at all.
+
+### The share link is the whole credential
+
+`/m/{token}` opens a map with no session and no Discord — which is the point,
+because the people who need tonight's plan are in Discord, not necessarily
+signed in here. Three things follow:
+
+- **The token is long, random and revocable.** Regenerating it is the only way
+  to un-share a map that has been forwarded further than intended, and
+  `share_mode` (`off` / `view` / `edit`) decides whether the link may draw.
+  Changing the mode keeps the token, so tightening the rights does not break
+  every copy of the link that is already out there.
+- **`get_tac_map_by_token()` never matches a map that is not shared**, so an
+  empty or stale token cannot fall through to a row whose sharing was turned off.
+- **A label is text anybody with an edit link can type**, which is why the two
+  escaping paths are tested: `render()` escapes into the SVG, and
+  `json_payload()` escapes `<` so a `</script>` in a label cannot end the tag
+  the document is handed to the page in.
+
+### Getting the plan into Arma 3
+
+`to_sqf()` turns the map into `createMarker` calls somebody pastes into the
+**debug console** of a running mission. That shape is forced, and worth knowing
+before anybody proposes something neater: **vanilla Arma cannot fetch anything
+from outside** — no HTTP, no file read — so without a mod on the server there is
+no channel for this bot to push markers down. The console is the one door that
+is already open, and `createMarker` is global, so a logged-in admin pressing
+GLOBAL EXEC draws the plan for every player. (`enableDebugConsole` in the
+mission's `description.ext` is what decides whether an admin has it.)
+
+Four things in there are load-bearing:
+
+- **The prefix is the map's row id** (`web/tacmap.arma_prefix()`), and the script
+  deletes every marker carrying it before drawing. So pasting a corrected plan
+  *replaces* the old markers rather than laying a second set over them — and two
+  maps can never delete each other's, which a shared prefix would do silently.
+  The prefix is also stripped to letters and digits, because it is written into
+  the script as code.
+- **`doc['arma']` is the sheet's four corners in world metres**, not a terrain
+  size. A terrain preset fills them in for a whole-map image; a cropped one gets
+  the corners read off the map in game, and nothing else has to change.
+  `to_world()` flips the vertical axis, since the sheet's y grows downward and
+  Arma's grows north. Corners that are inside-out are refused at parse time —
+  they would divide by zero and put every marker in one spot.
+- **A label goes through `_sqf_string()`**, which doubles quotes the way SQF
+  wants and flattens newlines. The text comes from anybody with an edit link and
+  ends up in a script an admin runs with full rights, so this is the same
+  boundary as the HTML escaping, with a different escape.
+- **Lines and areas are `POLYLINE` markers** (Arma 2.00+), an area being a
+  polyline that repeats its first point, because Arma has no closed one. A
+  line's arrow is a second `mil_arrow` marker turned along the last segment —
+  there is no arrowhead on a polyline. Dashed is lost: Arma has no dashed
+  marker.
+
+`ARMA_TYPES` maps our symbols onto the NATO markers vanilla Arma ships. Several
+have no counterpart — there is no anti-tank or sniper marker — so they land on
+the nearest thing that exists rather than on nothing, and `hq` wins over the
+branch icon because `b_hq` says more about the unit than its branch does.
+
+### Posting is a link, not a picture
+
+`post()` sends an embed with a link and the counts. Discord renders neither an
+SVG attachment nor anything this bot could turn one into without a drawing
+library it does not have — and the link is the thing people actually want, since
+it stays current while the plan is still being edited.
+
+### Notes for future changes
+
+- **`utils/tacmap.py` imports nothing but the standard library**, like
+  `utils/orbat.py` and `utils/reddit.py`. Keep it that way: it is the only
+  reason the document rules and the escaping are tested at all
+  (`tests/test_tacmap.py`).
+- **Adding a symbol is one entry in `SYMBOLS`.** The icon is drawn in x 25–75,
+  y 33–67 of a 100 × 100 box, which fits inside every frame including the
+  diamond; `catalog()` puts it in the palette on its own.
+- **The editor page is `.widepage`**, the same escape from the 900px column the
+  ORBAT editor uses.
+- **Live collaboration is not here.** Two people drawing at once will overwrite
+  each other's save, as two people editing one ORBAT would. Server-Sent Events
+  were sketched for the roster and would fit here the same way — the request
+  handler already sees every change, because it runs in the bot's process.
 
 ---
 

@@ -38,6 +38,11 @@ def build(guild_id, *, is_admin: bool, may_action_slots: bool) -> dict:
         operations.append(_item('slots', 'Slot Approvals', f"{base}/slots"))
     if is_admin:
         operations.append(_item('orbats', 'ORBATs', f"{base}/orbats"))
+    # The plan is for everyone who has to fight it, so the map is the one page
+    # in this group with no permission on it — drawing on one still needs the
+    # rights the page itself checks.
+    operations.append(_item('maps', 'Maps', f"{base}/maps"))
+    if is_admin:
         operations.append(_item('opsettings', 'Settings',
                                 f"{base}/operation/settings"))
 
