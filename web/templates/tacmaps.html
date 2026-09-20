@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild.name }} · Maps{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ guild.name }}</h1>
+    <p class="muted">Signed in as {{ member.display_name }}</p>
+  </div>
+</div>
+
+{% with active = 'maps' %}{% include '_nav.html' %}{% endwith %}
+
+<h2>Tactical maps</h2>
+<p class="hint">
+  The plan, drawn on the terrain: unit symbols, movement lines, objectives and
+  boundaries. A map can be shared with a link so anyone who needs it can open it
+  without signing in, and posted into a channel.
+</p>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if maps %}
+  <ul class="eventlist">
+    {% for item in maps %}
+      <li class="event">
+        <a class="eventmain" href="/g/{{ guild.id }}/maps/{{ item.record.id }}">
+          <span class="title">{{ item.record.name }}</span>
+          <span class="meta">
+            #{{ item.record.id }}
+            {% if item.record.description %} · {{ item.record.description }}{% endif %}
+            {% if item.record.updated_by_name %} · last change by
+              {{ item.record.updated_by_name }}{% endif %}
+          </span>
+        </a>
+        {% if item.record.share_mode == 'edit' %}
+          <span class="chip live">🔗 shared · anyone can draw</span>
+        {% elif item.record.share_mode == 'view' %}
+          <span class="chip">🔗 shared · read only</span>
+        {% endif %}
+        <span class="chip">{{ item.summary }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="empty">No map yet.</p>
+{% endif %}
+
+{% if may_draw %}
+  <h2 style="margin-top:28px">New map</h2>
+  <form class="form" method="post" action="/g/{{ guild.id }}/maps">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="row">
+      <label class="field">
+        <span>Name</span>
+        <input name="name" required maxlength="120" placeholder="Op Steel Rain — phase 1">
+      </label>
+      <label class="field">
+        <span>Description</span>
+        <input name="description" maxlength="300" placeholder="Optional">
+      </label>
+    </div>
+    <label class="field">
+      <span>Background image URL</span>
+      <input name="background" placeholder="https://…/altis.jpg">
+      <span class="hint">Optional, and changeable later — the map works on a
+        plain dark sheet too.</span>
+    </label>
+    <div class="actions">
+      <button class="button primary" type="submit">Create</button>
+    </div>
+  </form>
+{% else %}
+  <p class="hint">Drawing a plan needs the Unit Leader role or server admin.</p>
+{% endif %}
+{% endblock %}

@@ -686,3 +686,128 @@ table.rawslots tr:last-child td { border-bottom: 0; }
 /* The Assign form: who, which slot, go — on one line where there is room. */
 .assignrow { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
 .assignrow .field { flex: 1 1 220px; }
+
+/* -- the tactical map ----------------------------------------------------- *
+   The editor is the one page with scripting behind it, so it is also the one
+   place with a toolbar. Everything here degrades to "an SVG on a page", which
+   is exactly what somebody with scripting off gets. */
+
+.tmapp {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.tmbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.tmtools, .tmpick, .tmdo { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tmpick { gap: 12px; }
+.tmpick label { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.tmpick select { padding: 5px 8px; }
+
+.tmtool {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tmtool:hover { border-color: var(--muted); }
+.tmtool.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.tmstatus { font-size: 13px; color: var(--muted); min-width: 120px; }
+.tmstatus.ok { color: var(--ok); }
+.tmstatus.warn { color: var(--warn); }
+.tmstatus.err { color: var(--err); }
+
+.tmstage { display: grid; grid-template-columns: 1fr 280px; gap: 0; }
+.tmcanvas { background: #10141a; min-width: 0; }
+
+svg.tacmap {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 78vh;
+  /* The wheel zooms and a drag pans, so the browser must not also scroll. */
+  touch-action: none;
+}
+svg.tacmap.tm-drawing { cursor: crosshair; }
+.tm-item { cursor: move; }
+.tm-ring {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+  pointer-events: none;
+}
+
+.tmside {
+  border-left: 1px solid var(--line);
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  max-height: 78vh;
+  overflow-y: auto;
+}
+.tmpanel {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  display: grid;
+  gap: 10px;
+}
+.tmpanel h3 { margin: 0; font-size: 15px; }
+.tmpanel summary { cursor: pointer; font-size: 14px; }
+.tmpanel .field > span { font-size: 13px; }
+.tmpanel .row { grid-template-columns: 1fr 1fr; gap: 10px; }
+.tmcheck { display: flex; gap: 8px; align-items: center; }
+.tmhelp { font-size: 13px; color: var(--muted); }
+.tmhelp ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.tmhelp kbd {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.tmsection { margin-bottom: 14px; }
+.tmsection summary { cursor: pointer; font-weight: 600; }
+.tmsection h3 { margin: 18px 0 6px; font-size: 15px; }
+
+@media (max-width: 900px) {
+  .tmstage { grid-template-columns: 1fr; }
+  .tmside { border-left: 0; border-top: 1px solid var(--line); max-height: none; }
+}
+
+/* The export script: monospaced, and tall enough to see a plan's worth of it
+   without the panel growing past the fold. */
+.sqfbox {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+/* The editor hides whatever doesn't apply to the current tool or selection.
+   Every panel and field here sets `display`, which would otherwise beat the
+   browser's own rule for [hidden] and leave them all on screen at once. */
+.tmapp [hidden] { display: none; }

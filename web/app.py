@@ -8,7 +8,9 @@ no polling, no second deployment, no outbox table. `web/server.py` starts it.
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -19,6 +21,7 @@ from cogs.voicelog import refresh_leaderboard_board as refresh_board
 from utils import database
 from utils import embeds as embedlib
 from utils import reddit as reddit_lib
+from utils import tacmap as tacmap_lib
 from web import (
     auth,
     nav as nav_service,
@@ -30,6 +33,7 @@ from web import (
     roles as roles_service,
     service,
     slots as slots_service,
+    tacmap as tacmap_service,
     voice as voice_service,
 )
 from web.auth import Forbidden, NotAuthenticated
@@ -875,6 +879,237 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                 error=str(e), status=400,
             )
         return redirect(request, f"/g/{guild_id}/orbats", 'ok', note)
+
+    # -- tactical maps ------------------------------------------------------
+
+    # The palette never changes between requests, so it is built once.
+    _map_catalog = tacmap_lib.json_payload(tacmap_lib.catalog())
+
+    def origin(request: Request) -> str:
+        """The absolute origin a share link has to carry."""
+        return config.base_url or str(request.base_url).rstrip('/')
+
+    async def map_context(request: Request, guild_id: str, map_id: int) -> dict:
+        context = await guild_context(request, guild_id)
+        record = await database.get_tac_map(map_id)
+        if record is None or record['guild_id'] != str(context['guild'].id):
+            raise Forbidden('No such map on this server.')
+        context['record'] = record
+        # Everyone in the guild may read the plan; drawing on it is the same
+        # audience that may create an event — a Unit Leader or an admin.
+        context['may_draw'] = context['may_create']
+        return context
+
+    def require_draw(context: dict):
+        if not context['may_create']:
+            raise Forbidden('Only a Unit Leader or a server admin can change a map.')
+
+    async def map_list_page(request: Request, context: dict, error: str = None,
+                            status: int = 200):
+        rows = await database.get_guild_tac_maps(str(context['guild'].id))
+        return render(request, 'tacmaps.html', {
+            **context,
+            'maps': [
+                {'record': row,
+                 'summary': tacmap_lib.summarise(tacmap_service.load(row))}
+                for row in rows
+            ],
+            'may_draw': context['may_create'],
+            'error': error,
+        }, status=status)
+
+    def map_editor(request: Request, context: dict, error: str = None,
+                   status: int = 200, panel: str = None):
+        record = context['record']
+        doc = tacmap_service.load(record)
+        return render(request, 'tacmap_edit.html', {
+            **context,
+            'doc_json': tacmap_lib.json_payload(doc),
+            'catalog_json': _map_catalog,
+            'svg': tacmap_lib.render(doc),
+            'summary': tacmap_lib.summarise(doc),
+            'editable': context['may_draw'],
+            'sqf': tacmap_lib.to_sqf(doc, prefix=tacmap_service.arma_prefix(record),
+                                     title=record['name']),
+            'save_url': f"/g/{context['guild'].id}/maps/{record['id']}/save",
+            'share_modes': tacmap_service.SHARE_MODES,
+            'share_url': (f"{origin(request)}{tacmap_service.share_path(record)}"
+                          if record['share_token'] else ''),
+            'channels': postable_channels(context['guild']),
+            'panel': panel,
+            'error': error,
+        }, status=status)
+
+    async def map_json(request: Request):
+        """The body of a save — a ValueError the editor shows as it is."""
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = None
+        if not isinstance(payload, dict):
+            raise ValueError('That was not a map document.')
+        return payload
+
+    @app.get('/g/{guild_id}/maps', response_class=HTMLResponse)
+    async def map_list(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        return await map_list_page(request, context)
+
+    @app.post('/g/{guild_id}/maps')
+    async def new_map(request: Request, guild_id: str):
+        context = await guild_context(request, guild_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        try:
+            map_id = await tacmap_service.create(
+                context['guild'], context['member'], form.get('name'),
+                form.get('description'), form.get('background'),
+            )
+        except ValueError as e:
+            return await map_list_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok',
+                        'Map created — now draw the plan.')
+
+    @app.get('/g/{guild_id}/maps/{map_id}', response_class=HTMLResponse)
+    async def map_edit(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        return map_editor(request, context)
+
+    @app.post('/g/{guild_id}/maps/{map_id}/save')
+    async def map_save(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        try:
+            payload = await map_json(request)
+            auth.check_csrf(context['session'], payload.get('csrf'))
+            notes = await tacmap_service.save(
+                context['record'], payload.get('doc'),
+                context['member'].display_name,
+            )
+        except ValueError as e:
+            return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+        return JSONResponse({'ok': True, 'notes': notes})
+
+    @app.get('/g/{guild_id}/maps/{map_id}/arma.sqf', response_class=PlainTextResponse)
+    async def map_sqf(request: Request, guild_id: str, map_id: int):
+        """The markers as a script, for pasting into a running mission.
+
+        Served as a file as well as shown on the page, because a plan being
+        briefed off a second screen is easier to keep somewhere than to
+        re-copy out of the browser each time it changes.
+        """
+        context = await map_context(request, guild_id, map_id)
+        return PlainTextResponse(tacmap_service.sqf(context['record']))
+
+    @app.post('/g/{guild_id}/maps/{map_id}/rename')
+    async def map_rename(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            await tacmap_service.rename(
+                context['record'], form.get('name'), form.get('description')
+            )
+        except ValueError as e:
+            return map_editor(request, context, error=str(e), status=400, panel='about')
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', 'Renamed.')
+
+    @app.post('/g/{guild_id}/maps/{map_id}/duplicate')
+    async def map_duplicate(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            new_id = await tacmap_service.duplicate(
+                context['record'], context['member'], form.get('name')
+            )
+        except ValueError as e:
+            return map_editor(request, context, error=str(e), status=400, panel='about')
+        return redirect(request, f"/g/{guild_id}/maps/{new_id}", 'ok',
+                        'Copied — the plan, not the share link.')
+
+    @app.post('/g/{guild_id}/maps/{map_id}/share')
+    async def map_share(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = (await tacmap_service.regenerate(context['record'])
+                    if form.get('action') == 'new'
+                    else await tacmap_service.share(context['record'], form.get('mode')))
+        except ValueError as e:
+            return map_editor(request, context, error=str(e), status=400, panel='share')
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
+
+    @app.post('/g/{guild_id}/maps/{map_id}/post')
+    async def map_post(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        try:
+            note = await tacmap_service.post(
+                context['guild'], context['record'], form.get('channel_id'),
+                tacmap_service.map_url(origin(request), guild_id, context['record']),
+                context['member'],
+            )
+        except ValueError as e:
+            return map_editor(request, context, error=str(e), status=400, panel='post')
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
+
+    @app.post('/g/{guild_id}/maps/{map_id}/delete')
+    async def map_delete(request: Request, guild_id: str, map_id: int):
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        note = await tacmap_service.delete(context['record'])
+        return redirect(request, f"/g/{guild_id}/maps", 'ok', note)
+
+    # The share link. No session, no Discord — the token in the URL is the whole
+    # credential, which is what makes it forwardable to people who only ever see
+    # the plan, and why taking it away has to be one click on the editor page.
+    @app.get('/m/{token}', response_class=HTMLResponse)
+    async def shared_map_page(request: Request, token: str):
+        record = await database.get_tac_map_by_token(token)
+        if record is None:
+            return render(request, 'error.html', {
+                'title': 'No such map',
+                'message': "That link doesn't open a map any more. Ask whoever "
+                           "sent it to you for the current one.",
+            }, status=404)
+        doc = tacmap_service.load(record)
+        return render(request, 'tacmap_view.html', {
+            'record': record,
+            'doc_json': tacmap_lib.json_payload(doc),
+            'catalog_json': _map_catalog,
+            'svg': tacmap_lib.render(doc),
+            'summary': tacmap_lib.summarise(doc),
+            'editable': record['share_mode'] == 'edit',
+            'save_url': f'/m/{token}/save',
+        })
+
+    @app.post('/m/{token}/save')
+    async def shared_map_save(request: Request, token: str):
+        record = await database.get_tac_map_by_token(token)
+        if record is None or record['share_mode'] != 'edit':
+            return JSONResponse(
+                {'ok': False, 'error': 'This link may look at the map, not change it.'},
+                status_code=403,
+            )
+        try:
+            payload = await map_json(request)
+            notes = await tacmap_service.save(
+                record, payload.get('doc'), 'someone with the link'
+            )
+        except ValueError as e:
+            return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+        return JSONResponse({'ok': True, 'notes': notes})
 
     # -- embeds -------------------------------------------------------------
 

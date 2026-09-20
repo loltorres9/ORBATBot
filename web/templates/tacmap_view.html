@@ -1,0 +1,26 @@
+{# A map opened through its share link: no guild, no tabs, no sign-in. Whoever
+   holds the link is either reading the plan or drawing on it, and that is the
+   whole page. #}
+{% extends 'base.html' %}
+{% block title %}{{ record.name }}{% endblock %}
+{% block ogtitle %}{{ record.name }}{% endblock %}
+
+{% block content %}
+<div class="widepage">
+<h1>{{ record.name }}</h1>
+<p class="muted">
+  {{ summary }}
+  {% if record.updated_by_name %} · last change by {{ record.updated_by_name }}{% endif %}
+</p>
+{% if record.description %}<p>{{ record.description }}</p>{% endif %}
+
+{% if editable %}
+  <div class="flash warn">
+    This link may draw on the map. Everything you save here is what everybody
+    else with the link sees.
+  </div>
+{% endif %}
+
+{% include '_tacmap_canvas.html' %}
+</div>
+{% endblock %}

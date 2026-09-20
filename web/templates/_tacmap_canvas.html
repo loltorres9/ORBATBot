@@ -1,0 +1,136 @@
+{# The map itself, shared by the editor page and the share link.
+
+   The `<svg>` inside is the one `utils/tacmap.py` rendered: with scripting off
+   that is the whole feature — a map you can look at. `web/static/tacmap.js`
+   takes it over when it loads and keeps it up to date in the browser. #}
+<div class="tmapp" id="tmapp"
+     data-save="{{ save_url }}"
+     data-editable="{{ '1' if editable else '0' }}"
+     data-csrf="{{ csrf }}">
+  {% if editable %}
+    <div class="tmbar">
+      <div class="tmtools" role="group" aria-label="Tools">
+        <button type="button" class="tmtool active" data-tool="select">✋ Select</button>
+        <button type="button" class="tmtool" data-tool="unit">🛡️ Unit</button>
+        <button type="button" class="tmtool" data-tool="point">📍 Marker</button>
+        <button type="button" class="tmtool" data-tool="line">➟ Line</button>
+        <button type="button" class="tmtool" data-tool="area">⬟ Area</button>
+        <button type="button" class="tmtool" data-tool="text">🔤 Text</button>
+      </div>
+      <div class="tmpick">
+        <label>Side <select id="tmside"></select></label>
+        <label data-for="unit">Symbol <select id="tmsymbol"></select></label>
+        <label data-for="unit" class="tmcheck"><input type="checkbox" id="tmhq"> HQ</label>
+        <label data-for="point">Marker <select id="tmglyph"></select></label>
+      </div>
+      <div class="tmdo">
+        <span class="tmstatus" id="tmstatus"></span>
+        <button type="button" class="button" id="tmundo">Undo</button>
+        <button type="button" class="button primary" id="tmsave">Save</button>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="tmstage">
+    <div class="tmcanvas" id="tmcanvas">{{ svg|safe }}</div>
+    {% if editable %}
+      <aside class="tmside">
+        <div class="tmpanel" id="tminspector" hidden>
+          <h3>Selected</h3>
+          <label class="field"><span>Label</span>
+            <input id="tmf-label" maxlength="48"></label>
+          <label class="field" data-for="unit point line area"><span>Note</span>
+            <textarea id="tmf-note" rows="2" maxlength="240"></textarea></label>
+          <label class="field"><span>Side</span>
+            <select id="tmf-side"></select></label>
+          <label class="field" data-for="unit"><span>Symbol</span>
+            <select id="tmf-symbol"></select></label>
+          <label class="field tmcheck" data-for="unit">
+            <input type="checkbox" id="tmf-hq"> <span>Headquarters</span></label>
+          <label class="field" data-for="point"><span>Marker text</span>
+            <input id="tmf-glyph" maxlength="4"></label>
+          <label class="field" data-for="unit"><span>Rotation</span>
+            <input type="range" id="tmf-rotation" min="-180" max="180" step="5"></label>
+          <label class="field"><span>Size</span>
+            <input type="range" id="tmf-size" min="0.4" max="4" step="0.1"></label>
+          <label class="field" data-for="line area"><span>Line</span>
+            <select id="tmf-style">
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+            </select></label>
+          <label class="field tmcheck" data-for="line">
+            <input type="checkbox" id="tmf-arrow"> <span>Arrow head</span></label>
+          <div class="actions">
+            <button type="button" class="button" id="tmf-front">Bring to front</button>
+            <button type="button" class="button danger" id="tmf-delete">Delete</button>
+          </div>
+        </div>
+
+        <details class="tmpanel">
+          <summary>Map settings</summary>
+          <label class="field"><span>Background image URL</span>
+            <input id="tmf-bg" placeholder="https://…/altis.jpg">
+            <span class="hint">Any image the browser can load — a terrain
+              screenshot, a map export, a satellite tile sheet.</span></label>
+          <label class="field"><span>Background opacity</span>
+            <input type="range" id="tmf-bgop" min="0.1" max="1" step="0.05"></label>
+          <label class="field tmcheck">
+            <input type="checkbox" id="tmf-grid"> <span>Show grid</span></label>
+          <div class="row">
+            <label class="field"><span>Columns</span>
+              <input type="number" id="tmf-cols" min="1" max="100"></label>
+            <label class="field"><span>Rows</span>
+              <input type="number" id="tmf-rows" min="1" max="100"></label>
+          </div>
+          <label class="field"><span>Sheet shape</span>
+            <select id="tmf-shape">
+              <option value="1000x1000">Square</option>
+              <option value="1400x1000">Landscape</option>
+              <option value="1000x1400">Portrait</option>
+            </select>
+            <span class="hint">The background is stretched across the sheet, so
+              match this to the image.</span></label>
+        </details>
+
+        <details class="tmpanel">
+          <summary>Arma 3 coordinates</summary>
+          <p class="hint">What the sheet's corners are in the mission's world,
+            in metres. Only the Arma export reads this — pick the terrain if
+            the background is its whole map, or read the corners off the map
+            in game if it is a crop.</p>
+          <label class="field"><span>Terrain</span>
+            <select id="tmf-terrain"></select></label>
+          <div class="row">
+            <label class="field"><span>Left (x)</span>
+              <input type="number" id="tmf-left" step="1"></label>
+            <label class="field"><span>Right (x)</span>
+              <input type="number" id="tmf-right" step="1"></label>
+          </div>
+          <div class="row">
+            <label class="field"><span>Bottom (y)</span>
+              <input type="number" id="tmf-bottom" step="1"></label>
+            <label class="field"><span>Top (y)</span>
+              <input type="number" id="tmf-top" step="1"></label>
+          </div>
+        </details>
+
+        <div class="tmpanel tmhelp">
+          <h3>Keys</h3>
+          <ul>
+            <li><kbd>V</kbd> select · <kbd>U</kbd> unit · <kbd>M</kbd> marker ·
+              <kbd>L</kbd> line · <kbd>A</kbd> area · <kbd>T</kbd> text</li>
+            <li>Line and area: click each corner, <kbd>Enter</kbd> finishes,
+              <kbd>Esc</kbd> cancels</li>
+            <li><kbd>Del</kbd> removes the selection · <kbd>Ctrl</kbd>+<kbd>Z</kbd>
+              undoes · <kbd>Ctrl</kbd>+<kbd>S</kbd> saves</li>
+            <li>Scroll to zoom, drag the background to pan</li>
+          </ul>
+        </div>
+      </aside>
+    {% endif %}
+  </div>
+</div>
+
+<script type="application/json" id="tmdoc">{{ doc_json|safe }}</script>
+<script type="application/json" id="tmcatalog">{{ catalog_json|safe }}</script>
+<script src="/static/tacmap.js" defer></script>

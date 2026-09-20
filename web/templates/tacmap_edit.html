@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+{% block title %}{{ record.name }} · {{ guild.name }}{% endblock %}
+
+{% block content %}
+<div class="widepage">
+<p class="crumbs">
+  <a href="/g/{{ guild.id }}">{{ guild.name }}</a> ›
+  <a href="/g/{{ guild.id }}/maps">Maps</a> ›
+  {{ record.name }}
+</p>
+
+<h1>{{ record.name }}</h1>
+<p class="muted">
+  {{ summary }}
+  {% if record.updated_by_name %} · last change by {{ record.updated_by_name }}{% endif %}
+</p>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if not editable %}
+  <div class="flash warn">
+    You can read this plan. Drawing on it needs the Unit Leader role or server
+    admin — the same people who run the operation.
+  </div>
+{% endif %}
+
+{% include '_tacmap_canvas.html' %}
+
+{% if editable %}
+  <details class="panel" {% if panel == 'share' %}open{% endif %}>
+    <summary>🔗 Share link <span class="note">for people who don't sign in here</span></summary>
+    <div class="panelbody">
+      <p class="hint">
+        A link that opens this map without a Discord login. Everyone holding it
+        sees the same map; <strong>Replace the link</strong> is how you take it
+        back once it has travelled further than you meant.
+      </p>
+      {% if share_url %}
+        <label class="field">
+          <span>The link</span>
+          <input value="{{ share_url }}" readonly onclick="this.select()">
+        </label>
+      {% endif %}
+      <form class="form" method="post" action="/g/{{ guild.id }}/maps/{{ record.id }}/share">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="field">
+          <span>Who may open it</span>
+          <select name="mode">
+            {% for mode, description in share_modes.items() %}
+              <option value="{{ mode }}"
+                {% if record.share_mode == mode %}selected{% endif %}>{{ description }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="actions">
+          <button class="button primary" type="submit">Save sharing</button>
+          {% if record.share_token %}
+            <button class="button" type="submit" name="action" value="new"
+                    onclick="return confirm('Replace the link? The old one stops working for everyone who has it.')">
+              Replace the link</button>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </details>
+
+  <details class="panel" {% if panel == 'post' %}open{% endif %}>
+    <summary>📣 Post in a channel <span class="note">as a link, so it stays current</span></summary>
+    <div class="panelbody">
+      <p class="hint">
+        A picture would be out of date the moment the plan changes, so what goes
+        into the channel is a link. The share link is used when there is one;
+        otherwise the link only opens for people who can sign in here.
+      </p>
+      <form class="form" method="post" action="/g/{{ guild.id }}/maps/{{ record.id }}/post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="field">
+          <span>Channel</span>
+          <select name="channel_id" required>
+            {% for channel in channels %}
+              <option value="{{ channel.id }}">#{{ channel.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="actions">
+          <button class="button primary" type="submit">Post</button>
+        </div>
+      </form>
+    </div>
+  </details>
+
+  <details class="panel" {% if panel == 'arma' %}open{% endif %}>
+    <summary>🎯 Put it into Arma 3 <span class="note">markers in a running mission, no mod</span></summary>
+    <div class="panelbody">
+      <p class="hint">
+        Arma cannot fetch anything from outside without a mod, so the way in is
+        the debug console: paste this and press <strong>GLOBAL EXEC</strong> as a
+        logged-in admin (<code>#login</code>, and <code>enableDebugConsole</code>
+        in the mission's <code>description.ext</code>). The markers are created
+        globally, so every player sees them. Running it again
+        <strong>replaces</strong> these markers instead of adding a second copy.
+      </p>
+      <p class="hint">
+        It is built from the <strong>saved</strong> map, so save first. Where the
+        markers land comes from <strong>Arma 3 coordinates</strong> in the map
+        settings — set the terrain there before the first export, or everything
+        ends up on Altis. Lines and areas need Arma 2.00 or newer.
+      </p>
+      <label class="field">
+        <span>Markers as SQF</span>
+        <textarea class="sqfbox" rows="14" readonly spellcheck="false"
+                  onclick="this.select()">{{ sqf }}</textarea>
+      </label>
+      <div class="actions">
+        <a class="button" href="/g/{{ guild.id }}/maps/{{ record.id }}/arma.sqf"
+           download="{{ record.name }}.sqf">Download .sqf</a>
+      </div>
+    </div>
+  </details>
+
+  <details class="panel" {% if panel == 'about' %}open{% endif %}>
+    <summary>✏️ Name, copy and delete</summary>
+    <div class="panelbody">
+      <form class="form" method="post" action="/g/{{ guild.id }}/maps/{{ record.id }}/rename">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="row">
+          <label class="field">
+            <span>Name</span>
+            <input name="name" value="{{ record.name }}" required maxlength="120">
+          </label>
+          <label class="field">
+            <span>Description</span>
+            <input name="description" value="{{ record.description or '' }}" maxlength="300">
+          </label>
+        </div>
+        <div class="actions">
+          <button class="button" type="submit">Save name</button>
+        </div>
+      </form>
+
+      <h3>Copy</h3>
+      <p class="hint">The same plan under a new name — phase 2 usually starts as
+        a copy of phase 1. The copy gets no share link of its own.</p>
+      <form class="inlineform" method="post"
+            action="/g/{{ guild.id }}/maps/{{ record.id }}/duplicate">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input name="name" value="{{ record.name }} (copy)" required maxlength="120">
+        <button class="button" type="submit">Copy</button>
+      </form>
+
+      <h3>Delete</h3>
+      <form class="inlineform" method="post"
+            action="/g/{{ guild.id }}/maps/{{ record.id }}/delete"
+            onsubmit="return confirm('Delete this map and everything drawn on it?')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="button danger" type="submit">Delete this map</button>
+      </form>
+    </div>
+  </details>
+{% endif %}
+</div>
+{% endblock %}

@@ -387,6 +387,33 @@ async def init_db():
         await db.execute('''
             ALTER TABLE reddit_feeds ADD COLUMN IF NOT EXISTS author_filter TEXT
         ''')
+        # One tactical map is one document — see utils/tacmap.py. It is held as
+        # JSON rather than a table of items because nothing hangs off a symbol:
+        # a save replaces the whole plan, the same reasoning as orbat_nets.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS tac_maps (
+                id SERIAL PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                doc TEXT NOT NULL,
+                share_token TEXT,
+                share_mode TEXT NOT NULL DEFAULT 'off',
+                channel_id TEXT,
+                message_id TEXT,
+                created_by TEXT,
+                created_by_name TEXT,
+                updated_by_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # The share link is looked up by its token on every anonymous request,
+        # and two maps must never answer to the same one.
+        await db.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tac_map_token
+                ON tac_maps (share_token) WHERE share_token IS NOT NULL
+        ''')
         # Recurrence, added after the events tables shipped
         await db.execute('''
             ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence TEXT
@@ -2123,3 +2150,121 @@ async def duplicate_orbat(orbat_id: int, name: str, created_by: str,
                 new_id, source['source_text'], source['nets_text'],
             )
     return new_id
+
+
+# ---------------------------------------------------------------------------
+# Tactical maps
+# ---------------------------------------------------------------------------
+
+async def get_guild_tac_maps(guild_id: str) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM tac_maps WHERE guild_id = $1 ORDER BY updated_at DESC',
+            guild_id,
+        )
+
+
+async def get_tac_map(map_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow('SELECT * FROM tac_maps WHERE id = $1', map_id)
+
+
+async def get_tac_map_by_token(token: str):
+    """The map a share link names, whatever guild it belongs to.
+
+    The token is the whole credential on that route, so an empty one must never
+    match the rows that are not shared at all.
+    """
+    if not token:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow(
+            "SELECT * FROM tac_maps WHERE share_token = $1 AND share_mode <> 'off'",
+            token,
+        )
+
+
+async def create_tac_map(guild_id: str, name: str, description: str, doc: str,
+                         created_by: str, created_by_name: str) -> int:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            '''INSERT INTO tac_maps
+               (guild_id, name, description, doc, created_by, created_by_name,
+                updated_by_name)
+               VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING id''',
+            guild_id, name, description, doc, created_by, created_by_name,
+        )
+        return row['id']
+
+
+async def save_tac_map_doc(map_id: int, doc: str, updated_by_name: str = None):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE tac_maps
+                  SET doc = $2, updated_by_name = COALESCE($3, updated_by_name),
+                      updated_at = CURRENT_TIMESTAMP
+                WHERE id = $1''',
+            map_id, doc, updated_by_name,
+        )
+
+
+async def rename_tac_map(map_id: int, name: str, description: str = None):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE tac_maps SET name = $2, description = $3,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $1''',
+            map_id, name, description,
+        )
+
+
+async def set_tac_map_share(map_id: int, token: str = None, mode: str = 'off'):
+    """Point the share link at this map, or take it away.
+
+    A new token is a new link and the old one stops working at once — which is
+    the only way to un-share a map somebody has already sent on.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''UPDATE tac_maps SET share_token = $2, share_mode = $3,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $1''',
+            map_id, token, mode,
+        )
+
+
+async def save_tac_map_message(map_id: int, channel_id: str, message_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            'UPDATE tac_maps SET channel_id = $2, message_id = $3 WHERE id = $1',
+            map_id, channel_id, message_id,
+        )
+
+
+async def delete_tac_map(map_id: int) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute('DELETE FROM tac_maps WHERE id = $1', map_id)
+        return int(result.split()[-1]) > 0
+
+
+async def duplicate_tac_map(map_id: int, name: str, created_by: str,
+                            created_by_name: str) -> int:
+    """A copy of the plan, with neither the share link nor the posted message.
+
+    Both belong to the original: a copy that answered to the same token would
+    hand everyone holding that link a different map than the one they were sent.
+    """
+    source = await get_tac_map(map_id)
+    return await create_tac_map(
+        source['guild_id'], name, source['description'], source['doc'],
+        created_by, created_by_name,
+    )
