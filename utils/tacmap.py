@@ -34,6 +34,7 @@ sheet, and nothing here knows about pixels or zoom levels.
 
 import json
 import math
+import re
 from xml.sax.saxutils import escape, quoteattr
 
 DEFAULT_WIDTH = 1000
@@ -310,15 +311,24 @@ def _text(value, limit: int) -> str:
     return (value or '').strip()[:limit] if isinstance(value, str) else ''
 
 
+# A terrain this bot serves itself, from an uploaded archive. It is a path
+# rather than an address so that moving the site — a new domain, a local run —
+# does not leave every map pointing at the old one.
+LOCAL_TILES = re.compile(r'^/t/\d+$')
+
+
 def _safe_url(raw) -> str:
     """A background URL we are willing to put in an `href`.
 
-    Only http(s), because `javascript:` and `data:` in an image href are how an
-    editable map becomes a way to run script in somebody else's session.
+    Only http(s) or one of our own terrain paths, because `javascript:` and
+    `data:` in an image href are how an editable map becomes a way to run
+    script in somebody else's session.
     """
     url = (raw or '').strip() if isinstance(raw, str) else ''
     if not url:
         return ''
+    if LOCAL_TILES.match(url):
+        return url
     return url if url.lower().startswith(('http://', 'https://')) else ''
 
 
@@ -847,6 +857,31 @@ def ocap_settings(payload: dict, base_url: str) -> dict:
         # world's corners — which is exactly what the Arma export needs.
         'arma': {'terrain': name, 'left': 0.0, 'bottom': 0.0,
                  'right': round(world, 2), 'top': round(world, 2)},
+        'name': name,
+    }
+
+
+def terrain_settings(terrain_id: int, name: str, world_size: float,
+                     max_zoom: int) -> dict:
+    """The same as `ocap_settings()`, for a terrain this bot holds itself.
+
+    Which is the point of holding it: an uploaded archive carries the same
+    `map.json` an OCAP folder does, so a map set up from a file knows exactly
+    what a map set up from a URL knows — including where its corners are in
+    Arma's world.
+    """
+    return {
+        'background': {
+            'kind': 'tiles',
+            'url': f'/t/{int(terrain_id)}',
+            'opacity': 1.0,
+            'zoom': min(DEFAULT_TILE_ZOOM, max_zoom),
+            'max_zoom': max_zoom,
+            'name': name,
+        },
+        'arma': {'terrain': name, 'left': 0.0, 'bottom': 0.0,
+                 'right': round(float(world_size), 2),
+                 'top': round(float(world_size), 2)},
         'name': name,
     }
 

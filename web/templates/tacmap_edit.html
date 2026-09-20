@@ -27,8 +27,40 @@
 {% include '_tacmap_canvas.html' %}
 
 {% if editable %}
+  <details class="panel" {% if panel == 'terrain' %}open{% endif %}>
+    <summary>🗻 Put it on a terrain <span class="note">uploaded once, served from here</span></summary>
+    <div class="panelbody">
+      <p class="hint">
+        Terrains uploaded to this server, tiles and all — nothing outside has to
+        be reachable for the map to render, which is what a share link needs.
+        <a href="/g/{{ guild.id }}/terrains">Upload one</a> if the terrain you
+        want isn't listed.
+      </p>
+      {% if terrains %}
+        <form class="form" method="post"
+              action="/g/{{ guild.id }}/maps/{{ record.id }}/terrain">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="field">
+            <span>Terrain</span>
+            <select name="terrain_id" required>
+              {% for terrain in terrains %}
+                <option value="{{ terrain.id }}">{{ terrain.name }} ·
+                  {{ terrain.world_size|int }} m</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="actions">
+            <button class="button primary" type="submit">Use this terrain</button>
+          </div>
+        </form>
+      {% else %}
+        <p class="empty">No terrain uploaded yet.</p>
+      {% endif %}
+    </div>
+  </details>
+
   <details class="panel" {% if panel == 'ocap' %}open{% endif %}>
-    <summary>🛰️ Load a terrain from OCAP <span class="note">background and Arma corners in one go</span></summary>
+    <summary>🛰️ Load a terrain from OCAP <span class="note">without uploading it</span></summary>
     <div class="panelbody">
       <p class="hint">
         OCAP already renders every terrain you play on. Paste the address of one

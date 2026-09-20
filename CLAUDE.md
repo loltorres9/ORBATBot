@@ -46,6 +46,7 @@ utils/
   embeds.py             # Builder-made rich messages → discord.Embed, post and edit
   reddit.py             # One Reddit feed, read and rendered — no Discord, no database
   tacmap.py             # One tactical map: the symbols, the document, the SVG
+  tiles.py              # A terrain's tile pyramid, read out of an uploaded archive
 web/                    # Optional browser UI — Discord OAuth2 login, events, roster, approvals, maps
   config.py             # Env-driven config; the feature is off until it is complete
   server.py             # uvicorn driven from inside the bot's event loop
@@ -60,13 +61,14 @@ web/                    # Optional browser UI — Discord OAuth2 login, events, 
   operations.py         # Starting and steering an operation, on top of cogs/admin.py
   reddit.py             # The Reddit watches, on top of cogs/redditfeed.py
   tacmap.py             # Tactical maps, share links and posting, on top of utils/tacmap.py
+  terrain.py            # Uploaded terrains, on top of utils/tiles.py
   nav.py                # The two-level tab bar, built once rather than per template
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates, one stylesheet, one script (the map editor)
 lab/                    # Standalone ORBAT-editor playground — no Discord, no Postgres
-tests/                  # pytest — utils/reddit.py, utils/tacmap.py, redditfeed.check_feed()
+tests/                  # pytest — utils/reddit.py, utils/tacmap.py, utils/tiles.py, check_feed()
 requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
@@ -79,11 +81,12 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(157 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(175 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
-`utils/tacmap.py`'s document parsing and escaping. The date logic in
+`utils/tacmap.py`'s document parsing and escaping, and what `utils/tiles.py`
+keeps and drops out of an uploaded archive. The date logic in
 `cogs/events.py` (`_next_occurrence()`, `_weekday_day()`, `_add_months()`,
 `_nth_occurrence()`) is pure and Discord-free, so it is the obvious next thing
 to cover.
@@ -270,6 +273,27 @@ One row is one tactical map — see
 | `created_by` / `created_by_name` | TEXT | |
 | `updated_by_name` | TEXT | Who last drew on it — including *someone with the link* |
 | `created_at` / `updated_at` | TIMESTAMP | |
+
+### `tac_terrains` and `tac_terrain_tiles`
+A terrain uploaded as a tile archive and served back by this bot — see
+[the background](#the-background-is-a-picture-a-terrain-from-ocap-or-one-you-upload).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL PK | The `/t/{id}` a map's background points at |
+| `guild_id` | TEXT | |
+| `name` | TEXT | From the archive's `map.json`, or typed |
+| `world_size` | DOUBLE PRECISION | The terrain's edge in metres — what the Arma corners come from |
+| `max_zoom` | INTEGER | The deepest level actually stored |
+| `tile_count` / `bytes` | INTEGER / BIGINT | What the list page shows, so the cost of a terrain is visible |
+| `created_by` / `created_by_name` | TEXT | |
+| `created_at` | TIMESTAMP | |
+
+`tac_terrain_tiles` is `(terrain_id, zoom, x, y)` → `image BYTEA`, primary-keyed
+on exactly that, with **ON DELETE CASCADE**. The tiles are in the database and
+not on disk because a container's filesystem does not survive a redeploy, and a
+map whose background disappears on every deploy is worse than one with no
+background at all.
 
 ### `guild_settings`
 | Column | Type | Notes |
@@ -496,6 +520,7 @@ needs one of these three channels must go through it**; a fresh
 | `/event-edit`, `/event-cancel`, `/event-delete` | ❌ | ✅ own events | ✅ |
 | Reading a tactical map — web only | ✅ | ✅ | ✅ |
 | Drawing on one, sharing it, posting it — web only | ❌ | ✅ | ✅ |
+| Uploading or deleting a terrain — web only | ❌ | ❌ | ✅ |
 
 **Admin** = `manage_guild` or `administrator` Discord permission.
 **Unit gating:** `_can_action_request()` in `slots.py` — admins bypass all unit checks; anyone else needs the `Unit Leader` role **and** the requester's unit role; a request with no unit role can be actioned by any Unit Leader. The Unit Leader half is not optional: the buttons in `#slot-approvals` are visible to everyone who can read the channel, so without it any member of a unit could approve their own request by pressing the button on it.
@@ -1107,7 +1132,8 @@ Every permission decision is re-made per request from a live `discord.Member`:
 | Approve, deny or release slot requests | Unit Leader (own unit) or admin | `_can_action_request()` |
 | See the voice leaderboard | any member of the guild | — |
 | Read a tactical map | any member of the guild | — |
-| Draw on a map, share it, post it | Unit Leader or admin | `_is_unit_leader_or_admin()` |
+| Draw on a map, share it, post it, put it on a terrain | Unit Leader or admin | `_is_unit_leader_or_admin()` |
+| Upload a terrain, or delete one | admin | `is_admin()` |
 
 Those are the cog's own functions, imported by `web/guilds.py` — the web UI and
 the slash commands cannot drift apart on access control.
@@ -1177,6 +1203,10 @@ POST /g/{guild}/maps/{id}/share         off / view / edit, or action=new for a f
 POST /g/{guild}/maps/{id}/post          announce it in a channel, as a link
 GET  /g/{guild}/maps/{id}/arma.sqf      the markers as a script for a live mission
 POST /g/{guild}/maps/{id}/ocap          read an OCAP map folder: terrain + calibration
+POST /g/{guild}/maps/{id}/terrain       put the map on one of this guild's terrains
+GET  /g/{guild}/terrains                the uploaded terrains, POST to upload one
+POST /g/{guild}/terrains/{id}/delete    refused while a map is drawn on it
+GET  /t/{id}/{z}/{x}/{y}.png            one tile — no sign-in, cached for a year
 POST /g/{guild}/maps/{id}/delete
 GET  /m/{token}                         the share link — no sign-in, no guild
 POST /m/{token}/save                    only when the link's mode is edit
@@ -1668,13 +1698,25 @@ signed in here. Three things follow:
   `json_payload()` escapes `<` so a `</script>` in a label cannot end the tag
   the document is handed to the page in.
 
-### The background is a picture, or a terrain from OCAP
+### The background is a picture, a terrain from OCAP, or one you upload
 
 `background.kind` is `image` — one picture stretched across the sheet — or
 `tiles`, the `{z}/{x}/{y}.png` pyramid GDAL2Tiles produces. The second kind
 exists because **OCAP already renders every terrain the unit plays on** and
 serves exactly that layout, so a unit running OCAP has a real map of its own
 terrains sitting there, at a resolution no single image would carry.
+
+A tile set gets onto a map two ways, and they meet in the same background:
+
+| | `POST …/ocap` | `POST …/terrains` then `POST …/maps/{id}/terrain` |
+|---|---|---|
+| Where the tiles live | the OCAP server | this bot's database |
+| `background.url` | `https://ocap…/maps/tanoa` | `/t/7` |
+| Who has to be reachable | OCAP, for **everyone** who opens the map | nobody |
+
+The upload is the one to prefer for anything shared outside the unit: a share
+link is meant for people who do not sign in here, and expecting them to reach an
+OCAP instance as well is how a link ends up showing an empty sheet.
 
 `POST …/ocap` takes the address of one of those map folders, reads its
 `map.json` and settles both halves of setting a map up:
@@ -1715,6 +1757,46 @@ Four details are load-bearing:
 
 An OCAP import also squares the sheet, since the pyramid is square and a
 landscape sheet would stretch the terrain sideways.
+
+#### Uploading the archive instead (`utils/tiles.py` + `web/terrain.py`)
+
+The same archives a unit prepares for its own OCAP — zip or 7z — go straight in.
+`read_archive()` is what decides what comes out, and four things in it matter:
+
+- **The names are read before any body is.** An archive goes as deep as OCAP's
+  viewer zooms, which is several levels deeper than a planning sheet draws, so
+  the levels to keep are chosen from the name list and only those are
+  decompressed. Reading a 4096-tile level in full and then discarding it is the
+  thing this avoids.
+- **Deeper levels are dropped and counted**, never refused, and the reply says
+  how many — otherwise a terrain arriving smaller than the file suggests reads
+  as data loss.
+- **7z goes through `py7zr`, imported where it is used**, the same as `aiohttp`
+  in `utils/reddit.py`. It is a declared dependency; the lazy import is what
+  keeps a deployment that lacks it reading zips instead of failing at startup.
+  py7zr 1.x has no `read()` — members come out through
+  `py7zr.io.BytesIOFactory`, which keeps them in memory rather than on a
+  filesystem that will not outlive the container.
+- **The world size comes from the archive's own `map.json`** when it has one,
+  and is asked for when it does not. Without it the tiles would still draw and
+  the Arma export would be nonsense, so it is the one thing an upload cannot go
+  ahead without.
+
+`create_tac_terrain()` writes the row and every tile **in one transaction**
+(`copy_records_to_table`): a half-written terrain renders as a map with holes
+and nothing about the upload says which tiles are missing.
+
+Serving is `GET /t/{id}/{z}/{x}/{y}.png` — **no session**, because a map's
+background has to load for everybody a share link was sent to, and a terrain
+render is not a secret. It is `immutable` for a year, which is what keeps a
+page of 256 tiles to one round of requests.
+
+**Deleting a terrain is refused while a map is drawn on it**, and the refusal
+names the maps. Nothing would break loudly otherwise — the tiles would simply
+stop answering and every plan on that terrain would render on an empty sheet.
+`tac_terrain_usage()` finds them by matching `"/t/{id}"` in the stored document
+rather than keeping a column, so there is no second place for that fact to go
+stale.
 
 ### Getting the plan into Arma 3
 

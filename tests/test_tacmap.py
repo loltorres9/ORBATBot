@@ -197,6 +197,34 @@ def test_a_tile_set_with_no_address_is_just_an_empty_sheet():
     assert '<image' not in tacmap.render(doc)
 
 
+def test_a_terrain_this_bot_serves_itself_is_a_path_not_an_address():
+    # An uploaded terrain lives at /t/{id} here, so moving the site does not
+    # leave every map pointing at the old domain.
+    doc = _tiled(url='/t/12')
+    assert doc['background']['url'] == '/t/12'
+    assert 'href="/t/12/2/0/0.png"' in tacmap.render(doc)
+
+
+def test_no_other_path_is_accepted_as_a_background():
+    for url in ('/t/', '/t/12/', '/tiles/12', '../t/12', 'javascript:alert(1)',
+                'data:image/png;base64,AAAA', '//evil.example/t/1'):
+        assert _tiled(url=url)['background']['url'] == '', url
+
+
+def test_an_uploaded_terrain_settles_the_background_and_the_corners():
+    settings = tacmap.terrain_settings(12, 'Tanoa', 15360, 4)
+    assert settings['background'] == {
+        'kind': 'tiles', 'url': '/t/12', 'opacity': 1.0, 'zoom': 4,
+        'max_zoom': 4, 'name': 'Tanoa',
+    }
+    assert settings['arma'] == {'terrain': 'Tanoa', 'left': 0.0, 'bottom': 0.0,
+                                'right': 15360.0, 'top': 15360.0}
+
+
+def test_a_shallow_terrain_is_not_asked_for_a_level_it_has_not_got():
+    assert tacmap.terrain_settings(1, 'Small', 4096, 2)['background']['zoom'] == 2
+
+
 # -- reading OCAP's map.json -------------------------------------------------
 
 _CHAM = {'name': 'Cham', 'worldName': 'tem_cham', 'worldSize': 8192,

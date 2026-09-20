@@ -414,6 +414,35 @@ async def init_db():
             CREATE UNIQUE INDEX IF NOT EXISTS idx_tac_map_token
                 ON tac_maps (share_token) WHERE share_token IS NOT NULL
         ''')
+        # A terrain uploaded as a tile archive, and served back by this bot —
+        # see utils/tiles.py. The tiles live here rather than on disk because
+        # the container's filesystem does not survive a redeploy, and a map
+        # whose background disappears on every deploy is worse than none.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS tac_terrains (
+                id SERIAL PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                world_size DOUBLE PRECISION NOT NULL,
+                max_zoom INTEGER NOT NULL,
+                tile_count INTEGER NOT NULL DEFAULT 0,
+                bytes BIGINT NOT NULL DEFAULT 0,
+                created_by TEXT,
+                created_by_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS tac_terrain_tiles (
+                terrain_id INTEGER NOT NULL
+                    REFERENCES tac_terrains (id) ON DELETE CASCADE,
+                zoom INTEGER NOT NULL,
+                x INTEGER NOT NULL,
+                y INTEGER NOT NULL,
+                image BYTEA NOT NULL,
+                PRIMARY KEY (terrain_id, zoom, x, y)
+            )
+        ''')
         # Recurrence, added after the events tables shipped
         await db.execute('''
             ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence TEXT
@@ -2268,3 +2297,84 @@ async def duplicate_tac_map(map_id: int, name: str, created_by: str,
         source['guild_id'], name, source['description'], source['doc'],
         created_by, created_by_name,
     )
+
+
+# ---------------------------------------------------------------------------
+# Uploaded terrains
+# ---------------------------------------------------------------------------
+
+async def get_guild_tac_terrains(guild_id: str) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM tac_terrains WHERE guild_id = $1 ORDER BY name',
+            guild_id,
+        )
+
+
+async def get_tac_terrain(terrain_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow('SELECT * FROM tac_terrains WHERE id = $1', terrain_id)
+
+
+async def get_tac_terrain_tile(terrain_id: int, zoom: int, x: int, y: int):
+    """One tile's bytes, or None. Asked for a few hundred times per map view."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchval(
+            '''SELECT image FROM tac_terrain_tiles
+                WHERE terrain_id = $1 AND zoom = $2 AND x = $3 AND y = $4''',
+            terrain_id, zoom, x, y,
+        )
+
+
+async def create_tac_terrain(guild_id: str, name: str, world_size: float,
+                             max_zoom: int, tiles: list, created_by: str,
+                             created_by_name: str) -> int:
+    """Store a terrain and all of its tiles, or neither.
+
+    One transaction: a half-written terrain would render as a map with holes in
+    it, and nothing about the upload says which tiles are missing.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            row = await db.fetchrow(
+                '''INSERT INTO tac_terrains
+                   (guild_id, name, world_size, max_zoom, tile_count, bytes,
+                    created_by, created_by_name)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id''',
+                guild_id, name, float(world_size), max_zoom, len(tiles),
+                sum(len(tile.image) for tile in tiles), created_by, created_by_name,
+            )
+            await db.copy_records_to_table(
+                'tac_terrain_tiles',
+                columns=('terrain_id', 'zoom', 'x', 'y', 'image'),
+                records=[(row['id'], tile.zoom, tile.x, tile.y, tile.image)
+                         for tile in tiles],
+            )
+            return row['id']
+
+
+async def tac_terrain_usage(terrain_id: int) -> list:
+    """The maps drawn on this terrain.
+
+    A map points at a terrain by the address it is served from, which is what
+    this matches on — the alternative, a column, would be a second place for the
+    same fact to live and to go stale.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            '''SELECT id, name FROM tac_maps
+                WHERE doc LIKE '%' || $1 || '%' ORDER BY name''',
+            f'"/t/{terrain_id}"',
+        )
+
+
+async def delete_tac_terrain(terrain_id: int) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.execute('DELETE FROM tac_terrains WHERE id = $1', terrain_id)
+        return int(result.split()[-1]) > 0
