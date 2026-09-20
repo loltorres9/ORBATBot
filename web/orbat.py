@@ -67,6 +67,15 @@ async def create(guild, member, name, description) -> int:
     )
 
 
+async def rename(orbat_id: int, name, description) -> None:
+    name = _clean(name, MAX_NAME, 'The name')
+    if not name:
+        raise ValueError('Give the ORBAT a name.')
+    await database.rename_orbat(
+        orbat_id, name, _clean(description, MAX_DESCRIPTION, 'The description') or None,
+    )
+
+
 async def duplicate(orbat_id: int, member, name) -> int:
     name = _clean(name, MAX_NAME, 'The name')
     if not name:
