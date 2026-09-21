@@ -4,6 +4,8 @@ quietly. A parse that drops the wrong thing loses somebody's planning without
 saying so, and a render that forgets to escape puts whatever anybody with the
 share link typed straight into the page."""
 
+import re
+
 from utils import tacmap
 
 
@@ -400,10 +402,13 @@ def test_every_symbol_frame_and_marker_is_in_the_defs():
     for marker in tacmap.MARKERS:
         assert f'id="tmm-{marker}"' in defs
     for side in tacmap.AFFILIATIONS:
-        assert f'id="tmf-{side}"' in defs
-        assert f'id="tmh-{side}"' in defs
+        for dimension in tacmap.DIMENSIONS:
+            assert f'id="tmf-{side}-{dimension}"' in defs
+            assert f'id="tmh-{side}-{dimension}"' in defs
     for echelon in tacmap.ECHELONS:
         assert f'id="tmx-{echelon}"' in defs
+    for mobility in tacmap.MOBILITY:
+        assert f'id="tmv-{mobility}"' in defs
     # No arrow markers: a marker cannot take a line's own colour, so the head
     # is a polygon the renderer works out.
     assert '<marker' not in defs
@@ -414,9 +419,9 @@ def test_each_side_has_a_frame_of_its_own_shape():
     for side in tacmap.AFFILIATIONS:
         svg = tacmap.item_svg(_parse_one({'kind': 'unit', 'side': side, 'x': 10,
                                           'y': 10, 'symbol': 'inf'}))
-        assert f'#tmf-{side}' in svg
+        assert f'#tmf-{side}-land' in svg
         assert tacmap.AFFILIATIONS[side]['fill'] in svg
-    paths = {frame['path'] for frame in tacmap._FRAMES.values()}
+    paths = {shapes['land']['path'] for shapes in tacmap._FRAMES.values()}
     # Friendly and civilian share the rectangle; the other three do not share.
     assert len(paths) == 4
 
@@ -709,7 +714,7 @@ def test_a_size_mark_this_version_does_not_know_is_dropped():
 
 def test_the_size_mark_clears_whatever_the_frame_reaches():
     """A diamond reaches much higher than a rectangle, so the lift is per frame."""
-    tops = {side: tacmap._FRAMES[side]['top'] for side in tacmap.AFFILIATIONS}
+    tops = {side: tacmap.frame_of(side)['top'] for side in tacmap.AFFILIATIONS}
     assert tops['hostile'] < tops['friend']
     for side in tacmap.AFFILIATIONS:
         svg = tacmap.item_svg(_parse_one(unit(side=side, echelon='company')))
@@ -798,3 +803,115 @@ def test_both_exports_delete_what_they_are_about_to_draw():
     assert 'missionNamespace setVariable ["tacmap_map1", _n, true];' in editable
     # Every marker it draws goes into that list, or the next run leaves some.
     assert editable.count('_m = createMarker') == editable.count('_n pushBack _m;')
+
+
+# ---------------------------------------------------------------------------
+# The frame says the dimension and the status, the way APP-6 does
+# ---------------------------------------------------------------------------
+
+
+def test_every_frame_encloses_the_pictogram_box():
+    """An open frame is still a frame: it has to contain the icon.
+
+    This is the bug the hostile air frame shipped with for one round — drawn
+    as half a diamond it stopped at y 50, and the bottom half of an infantry
+    X hung outside its own symbol. The icon box is x 25-75, y 33-67, so a
+    frame that starts below 33 or ends above 67 clips it.
+    """
+    for side, shapes in tacmap._FRAMES.items():
+        for dimension, frame in shapes.items():
+            assert frame['top'] <= 33, f'{side}/{dimension} starts below the icon'
+            assert frame['bottom'] >= 67, f'{side}/{dimension} ends above the icon'
+
+
+def test_an_air_frame_is_open_at_the_bottom_and_a_subsurface_one_at_the_top():
+    """Neither closes with Z, which is the whole difference from land."""
+    for side, shapes in tacmap._FRAMES.items():
+        assert 'Z' in shapes['land']['path'], side
+        assert 'Z' not in shapes['air']['path'], side
+        assert 'Z' not in shapes['sub']['path'], side
+
+
+def test_a_symbol_is_drawn_in_the_frame_of_its_own_dimension():
+    for dimension in tacmap.DIMENSIONS:
+        svg = tacmap.item_svg(_parse_one(unit(dimension=dimension)))
+        assert f'#tmf-friend-{dimension}' in svg
+
+
+def test_a_dimension_this_version_does_not_know_lands_on_land():
+    item = _parse_one(unit(dimension='orbital'))
+    assert item['dimension'] == 'land'
+    assert '#tmf-friend-land' in tacmap.item_svg(item)
+
+
+def test_planned_is_dashed_and_present_is_not():
+    """The one thing the frame says that no icon could."""
+    present = tacmap.item_svg(_parse_one(unit(status='present')))
+    planned = tacmap.item_svg(_parse_one(unit(status='planned')))
+    assert 'stroke-dasharray' not in present
+    assert f'stroke-dasharray="{tacmap.STATUSES["planned"]["dash"]}"' in planned
+
+
+def test_a_planned_task_marker_is_dashed_on_both_passes():
+    """One solid pass under a dashed one would show through the gaps."""
+    svg = tacmap.item_svg(_parse_one({'kind': 'point', 'x': 10, 'y': 10,
+                                      'marker': 'objective', 'status': 'planned'}))
+    assert svg.count('stroke-dasharray') == 2
+
+
+def test_a_line_has_no_status_because_style_already_says_it():
+    item = _parse_one({'kind': 'line', 'points': [[1, 1], [2, 2]],
+                       'status': 'planned'})
+    assert 'status' not in item
+
+
+def test_the_mobility_chassis_hangs_under_the_frame_it_is_on():
+    """A diamond's tip is 30 box units lower than a rectangle's edge."""
+    for side in ('friend', 'hostile'):
+        item = _parse_one(unit(side=side, mobility='wheeled'))
+        under = tacmap.frame_of(side)['bottom'] + tacmap.MOBILITY_DROP
+        assert f'translate(0,{under})' in tacmap.item_svg(item)
+
+
+def _label_baseline(svg: str) -> float:
+    """Where the item's name was drawn — the one `tm-label` outside the frame."""
+    match = re.search(r'<text x="[-\d.]+" y="([-\d.]+)"[^>]*class="tm-label"', svg)
+    assert match, svg
+    return float(match.group(1))
+
+
+def test_the_label_clears_the_mobility_chassis():
+    """Whatever hangs under the frame pushes the name further down, never up."""
+    plain = tacmap.item_svg(_parse_one(unit(side='hostile', label='A')))
+    moving = tacmap.item_svg(_parse_one(unit(side='hostile', label='A',
+                                             mobility='tracked')))
+    assert _label_baseline(moving) > _label_baseline(plain)
+
+
+def test_a_symbol_with_nothing_hanging_off_it_keeps_the_label_where_it_was():
+    """The drop that shipped is a floor, so no existing map's name moves."""
+    svg = tacmap.item_svg(_parse_one(unit(label='A', size=1)))
+    assert _label_baseline(svg) == round(200 + tacmap.UNIT_BOX * 0.62 + 6, 2)
+
+
+def test_the_higher_formation_sits_opposite_the_strength():
+    """Field M on one side of the size marks, the strength on the other."""
+    svg = tacmap.item_svg(_parse_one(unit(higher='A Coy', echelon='platoon',
+                                          strength='reinforced')))
+    assert 'x="-3"' in svg and 'text-anchor="end"' in svg
+    assert 'x="103"' in svg
+
+
+def test_the_export_writes_the_frame_into_the_marker_name():
+    """Arma has no dashed marker and no second designation field."""
+    item = _parse_one(unit(label='1-1 Alpha', higher='A Coy', status='planned',
+                           echelon='platoon', mobility='towed'))
+    text = tacmap._marker_text(item)
+    assert text == '1-1 Alpha / A Coy (planned Plt twd)'
+
+
+def test_an_air_symbol_exports_as_armas_own_air_marker():
+    assert tacmap._arma_type(_parse_one(unit(dimension='air', symbol='inf'))) == 'b_air'
+    # A symbol that is already an aircraft keeps its own marker.
+    assert tacmap._arma_type(_parse_one(unit(dimension='air', symbol='uav'))) == 'b_uav'
+    assert tacmap._arma_type(_parse_one(unit(symbol='inf'))) == 'b_inf'
