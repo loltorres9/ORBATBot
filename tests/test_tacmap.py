@@ -287,7 +287,7 @@ def _tiled(zoom=2, max_zoom=5, url='https://ocap.example/maps/tanoa'):
 
 def test_a_tile_set_draws_one_image_per_tile_from_the_top_left():
     svg = tacmap.render(_tiled(zoom=2))
-    assert svg.count('<image') == 16          # 4 per side
+    assert svg.count('<image') == 16 + 1      # 4 per side, plus the backdrop
     assert 'href="https://ocap.example/maps/tanoa/2/0/0.png" x="0.0" y="0.0"' in svg
     # Column is x and row is y, counted downward — which is the only way OCAP's
     # own tiles assemble into the terrain the right way up.
@@ -295,12 +295,37 @@ def test_a_tile_set_draws_one_image_per_tile_from_the_top_left():
     assert 'href="https://ocap.example/maps/tanoa/2/0/3.png" x="0.0" y="750.0"' in svg
 
 
-def test_each_tile_is_drawn_over_its_neighbour_to_hide_the_seam():
+def test_a_tile_is_never_stretched_past_its_own_cell():
+    """The whole reason a road used to jump at a tile boundary.
+
+    A tile drawn bigger than its cell displaces its own contents by the
+    difference, which grows from nothing at its left edge to the whole
+    overlap at its right — a sawtooth at every seam, and one that zooming in
+    magnifies along with everything else in the SVG.
+    """
     svg = tacmap.render(_tiled(zoom=2))
-    first = svg.split('<image')[1]
-    width = float(first.split('width="')[1].split('"')[0])
-    assert width > 250                        # the cell is 1000 / 4
-    assert width < 250 + tacmap.DEFAULT_WIDTH * 0.01
+    for chunk in svg.split('<image')[2:]:     # [1] is the backdrop
+        assert 'width="250.0" height="250.0"' in chunk, chunk[:120]
+
+
+def test_a_coarse_copy_of_the_terrain_sits_under_the_grid():
+    """What covers the hairline now that nothing overlaps: level 0, stretched.
+
+    It is only ever seen through the seam between two neighbours, so one
+    request and all the blur in the world are both fine.
+    """
+    svg = tacmap.render(_tiled(zoom=2))
+    backdrop = svg.split('<image')[1]
+    assert f'/{tacmap.BACKDROP_ZOOM}/0/0.png' in backdrop
+    assert 'x="0" y="0" width="1000" height="1000"' in backdrop
+    # It comes first, or it would be painted over the tiles it is backing.
+    assert svg.index('/0/0/0.png') < svg.index('/2/0/0.png')
+
+
+def test_a_sheet_already_showing_level_zero_grows_no_backdrop():
+    """There is nothing coarser to put under it, and no seam to cover."""
+    svg = tacmap.render(_tiled(zoom=0))
+    assert svg.count('<image') == 1
 
 
 def test_a_tile_zoom_is_held_to_what_the_folder_has():

@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(239 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(241 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1966,12 +1966,25 @@ Four details are load-bearing:
   whoever opens the map, not only for the bot.
 - **The zoom is capped at `MAX_TILE_ZOOM`** and defaults to 4. A level holds
   4^z tiles, so 4 is 256 elements and 256 requests and 6 would be 4096.
-- **Every tile is drawn slightly over its neighbour** (`TILE_BLEED`). Scaling
-  each tile to a fractional pixel size anti-aliases both sides of a shared edge,
-  which reads as a grid of bright hairlines over the terrain; the overlap is a
-  fraction of the *sheet* rather than of a tile, because the seam is about one
-  device pixel wide whatever zoom level is showing. It costs each tile that much
-  stretch — about fifteen metres on a 15 km terrain.
+- **Every tile is drawn at exactly its own size, over a coarse backdrop**
+  (`BACKDROP_ZOOM`). A browser scaling each tile to a fractional pixel size
+  anti-aliases both sides of a shared edge, which reads as a grid of dark
+  hairlines over the terrain, so level 0 — one tile — is stretched across the
+  whole sheet underneath: a seam then shows blurry terrain instead of the dark
+  sheet. Measured on a smooth pyramid, the darkest seam goes from **44 grey
+  levels** below its surroundings to **0.3**, which is invisible.
+
+  **This replaced an overlap, and that history is the point.** Drawing each
+  tile slightly over its neighbour was the obvious fix and the wrong one:
+  making a tile bigger than its cell stretches what is inside it, so a feature
+  drifted from 0 at the tile's left edge to **2.35px at its right** and then
+  snapped back — a sawtooth at every boundary, which is what made roads jump
+  and left duplicated slivers of thin features where one tile was painted over
+  the next. Everything in an SVG scales, so zooming in magnified that error
+  while the seam it was covering stayed one device pixel wide. Leaflet, which
+  OCAP's own viewer uses, places tiles at exact positions and never stretches
+  one; `test_a_tile_is_never_stretched_past_its_own_cell` is what keeps this
+  side doing the same.
 
 An OCAP import also squares the sheet, since the pyramid is square and a
 landscape sheet would stretch the terrain sideways.

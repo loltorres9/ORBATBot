@@ -462,14 +462,22 @@ DEFAULT_TILE_ZOOM = 4
 #
 # Neighbouring tiles share an edge exactly, and a browser scaling each one to a
 # fractional pixel size anti-aliases both sides of that edge — which reads as a
-# grid of bright hairlines drawn over the terrain. So every tile is drawn
-# slightly over its neighbour, whose own edge then covers the seam.
+# grid of bright hairlines drawn over the terrain. The fix is a coarse copy of
+# the same terrain laid *under* the grid, so a hairline shows blurry terrain
+# instead of the dark sheet.
 #
-# The overlap is a fraction of the **sheet**, not of a tile: the seam is about
-# one device pixel wide whatever zoom level is showing, so the fix has to be the
-# same width too. It costs each tile that much stretch — about fifteen metres on
-# a 15 km terrain, and always less than the seam it replaces.
-TILE_BLEED = 0.0012
+# It used to be an overlap — each tile drawn slightly over its neighbour — and
+# that was the wrong fix, because making a tile bigger than its cell stretches
+# what is inside it. Measured against a ruler pyramid, a feature drifted from
+# 0 at a tile's left edge to 2.35px at its right and then snapped back: a
+# sawtooth at every boundary, which is what made roads jump. Everything in an
+# SVG scales, so zooming in scaled that error up while the seam it was covering
+# stayed one device pixel wide. Leaflet, which OCAP's own viewer uses, places
+# tiles at exact positions and never stretches one; this does the same.
+#
+# Level 0 is one tile over the whole sheet, so the backdrop costs one request.
+# Its blur does not matter: it is only ever seen through a hairline.
+BACKDROP_ZOOM = 0
 
 # What the editor offers as ready-made markers. The glyph is stored, not the
 # preset, so renaming one here never changes a map that was already drawn.
@@ -995,7 +1003,7 @@ def catalog() -> dict:
         'lineStyles': list(LINE_STYLES),
         'unitBox': UNIT_BOX,
         'pointBox': POINT_BOX,
-        'tileBleed': TILE_BLEED,
+        'backdropZoom': BACKDROP_ZOOM,
         'maxTileZoom': MAX_TILE_ZOOM,
         'limits': {
             'items': MAX_ITEMS, 'points': MAX_POINTS, 'label': MAX_LABEL,
@@ -1342,7 +1350,7 @@ def _shape_svg(item: dict) -> str:
 
 
 def tile_url(background: dict, zoom: int, column: int, row: int) -> str:
-    """One tile of the pyramid. Row counts from the top — see TILE_BLEED above."""
+    """One tile of the pyramid. Row counts from the top — see BACKDROP_ZOOM above."""
     return f"{background['url']}/{zoom}/{column}/{row}.png"
 
 
@@ -1357,22 +1365,27 @@ def _tiles_svg(doc: dict) -> str:
     per_side = 2 ** zoom
     width = doc['width'] / per_side
     height = doc['height'] / per_side
-    bleed_x = doc['width'] * TILE_BLEED
-    bleed_y = doc['height'] * TILE_BLEED
-    tiles = []
+    parts = []
+    if zoom > BACKDROP_ZOOM:
+        parts.append(
+            f'<image href='
+            f'{quoteattr(tile_url(background, BACKDROP_ZOOM, 0, 0))} '
+            f'x="0" y="0" width="{doc["width"]}" height="{doc["height"]}" '
+            f'preserveAspectRatio="none"/>'
+        )
     for column in range(per_side):
         for row in range(per_side):
-            tiles.append(
+            parts.append(
                 f'<image href={quoteattr(tile_url(background, zoom, column, row))} '
                 f'x="{round(column * width, 3)}" y="{round(row * height, 3)}" '
-                f'width="{round(width + bleed_x, 3)}" '
-                f'height="{round(height + bleed_y, 3)}" '
+                f'width="{round(width, 3)}" height="{round(height, 3)}" '
                 f'preserveAspectRatio="none"/>'
             )
-    # The dark sheet stays underneath: a tile that 404s draws nothing at all in
-    # SVG, and a hole in the terrain should read as terrain we have not got.
+    # The dark sheet stays under both: a tile that 404s draws nothing at all in
+    # SVG, and a terrain whose backdrop is missing too should read as terrain
+    # we have not got rather than as an empty plan.
     return (f'{_empty_sheet(doc)}<g opacity="{background["opacity"]}">'
-            f'{"".join(tiles)}</g>')
+            f'{"".join(parts)}</g>')
 
 
 def _background_svg(doc: dict) -> str:
