@@ -21,9 +21,9 @@
       </div>
       {# The gesture is the one Arma's own map uses, so it is what people try
          first — but nothing on the page would otherwise say it is here. #}
-      <p class="tmhint">Hold <kbd>Ctrl</kbd> and drag to draw a line, from any
-        tool. The Line and Area tools also take it point by point —
-        <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> cancels.</p>
+      <p class="tmhint">Draw a line by dragging: with the Line or Area tool, or
+        by holding <kbd>Ctrl</kbd> from any tool. <kbd>Esc</kbd> throws the
+        stroke away.</p>
       <div class="tmpick">
         <label>Side <select id="tmside"></select></label>
         <label>Layer <select id="tmlayerpick"></select></label>
@@ -34,6 +34,14 @@
         <label data-for="unit" class="tmcheck"><input type="checkbox" id="tmhq"> HQ</label>
         <label data-for="point">Marker <select id="tmmarker"></select></label>
         <label data-for="point">Text <select id="tmglyph"></select></label>
+        {# Shown under Select too: a ctrl-drag draws from there, and the
+           colour it would use has to be on screen to be chosen. #}
+        <label data-for="select line area">Line <select id="tmstyle">
+          <option value="solid">Solid</option>
+          <option value="dashed">Dashed</option>
+        </select></label>
+        <span class="tmswatches" data-for="select line area" id="tmcolours"
+              role="group" aria-label="Line colour"></span>
       </div>
       <div class="tmdo">
         <span class="tmstatus" id="tmstatus"></span>
@@ -97,9 +105,11 @@
           <label class="field"><span>Size</span>
             <input type="range" id="tmf-size" min="0.15" max="4" step="0.05"></label>
           <div class="field" data-for="line area text"><span>Colour</span>
+            <div class="tmswatches" id="tmf-colours" role="group"
+                 aria-label="Colour"></div>
             <div class="tmcolour">
               <input type="color" id="tmf-color">
-              <button type="button" class="linkish" id="tmf-plain">Use the side's</button>
+              <span class="hint">…or any other colour.</span>
             </div>
           </div>
           <label class="field" data-for="line area"><span>Line</span>

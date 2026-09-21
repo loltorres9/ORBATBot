@@ -203,46 +203,64 @@
     <div class="panelbody">
       <p class="hint">
         Arma cannot fetch anything from outside without a mod, so the way in is
-        the debug console: paste this and press <strong>GLOBAL EXEC</strong> as a
-        logged-in admin (<code>#login</code>, and <code>enableDebugConsole</code>
-        in the mission's <code>description.ext</code>). The markers are created
-        globally, so every player sees them. Running it again
-        <strong>replaces</strong> these markers instead of adding a second copy.
+        the debug console: paste a script and run it as a logged-in admin
+        (<code>#login</code>, and <code>enableDebugConsole</code> in the
+        mission's <code>description.ext</code>). Both scripts below draw the
+        same plan and are run the same way — <strong>LOCAL EXEC</strong>, once,
+        on one machine. They differ in one thing: <strong>whether anybody can
+        move or delete the markers afterwards</strong>.
       </p>
       <p class="hint">
-        It is built from the <strong>saved</strong> map, so save first. Where the
-        markers land comes from <strong>Arma 3 coordinates</strong> in the map
-        settings — set the terrain there before the first export, or everything
-        ends up on Altis. Lines and areas need Arma 2.00 or newer.
+        LOCAL EXEC and not GLOBAL, for both: <code>createMarker</code> is global
+        in Arma, so one machine running it draws the markers for everybody.
+        GLOBAL EXEC would run the script on every machine instead, which is at
+        best wasted and at worst a plan drawn once per player.
       </p>
-      <label class="field">
-        <span>Markers as SQF</span>
-        <textarea class="sqfbox" rows="14" readonly spellcheck="false"
-                  onclick="this.select()">{{ sqf }}</textarea>
-      </label>
-      <div class="actions">
-        <a class="button" href="/g/{{ guild.id }}/maps/{{ record.id }}/arma.sqf"
-           download="{{ record.name }}.sqf">Download .sqf</a>
+      <p class="hint">
+        Both are built from the <strong>saved</strong> map, so save first. Where
+        the markers land comes from <strong>Arma 3 coordinates</strong> in the
+        map settings — set the terrain there before the first export, or
+        everything ends up on Altis. Lines and areas need Arma 2.00 or newer.
+        Running either one again <strong>replaces</strong> this map's markers
+        rather than adding a second copy.
+      </p>
+
+      <div class="tmexport">
+        <h3>1 · Fixed markers <span class="note">the usual one</span></h3>
+        <p class="hint">
+          Nobody can move or delete these in game. That is what you want for a
+          plan that should stay as briefed — and the reason this is the one to
+          reach for unless you specifically want the other.
+        </p>
+        <label class="field">
+          <span>Script — LOCAL EXEC</span>
+          <textarea class="sqfbox" rows="12" readonly spellcheck="false"
+                    onclick="this.select()">{{ sqf }}</textarea>
+        </label>
+        <div class="actions">
+          <a class="button" href="/g/{{ guild.id }}/maps/{{ record.id }}/arma.sqf"
+             download="{{ record.name }}.sqf">Download .sqf</a>
+        </div>
       </div>
 
-      <details class="subpanel">
-        <summary>Let people move and delete them in game</summary>
+      <div class="tmexport">
+        <h3>2 · Markers you can move and delete
+          <span class="note">for planning in game</span></h3>
         <p class="hint">
-          A marker a script creates is read-only on Arma's map. The engine only
-          lets somebody pick up or delete a marker whose name starts with
-          <code>_USER_DEFINED</code> — that is how it tells one somebody placed
-          from one the mission drew. This version puts that in front of the
-          name, so a marker can be <strong>clicked and deleted with DEL</strong>
-          or dragged, and pasting a corrected plan still replaces exactly this
-          map's markers. Lines and areas are polyline markers and may well stay
-          fixed; the symbols and objective markers are the part this is for.
+          A marker a script creates is read-only on Arma's map. The engine
+          works out who owns a marker by parsing the name it gives its own —
+          <code>_USER_DEFINED #owner/index/channel</code> — so this version
+          names them that way, and whoever runs it can then
+          <strong>drag a symbol</strong> or <strong>delete it with DEL</strong>.
+          Use it when the plan is still being argued about at the map table.
         </p>
         <p class="hint">
-          It cuts both ways — the same click that fixes a misplaced objective
-          deletes it, and nothing asks first. Run this one with
-          <strong>LOCAL EXEC</strong>, once: the markers are global either way,
-          and GLOBAL EXEC would draw one set per machine, because the name
-          carries the owner of whoever ran it.
+          It cuts both ways: the same click that drags a misplaced objective
+          into place deletes it, and nothing asks first. And LOCAL EXEC matters
+          more here than above — the marker's name carries the id of whoever
+          ran the script, so GLOBAL EXEC really would draw one plan per player.
+          The channel below decides which map channel the markers sit in, so a
+          plan meant for one side need not be in Global.
         </p>
         <form class="form inline" method="get"
               action="/g/{{ guild.id }}/maps/{{ record.id }}">
@@ -256,16 +274,17 @@
           </label>
           <button class="button" type="submit">Show</button>
         </form>
-        <label class="field"><span>Script</span>
-          <textarea class="sqfbox" rows="10" readonly spellcheck="false"
+        <label class="field">
+          <span>Script — LOCAL EXEC</span>
+          <textarea class="sqfbox" rows="12" readonly spellcheck="false"
                     onclick="this.select()">{{ sqf_editable }}</textarea>
         </label>
         <div class="actions">
           <a class="button"
              href="/g/{{ guild.id }}/maps/{{ record.id }}/arma.sqf?editable=1&amp;channel={{ arma_channel }}"
-             download="{{ record.name }}.sqf">Download .sqf</a>
+             download="{{ record.name }}-editable.sqf">Download .sqf</a>
         </div>
-      </details>
+      </div>
     </div>
   </details>
 
