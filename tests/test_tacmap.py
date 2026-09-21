@@ -915,3 +915,73 @@ def test_an_air_symbol_exports_as_armas_own_air_marker():
     # A symbol that is already an aircraft keeps its own marker.
     assert tacmap._arma_type(_parse_one(unit(dimension='air', symbol='uav'))) == 'b_uav'
     assert tacmap._arma_type(_parse_one(unit(symbol='inf'))) == 'b_inf'
+
+
+# ---------------------------------------------------------------------------
+# Reading an OCAP directory, so a terrain is picked rather than typed
+# ---------------------------------------------------------------------------
+
+NGINX_HTML = '''<html><head><title>Index of /images/maps/</title></head><body>
+<h1>Index of /images/maps/</h1><hr><pre><a href="../">../</a>
+<a href="altis/">altis/</a>                 01-Mar-2025 12:00     -
+<a href="tem_cham/">tem_cham/</a>           02-Mar-2025 12:00     -
+<a href="Tanoa/">Tanoa/</a>                 03-Mar-2025 12:00     -
+<a href="readme.txt">readme.txt</a>         03-Mar-2025 12:00    12
+</pre><hr></body></html>'''
+
+
+def test_an_html_autoindex_gives_its_folders():
+    assert tacmap.parse_map_index(NGINX_HTML) == ['altis', 'Tanoa', 'tem_cham']
+
+
+def test_the_listing_is_read_from_bytes_too():
+    """It arrives off the wire, and its encoding is not this module's business."""
+    assert tacmap.parse_map_index(NGINX_HTML.encode()) == ['altis', 'Tanoa', 'tem_cham']
+
+
+def test_a_file_beside_the_folders_is_not_a_terrain():
+    """The trailing slash is the only thing on the page that tells them apart."""
+    assert 'readme.txt' not in tacmap.parse_map_index(NGINX_HTML)
+
+
+def test_an_index_that_marks_no_folders_is_taken_at_its_word():
+    """A hand-written index links without slashes; refusing it helps nobody."""
+    page = '<a href="altis">altis</a> <a href="tanoa">tanoa</a>'
+    assert tacmap.parse_map_index(page) == ['altis', 'tanoa']
+
+
+def test_nginx_json_listings_are_read_as_well():
+    payload = ('[{"name":"altis","type":"directory"},'
+               '{"name":"notes.txt","type":"file"},'
+               '{"name":"tanoa","type":"directory"}]')
+    assert tacmap.parse_map_index(payload) == ['altis', 'tanoa']
+
+
+def test_a_plain_json_list_of_names_works():
+    assert tacmap.parse_map_index('["tanoa", "altis"]') == ['altis', 'tanoa']
+
+
+def test_a_listing_never_sends_the_reader_somewhere_else():
+    """The links are somebody else's page; only a name in this folder is used."""
+    page = ('<a href="https://elsewhere.example/evil/">elsewhere</a>'
+            '<a href="/absolute/">absolute</a>'
+            '<a href="../">parent</a>'
+            '<a href="mailto:a@b.c">mail</a>'
+            '<a href="tanoa/">tanoa</a>')
+    assert tacmap.parse_map_index(page) == ['tanoa']
+
+
+def test_a_percent_encoded_name_comes_back_readable():
+    assert tacmap.parse_map_index('<a href="tem%5Fcham/">x</a>') == ['tem_cham']
+
+
+def test_something_that_is_not_a_listing_yields_nothing():
+    """Better an empty list the page can explain than a guess."""
+    assert tacmap.parse_map_index('<h1>403 Forbidden</h1>') == []
+    assert tacmap.parse_map_index('') == []
+    assert tacmap.parse_map_index(b'\x00\x01\x02') == []
+
+
+def test_a_listing_longer_than_any_map_directory_is_cut_off():
+    page = ''.join(f'<a href="m{n}/">m{n}</a>' for n in range(400))
+    assert len(tacmap.parse_map_index(page)) == tacmap.MAX_INDEX_ENTRIES

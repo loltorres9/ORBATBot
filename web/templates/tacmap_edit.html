@@ -63,29 +63,76 @@
     <summary>🛰️ Load a terrain from OCAP <span class="note">without uploading it</span></summary>
     <div class="panelbody">
       <p class="hint">
-        OCAP already renders every terrain you play on. Paste the address of one
-        of its map folders — the one holding <code>map.json</code> and the
-        numbered tile folders, e.g.
-        <code>https://ocap.your-unit.net/images/maps/tanoa</code> — and this map
-        takes that terrain as its background <strong>and</strong> its Arma
-        coordinates, so the export lands in the right place without you typing a
-        single number.
+        OCAP already renders every terrain you play on. Point this at the folder
+        it keeps them in and pick one from the list: the map takes that terrain
+        as its background <strong>and</strong> its Arma coordinates, so the
+        export lands in the right place without you typing a single number.
       </p>
       <p class="hint">
         The tiles are loaded by whoever opens the map, so the OCAP server has to
         be reachable for them too. Detail is set under <strong>Map
         settings</strong>; one step deeper is four times as many tiles.
       </p>
-      <form class="form" method="post" action="/g/{{ guild.id }}/maps/{{ record.id }}/ocap">
+      {# Two steps, because reading somebody else's server is a thing you ask
+         for rather than something opening a page does. The directory is
+         remembered per server, so it is typed once and never again. #}
+      <form class="form" method="post"
+            action="/g/{{ guild.id }}/maps/{{ record.id }}/ocap-list">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <label class="field">
-          <span>OCAP map folder</span>
-          <input name="url" required placeholder="https://ocap.your-unit.net/images/maps/tanoa">
+          <span>Where OCAP keeps its terrains</span>
+          <input name="base" required value="{{ ocap_base }}"
+                 placeholder="https://ocap.your-unit.net/images/maps">
+          <span class="hint">The folder holding one directory per terrain, not a
+            terrain itself. Saved for this server once it answers.</span>
         </label>
         <div class="actions">
-          <button class="button primary" type="submit">Load terrain</button>
+          <button class="button" type="submit">List the terrains</button>
         </div>
       </form>
+
+      {% if ocap_maps %}
+        <form class="form" method="post"
+              action="/g/{{ guild.id }}/maps/{{ record.id }}/ocap">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="base" value="{{ ocap_base }}">
+          <label class="field">
+            <span>Terrain <span class="note">{{ ocap_maps|length }} found</span></span>
+            <select name="name" required>
+              {% for name in ocap_maps %}
+                <option value="{{ name }}">{{ name }}</option>
+              {% endfor %}
+            </select>
+            <span class="hint">OCAP names a folder after the terrain's world
+              name, so Cham is <code>tem_cham</code>. The real name comes back
+              with it once it is loaded.</span>
+          </label>
+          <div class="actions">
+            <button class="button primary" type="submit">Load terrain</button>
+          </div>
+        </form>
+      {% endif %}
+
+      <details class="subpanel">
+        <summary>Paste an address instead</summary>
+        <p class="hint">
+          Some servers do not list a directory at all. The address of one map
+          folder — the one holding <code>map.json</code> and the numbered tile
+          folders — works on its own.
+        </p>
+        <form class="form" method="post"
+              action="/g/{{ guild.id }}/maps/{{ record.id }}/ocap">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="field">
+            <span>OCAP map folder</span>
+            <input name="url" required
+                   placeholder="https://ocap.your-unit.net/images/maps/tanoa">
+          </label>
+          <div class="actions">
+            <button class="button" type="submit">Load terrain</button>
+          </div>
+        </form>
+      </details>
     </div>
   </details>
 

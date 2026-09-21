@@ -32,9 +32,11 @@ background image is stretched across the same box: the document *is* the map
 sheet, and nothing here knows about pixels or zoom levels.
 """
 
+import html as _html
 import json
 import math
 import re
+from urllib.parse import unquote
 from xml.sax.saxutils import escape, quoteattr
 
 DEFAULT_WIDTH = 1000
@@ -1426,6 +1428,96 @@ def render(doc: dict, *, standalone: bool = False, extra_class: str = '') -> str
 # ---------------------------------------------------------------------------
 # Putting the plan into a running mission
 # ---------------------------------------------------------------------------
+
+
+# How many terrains one directory listing may offer. A unit's OCAP folder
+# holds a few dozen; a listing far longer than that is not a map directory
+# and there is no reason to render it into a dropdown.
+MAX_INDEX_ENTRIES = 300
+
+# What a folder name may be. OCAP names them after the terrain's world name
+# (`tem_cham`, `tanoa`), and anything outside this is either a file or
+# something that should not be pasted back into a URL.
+_INDEX_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+_HREF = re.compile(r'<a\s[^>]*?href=["\']([^"\'>]+)["\']', re.I)
+
+
+def parse_map_index(body) -> list:
+    """The terrain folders a directory listing offers, as plain names.
+
+    Typing out an OCAP map URL by hand means knowing the world name of a
+    terrain, which is exactly the thing nobody remembers — so the folder is
+    read and its contents offered as a list. What comes back differs per web
+    server, and none of them is worth requiring:
+
+    * nginx with `autoindex_format json`, a list of `{"name", "type"}`
+    * a plain JSON list of names, which is what a hand-written index gives
+    * nginx or Apache's HTML autoindex, which is a page of `<a href>`
+
+    All three are read the same way, because the answer wanted from each is
+    the same: the subdirectory names. Anything that is not a directory name
+    is dropped rather than guessed at — a listing is somebody else's page
+    and its links are not a place this bot should follow blindly.
+    """
+    text = body.decode('utf-8', 'replace') if isinstance(body, bytes) else str(body or '')
+    names = _index_from_json(text)
+    if names is None:
+        names = _index_from_html(text)
+    keep = []
+    for name in names:
+        name = unquote(name).strip().strip('/')
+        # A listing links back to where it came from and sideways to itself;
+        # neither is a terrain.
+        if not name or name in ('.', '..') or not _INDEX_NAME.match(name):
+            continue
+        if name not in keep:
+            keep.append(name)
+        if len(keep) >= MAX_INDEX_ENTRIES:
+            break
+    keep.sort(key=str.lower)
+    return keep
+
+
+def _index_from_json(text: str):
+    """The names a JSON listing carries, or None when it is not JSON."""
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, list):
+        return None
+    names = []
+    for entry in payload:
+        if isinstance(entry, str):
+            names.append(entry)
+        elif isinstance(entry, dict):
+            # nginx says `"type": "directory"`; a listing that says nothing
+            # about type is taken at its word, since a file would not have
+            # passed the name test anyway.
+            if entry.get('type') not in (None, 'directory'):
+                continue
+            name = entry.get('name') or entry.get('path') or ''
+            if isinstance(name, str):
+                names.append(name)
+    return names
+
+
+def _index_from_html(text: str) -> list:
+    """The hrefs an HTML autoindex carries, unescaped and made relative."""
+    names = []
+    for href in _HREF.findall(text):
+        href = _html.unescape(href)
+        # Only a link into this folder is a terrain in it: an absolute URL,
+        # a scheme, a query or a fragment all point somewhere else.
+        if href.startswith(('http://', 'https://', '//', '/', '?', '#', 'mailto:')):
+            continue
+        names.append(href.split('?')[0].split('#')[0])
+    # nginx and Apache both write a directory with a trailing slash, which is
+    # the only thing on the page that tells a terrain from the readme sitting
+    # next to it. A hand-written index may link without one, so the rule is
+    # "prefer the folders when the page marks any" rather than "require it".
+    folders = [name for name in names if name.endswith('/')]
+    return folders or names
 
 
 def ocap_settings(payload: dict, base_url: str) -> dict:
