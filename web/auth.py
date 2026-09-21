@@ -65,14 +65,14 @@ def read_session(request, config: WebConfig) -> Optional[dict]:
     return data if isinstance(data, dict) and data.get('id') else None
 
 
-def write_session(response, config: WebConfig, user: dict) -> None:
+def write_session(response, config: WebConfig, user: dict, request=None) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         _serializer(config, _SESSION_SALT).dumps(user),
         max_age=config.session_max_age,
         httponly=True,
         samesite='lax',
-        secure=config.cookie_secure,
+        secure=config.cookie_secure_for(request),
         path='/',
     )
 
@@ -117,14 +117,15 @@ def check_csrf(session: dict, token: str) -> None:
 # One-shot flash messages
 # ---------------------------------------------------------------------------
 
-def set_flash(response, config: WebConfig, kind: str, text: str) -> None:
+def set_flash(response, config: WebConfig, kind: str, text: str,
+              request=None) -> None:
     response.set_cookie(
         FLASH_COOKIE,
         _serializer(config, _FLASH_SALT).dumps({'kind': kind, 'text': text}),
         max_age=60,
         httponly=True,
         samesite='lax',
-        secure=config.cookie_secure,
+        secure=config.cookie_secure_for(request),
         path='/',
     )
 

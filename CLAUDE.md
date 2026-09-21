@@ -104,7 +104,7 @@ to cover.
 | `RAILWAY_API_TOKEN` | **Optional.** Account or team token that lets `/restart` trigger a clean deployment restart via the Railway GraphQL API. Without it `/restart` still works, by exiting non-zero so Railway's `ON_FAILURE` policy relaunches the container. Project tokens do **not** work — `_railway_restart()` authenticates with a `Bearer` header |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | **Optional.** OAuth2 credentials for the web UI. Missing → no web server is started |
 | `WEB_SECRET_KEY` | **Optional.** Signs the session, OAuth-state and flash cookies. Changing it signs everyone out |
-| `WEB_BASE_URL` | **Optional.** Public origin, no trailing slash. Must match the redirect URI registered in the Developer Portal; also decides whether cookies are marked `Secure`. Empty → derived from the request, which is only meant for local runs |
+| `WEB_BASE_URL` | **Optional.** Public origin, no trailing slash — or **several**, separated by spaces or commas, when the site answers on more than one name. Each one needs its own redirect URI registered in the Developer Portal. The first is canonical: it is what a link built with no request in hand uses. Empty → derived from the request, which is only meant for local runs. See [answering on more than one name](#answering-on-more-than-one-name) |
 | `WEB_HOST` / `WEB_PORT` | **Optional.** Listen address. `PORT` (injected by Railway) wins over `WEB_PORT` |
 | `WEB_ENABLED` | **Optional.** `0` keeps the site off even when everything else is set |
 | `WEB_BRAND` | **Optional.** Site name in the header, tab title and footer. Defaults to `TFP BOT` |
@@ -1142,6 +1142,26 @@ the slash commands cannot drift apart on access control.
 intent, so `guild.get_member()` is usually empty and each check would otherwise
 cost a REST call. `POST /g/{id}/refresh` calls `forget_member()` so someone who
 was just given a role doesn't have to wait it out.
+
+### Answering on more than one name
+
+`WEB_BASE_URL` takes a list, and `config.request_origin(request)` is what
+decides which of them a given request is on — from `x-forwarded-host`, since
+Railway's own host header is the internal one. Everything absolute goes
+through it: the OAuth callback, the share link, the map link posted into a
+channel.
+
+Three things about it are load-bearing:
+
+- **A host nobody configured is not echoed back.** The `Host` header belongs
+  to whoever sent the request, so an unknown one falls back to the canonical
+  origin rather than being written into a redirect or a link.
+- **Every name needs its own redirect URI in the Developer Portal.** Discord
+  compares the `redirect_uri` against its list exactly; a name configured here
+  and missing there fails that login rather than quietly using the other one.
+- **`Secure` is decided per request** (`cookie_secure_for()`), because the
+  origins can differ in scheme — a production domain on https beside a local
+  run on http — and a Secure cookie set over http never comes back.
 
 ### CSRF and redirects
 

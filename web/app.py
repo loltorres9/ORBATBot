@@ -121,7 +121,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
     def redirect(request: Request, path: str, kind: str = None, text: str = None):
         response = RedirectResponse(path, status_code=303)
         if text:
-            auth.set_flash(response, config, kind or 'ok', text)
+            auth.set_flash(response, config, kind or 'ok', text, request)
         return response
 
     def form_values(form) -> dict:
@@ -191,7 +191,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         # the way back, so a callback nobody here started is rejected.
         response.set_cookie(
             auth.STATE_COOKIE, state, max_age=auth.STATE_MAX_AGE, httponly=True,
-            samesite='lax', secure=config.cookie_secure, path='/',
+            samesite='lax', secure=config.cookie_secure_for(request), path='/',
         )
         return response
 
@@ -209,7 +209,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         profile = await auth.exchange_code(config, request, code)
 
         response = RedirectResponse(auth.safe_next(payload.get('n')), status_code=303)
-        auth.write_session(response, config, auth.new_session(profile))
+        auth.write_session(response, config, auth.new_session(profile), request)
         response.delete_cookie(auth.STATE_COOKIE, path='/')
         return response
 
@@ -888,7 +888,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
 
     def origin(request: Request) -> str:
         """The absolute origin a share link has to carry."""
-        return config.base_url or str(request.base_url).rstrip('/')
+        return config.request_origin(request) or str(request.base_url).rstrip('/')
 
     async def map_context(request: Request, guild_id: str, map_id: int) -> dict:
         context = await guild_context(request, guild_id)
