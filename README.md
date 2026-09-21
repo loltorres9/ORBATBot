@@ -928,7 +928,9 @@ Open **Operations → Maps**. Every member of the server can read the maps; crea
 
 Pick the side (friendly, hostile, neutral, civilian, unknown), the layer, the symbol, the size mark, whether it is in the air and whether it is there yet or only planned, in the toolbar before you place something; everything can be changed afterwards in the panel on the right, which also holds the mobility indicator and the parent unit.
 
-**Drawing a line is like the game:** hold `Ctrl`, press the left button and drag — it works from any tool, and letting go finishes the line. With the **Area** tool the shape closes into an area. For a route that has to hit exact points, the **Line** and **Area** tools still take it corner by corner: click each one, `Enter` finishes, `Esc` throws it away.
+**Drawing a line is like the game:** press the left button and drag. With the **Line** or **Area** tool that is all there is to it; from any other tool — including **Select** — hold `Ctrl` while you drag. Letting go finishes the line, `Esc` throws the stroke away, and the **Area** tool closes the shape into an area.
+
+Lines and areas can be **red, orange, yellow, green, blue, cyan, pink, purple, white or black**, picked from the swatches in the toolbar before you draw or in the panel afterwards — or any other colour from the colour field beside them. A unit symbol keeps its side's colour, because that is what says whose it is. A line gets **no arrowhead unless you tick one**: most lines on a plan are boundaries and phase lines, not directions of attack.
 
 The symbols follow APP-6, the way the planning tools and pocket cards do: the frame's **shape** says whose a unit is, so the plan still reads when it is printed, projected, or looked at by somebody who is colour-blind. A **line or an area can take a colour of its own**; a unit symbol can't, because its colour is what says whose it is.
 
@@ -982,10 +984,14 @@ The link looks like `https://your-domain/m/xxxxxxxx`, works without a Discord lo
 The map can be dropped into a **running mission** as ordinary Arma markers, with **no mod** on the server or the client. Arma cannot fetch anything from outside without one, so the way in is the debug console:
 
 1. Make sure the coordinates are set. Loading the terrain from OCAP does this for you; otherwise pick the terrain under **Map settings → Arma 3 coordinates**, or type the corner coordinates if your background image is a crop of the map. Get this right before the first export, or everything lands on the wrong terrain.
-2. Save the map, then open **🎯 Put it into Arma 3** and copy the script — or download it as a `.sqf`.
-3. In game, log in as admin (`#login <password>`), open the debug console, paste it and press **GLOBAL EXEC**.
+2. Save the map, then open **🎯 Put it into Arma 3**. There are **two scripts** there, side by side — copy one, or download it as a `.sqf`:
+   - **1 · Fixed markers** — nobody can move or delete them in game. This is the one for a plan that should stay as briefed, and the one to use unless you specifically want the other.
+   - **2 · Markers you can move and delete** — the same plan, but named the way Arma names a player's own markers, so whoever ran the script can drag a symbol or delete it with `DEL`. For planning in game, at the map table. The same click that fixes a misplaced objective deletes it, and nothing asks first. This one also lets you pick which **map channel** the markers sit in, so a plan meant for one side need not be in Global.
+3. In game, log in as admin (`#login <password>`), open the debug console, paste it and press **LOCAL EXEC** — for both scripts, once, on one machine.
 
-Every player sees the markers immediately, because `createMarker` is global. Pasting the script again after changing the plan **replaces** the markers instead of adding a second copy — each map owns its own marker names.
+**LOCAL EXEC, not GLOBAL**, even though every player sees the markers: `createMarker` is global by itself, so one machine running the script draws them for everybody. GLOBAL EXEC runs the script on *every* machine instead, which is wasted on the first script and actively wrong on the second, where each marker's name carries the id of whoever ran it — you would get one plan per player.
+
+Pasting a script again after changing the plan **replaces** that map's markers instead of adding a second copy — each map owns its own marker names.
 
 The mission has to allow the debug console: `enableDebugConsole = 1;` (admins) or `2` (everyone) in its `description.ext`. Lines and areas need Arma **2.00 or newer**, which is anything current.
 

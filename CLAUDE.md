@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(241 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(245 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1831,9 +1831,13 @@ shrunk to nothing is still a symbol, but its name shrunk to nothing is a
 smudge, and the name is what the plan is read for.
 
 **A line or an area may carry a colour of its own** (`item['color']`, plain
-`#rrggbb` or empty). A symbol may not: whose a unit is has to stay readable
-from its colour, while a line is a route or a boundary or a phase line, and
-those have been told apart by colour on every paper map there has ever been.
+`#rrggbb` or empty), and `LINE_COLOURS` is the palette the editor offers —
+red, orange, yellow, green, blue, cyan, pink, purple, white, black, picked to
+hold up over terrain that is bright sand in one corner and dark jungle in the
+other. A symbol may not take one: whose a unit is has to stay readable from
+its colour, while a line is a route or a boundary or a phase line, and those
+have been told apart by colour on every paper map there has ever been. The
+free colour field is still there beside the swatches for anything else.
 `arrow_head()` therefore computes the head as a polygon rather than using an
 SVG `marker` — a marker cannot take the colour of the line it sits on, so a
 recoloured line would have kept its side's arrow.
@@ -1851,16 +1855,17 @@ server-side and the editor takes that markup over rather than building it from
 nothing, so the fallback is a map you can read, not an empty box. That is also
 why the read-only page and the share link need no JavaScript at all.
 
-#### A line is drawn by holding Ctrl and dragging
+#### A line is drawn by dragging, and only by dragging
 
-Click, click, click, Enter is a mode, and one you have to leave before
-anything else works. The gesture people arrive with is Arma's own, so
-**Ctrl and drag draws freehand from any tool**, Select included — reaching
-for the Line button first was the part that felt like being trapped. The
-Area tool closes the shape; everything else leaves it a line. Clicking it
-out point by point stays for a polyline that has to hit exact points, and
-the toolbar names both, because nothing on the page said the gesture
-existed.
+Click, click, click, Enter was a mode, and one you had to leave before
+anything else worked. It is gone. **Dragging is the only way**: with the
+Line or Area tool, or by holding Ctrl from any tool including Select, which
+is the gesture Arma's own map uses. The Area tool closes the shape;
+everything else leaves it a line.
+
+**A line never gets an arrowhead on its own.** One says *this way*, and most
+lines on a plan are boundaries and phase lines that say no such thing; the
+inspector puts one on the lines that mean it.
 
 Three details are load-bearing:
 
@@ -1875,6 +1880,10 @@ Three details are load-bearing:
 - **Escape is handled before the modifier guard** in the key handler,
   because a ctrl-drag is cancelled with Ctrl still held down. Otherwise the
   one key you reach for to get out is the one that cannot reach it.
+- **`data-for` is a list in the toolbar as well as the inspector.** It was
+  compared whole in `setTool()`, so every field belonging to more than one
+  tool was silently hidden — which is what happened to the State picker's
+  `data-for="unit point"`, invisible from the day it shipped.
 
 ### The share link is the whole credential
 
@@ -2094,7 +2103,13 @@ means:
   ids). It is a choice on the panel rather than a constant because a plan
   meant for one side should not sit in Global.
 - **It is still the second script, not the first.** The same click that drags
-  a misplaced objective into place deletes it, and nothing asks first.
+  a misplaced objective into place deletes it, and nothing asks first — so
+  the editor shows both, side by side and named for what they are, rather
+  than hiding this one behind a fold where it reads as the better version.
+- **Both are LOCAL EXEC**, and the page says so. `createMarker` is global, so
+  one machine running either script draws the markers for everybody; GLOBAL
+  EXEC is wasted on the plain one and actively wrong on this one, where the
+  name carries `clientOwner`.
 
 Lines and areas are `POLYLINE` markers and the map's own editing is built
 around icon markers, so those may stay fixed while the symbols move.

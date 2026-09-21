@@ -41,6 +41,11 @@
     dimension: catalog.defaultDimension,
     status: catalog.defaultStatus,
     layer: '',
+    // What a line or an area is painted when it is drawn. '' means the
+    // side's own colour, which is what everything did before there was a
+    // palette to pick from.
+    color: '',
+    style: 'solid',
     hq: false,
     selected: -1,
     draft: null,
@@ -673,30 +678,22 @@
     var point = at(event);
     var group = event.target.closest ? event.target.closest('.tm-item') : null;
 
-    // Ctrl and drag draws freehand, which is the gesture Arma's own map uses
-    // and the one people arrive here with. It works from any tool, because
-    // reaching for the Line button first is exactly the step that made
-    // drawing one feel like being trapped in a mode. The Area tool closes
-    // the shape; everything else leaves it a line.
-    if (event.ctrlKey || event.metaKey) {
+    // Dragging is the only way to draw a line, and it is the gesture Arma's
+    // own map uses. Ctrl does it from any tool — including Select, so you
+    // never have to leave what you are doing — and the Line and Area tools do
+    // it without Ctrl. Clicking a line out corner by corner is gone: it was a
+    // mode you had to finish before anything else worked.
+    var drawing = state.tool === 'line' || state.tool === 'area';
+    if (event.ctrlKey || event.metaKey || drawing) {
       event.preventDefault();
       state.draft = {
         kind: state.tool === 'area' ? 'area' : 'line',
         points: [[round(point.x), round(point.y)]],
-        cursor: null,
-        free: true
+        cursor: null
       };
       overlay.innerHTML = draftSVG();
       say('Drawing — let go to finish');
       svg.setPointerCapture(event.pointerId);
-      return;
-    }
-
-    if (state.tool === 'line' || state.tool === 'area') {
-      if (!state.draft) state.draft = { kind: state.tool, points: [], cursor: null };
-      state.draft.points.push([round(point.x), round(point.y)]);
-      overlay.innerHTML = draftSVG();
-      say(state.draft.points.length + ' points — Enter finishes, Esc cancels');
       return;
     }
 
@@ -720,7 +717,7 @@
   });
 
   svg.addEventListener('pointermove', function (event) {
-    if (state.draft && state.draft.free) {
+    if (state.draft) {
       var here = at(event);
       var points = state.draft.points;
       var last = points[points.length - 1];
@@ -733,12 +730,6 @@
       if (Math.hypot(here.x - last[0], here.y - last[1]) < step) return;
       if (points.length >= catalog.limits.points) return;
       points.push([round(here.x), round(here.y)]);
-      overlay.innerHTML = draftSVG();
-      return;
-    }
-    if (state.draft) {
-      var cursor = at(event);
-      state.draft.cursor = [round(cursor.x), round(cursor.y)];
       overlay.innerHTML = draftSVG();
       return;
     }
@@ -773,7 +764,7 @@
   });
 
   svg.addEventListener('pointerup', function () {
-    if (state.draft && state.draft.free) {
+    if (state.draft) {
       finishDraft();
       return;
     }
@@ -785,35 +776,25 @@
   // Letting go outside the sheet still ends the stroke; without this the
   // draft would hang around and the next click would extend it.
   svg.addEventListener('pointercancel', function () {
-    if (state.draft && state.draft.free) finishDraft();
-  });
-
-  svg.addEventListener('dblclick', function (event) {
-    if (state.draft) {
-      event.preventDefault();
-      finishDraft();
-    }
+    if (state.draft) finishDraft();
   });
 
   function finishDraft() {
     var draft = state.draft;
     state.draft = null;
     say('');
+    overlay.innerHTML = '';
     if (!draft) return;
-    var least = draft.kind === 'area' ? 3 : 2;
-    if (draft.points.length < least) {
-      overlay.innerHTML = '';
-      // A click-by-click draft was deliberate and is worth explaining; a
-      // ctrl-drag that went nowhere is a slipped finger, so it just goes.
-      if (!draft.free) {
-        say('A ' + draft.kind + ' needs at least ' + least + ' points.', 'err');
-      }
-      return;
-    }
+    // A stroke that went nowhere is a slipped finger, not an error worth
+    // a message: there is no deliberate way to draw a two-point line any more.
+    if (draft.points.length < (draft.kind === 'area' ? 3 : 2)) return;
     add({
       kind: draft.kind, side: state.side, layer: state.layer, label: '', note: '',
-      size: 1, color: '', points: draft.points, style: 'solid',
-      arrow: draft.kind === 'line'
+      size: 1, color: state.color, points: draft.points, style: state.style,
+      // Never automatically: an arrow says "this way", and most lines on a
+      // plan are boundaries and phase lines that say no such thing. The
+      // inspector puts one on the lines that mean it.
+      arrow: false
     });
   }
 
@@ -825,8 +806,12 @@
     Array.prototype.forEach.call(app.querySelectorAll('.tmtool'), function (button) {
       button.classList.toggle('active', button.dataset.tool === tool);
     });
+    // `data-for` is a list, the same as in the inspector: a field can belong
+    // to more than one tool. Comparing the whole attribute silently hid every
+    // such field — which is what happened to the State picker, whose
+    // `data-for="unit point"` matched neither.
     Array.prototype.forEach.call(app.querySelectorAll('.tmpick [data-for]'), function (field) {
-      field.hidden = field.dataset.for !== tool;
+      field.hidden = field.dataset.for.split(' ').indexOf(tool) < 0;
     });
     svg.classList.toggle('tm-drawing', tool !== 'select');
   }
@@ -834,6 +819,37 @@
   Array.prototype.forEach.call(app.querySelectorAll('.tmtool'), function (button) {
     button.addEventListener('click', function () { setTool(button.dataset.tool); });
   });
+
+  function swatchRow(host, read, write) {
+    // A row of colour buttons, the first of which hands the item back to its
+    // side's own colour. Buttons rather than a <select>, because picking a
+    // colour from a list of names is exactly the thing a swatch avoids.
+    var buttons = [{ value: '', label: "The side's own" }].concat(
+      catalog.lineColours.map(function (entry) {
+        return { value: entry.value, label: entry.label };
+      }));
+    host.innerHTML = buttons.map(function (entry) {
+      return '<button type="button" class="tmswatch' +
+        (entry.value ? '' : ' tmswatch-side') + '" data-color="' +
+        attr(entry.value) + '" title="' + attr(entry.label) + '"' +
+        (entry.value ? ' style="background:' + attr(entry.value) + '"' : '') +
+        '><span class="visually-hidden">' + esc(entry.label) + '</span></button>';
+    }).join('');
+    host.addEventListener('click', function (event) {
+      var button = event.target.closest ? event.target.closest('.tmswatch') : null;
+      if (!button) return;
+      event.preventDefault();
+      write(button.dataset.color);
+      markSwatches(host, read());
+    });
+    markSwatches(host, read());
+  }
+
+  function markSwatches(host, value) {
+    Array.prototype.forEach.call(host.querySelectorAll('.tmswatch'), function (b) {
+      b.classList.toggle('active', b.dataset.color === (value || ''));
+    });
+  }
 
   function fillOptions(select, options, value) {
     select.innerHTML = options.map(function (option) {
@@ -948,6 +964,18 @@
   });
   statusPick.addEventListener('change', function () { state.status = statusPick.value; });
 
+  var colourRow = document.getElementById('tmcolours');
+  if (colourRow) {
+    swatchRow(colourRow,
+      function () { return state.color; },
+      function (value) { state.color = value; });
+  }
+  var stylePick = document.getElementById('tmstyle');
+  if (stylePick) {
+    stylePick.value = state.style;
+    stylePick.addEventListener('change', function () { state.style = stylePick.value; });
+  }
+
   /* -- the inspector -------------------------------------------------------- */
 
   var fields = {
@@ -970,8 +998,7 @@
     style: document.getElementById('tmf-style'),
     arrow: document.getElementById('tmf-arrow'),
     layer: document.getElementById('tmf-layer'),
-    color: document.getElementById('tmf-color'),
-    plain: document.getElementById('tmf-plain')
+    color: document.getElementById('tmf-color')
   };
   fillOptions(fields.side, sideOptions, state.side);
   fillOptions(fields.symbol, symbolOptions, state.symbol);
@@ -1009,6 +1036,7 @@
     fields.arrow.checked = !!item.arrow;
     fields.layer.value = item.layer;
     fields.color.value = item.color || colours[item.side].fill;
+    if (inspectorColours) markSwatches(inspectorColours, item.color);
   }
 
   function editField(field, read) {
@@ -1064,14 +1092,19 @@
   editField(fields.arrow, function (item) { item.arrow = fields.arrow.checked; });
   editField(fields.layer, function (item) { item.layer = fields.layer.value; });
   editField(fields.color, function (item) { item.color = fields.color.value; });
-  fields.plain.addEventListener('click', function () {
-    var item = selected();
-    if (!item) return;
-    item.color = '';
-    fields.color.value = colours[item.side].fill;
-    touched();
-    render();
-  });
+  var inspectorColours = document.getElementById('tmf-colours');
+  if (inspectorColours) {
+    swatchRow(inspectorColours,
+      function () { var item = selected(); return item ? item.color : ''; },
+      function (value) {
+        var item = selected();
+        if (!item) return;
+        item.color = value;
+        fields.color.value = value || colours[item.side].fill;
+        touched();
+        render();
+      });
+  }
 
   document.getElementById('tmf-delete').addEventListener('click', removeSelected);
   document.getElementById('tmf-front').addEventListener('click', function () {
@@ -1264,10 +1297,7 @@
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
 
-    if (event.key === 'Enter' && state.draft) {
-      event.preventDefault();
-      finishDraft();
-    } else if (event.key === 'Escape') {
+    if (event.key === 'Escape') {
       state.draft = null;
       overlay.innerHTML = '';
       say('');

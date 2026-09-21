@@ -437,6 +437,29 @@ DEFAULT_MARKER = 'dot'
 
 LINE_STYLES = ('solid', 'dashed')
 
+# What a line or an area can be painted, beyond its side's own colour.
+#
+# A symbol may not take one of these — whose a unit is has to stay readable
+# from its colour — but a line is a route, a boundary, a phase line or a fire
+# control measure, and those have been told apart by colour on every paper map
+# there has ever been. One plan wants more than the five sides can say.
+#
+# Picked to hold up over terrain that is bright sand in one corner and dark
+# jungle in the other, which rules out anything pale or muddy; the free colour
+# field is still there for anything else.
+LINE_COLOURS = (
+    ('#e03b3b', 'Red'),
+    ('#f07f2a', 'Orange'),
+    ('#f2c832', 'Yellow'),
+    ('#3fb950', 'Green'),
+    ('#3d8ee8', 'Blue'),
+    ('#35c9c2', 'Cyan'),
+    ('#e060b8', 'Pink'),
+    ('#a06ee8', 'Purple'),
+    ('#f5f5f5', 'White'),
+    ('#1b1f24', 'Black'),
+)
+
 # ---------------------------------------------------------------------------
 # Backgrounds
 # ---------------------------------------------------------------------------
@@ -1001,6 +1024,8 @@ def catalog() -> dict:
         'points': [{'glyph': glyph, 'label': label} for glyph, label in POINT_PRESETS],
         'terrains': [{'name': name, 'size': size} for name, size in ARMA_TERRAINS],
         'lineStyles': list(LINE_STYLES),
+        'lineColours': [{'value': value, 'label': label}
+                        for value, label in LINE_COLOURS],
         'unitBox': UNIT_BOX,
         'pointBox': POINT_BOX,
         'backdropZoom': BACKDROP_ZOOM,

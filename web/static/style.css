@@ -803,6 +803,37 @@ svg.tacmap.tm-drawing { cursor: crosshair; }
 .tmpanel .field > span { font-size: 13px; }
 .tmpanel .row { grid-template-columns: 1fr 1fr; gap: 10px; }
 .tmcheck { display: flex; gap: 8px; align-items: center; }
+/* A row of colour buttons. Small, square and wrapping, so ten of them fit on
+   the tool row without pushing anything off it. */
+.tmswatches { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.tmswatches .tmswatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+}
+/* The first one hands the item back to its side's colour, so it shows the
+   absence of a choice rather than a colour: a diagonal through an empty box. */
+.tmswatches .tmswatch-side {
+  background:
+    linear-gradient(to top right, transparent 45%, var(--muted) 45%,
+                    var(--muted) 55%, transparent 55%),
+    var(--panel);
+}
+.tmswatches .tmswatch.active {
+  outline: 2px solid var(--accent, #6b8afd);
+  outline-offset: 1px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 .tmhelp { font-size: 13px; color: var(--muted); }
 .tmhelp ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
 /* Sits under the tool row rather than in the side panel: it names the one
@@ -821,6 +852,17 @@ svg.tacmap.tm-drawing { cursor: crosshair; }
   background: var(--panel);
   font-size: 12px;
 }
+
+/* The two Arma exports, side by side rather than one hidden behind the other:
+   which to use is the question, so both have to be on screen to be compared. */
+.tmexport {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 14px;
+}
+.tmexport h3 { margin: 0 0 8px; font-size: 15px; }
+.tmexport h3 .note { font-weight: 400; }
 
 .tmsection { margin-bottom: 14px; }
 .tmsection summary { cursor: pointer; font-weight: 600; }

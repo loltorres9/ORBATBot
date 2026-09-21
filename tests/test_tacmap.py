@@ -1010,3 +1010,39 @@ def test_something_that_is_not_a_listing_yields_nothing():
 def test_a_listing_longer_than_any_map_directory_is_cut_off():
     page = ''.join(f'<a href="m{n}/">m{n}</a>' for n in range(400))
     assert len(tacmap.parse_map_index(page)) == tacmap.MAX_INDEX_ENTRIES
+
+
+# ---------------------------------------------------------------------------
+# What a line may be painted
+# ---------------------------------------------------------------------------
+
+
+def test_every_palette_colour_survives_the_parser():
+    """The palette is offered by the editor, so it has to be storable."""
+    for value, label in tacmap.LINE_COLOURS:
+        assert tacmap._colour(value) == value, label
+        item = _parse_one({'kind': 'line', 'points': [[1, 1], [2, 2]],
+                           'color': value})
+        assert item['color'] == value, label
+
+
+def test_the_palette_is_in_the_catalog_for_the_editor():
+    palette = tacmap.catalog()['lineColours']
+    assert len(palette) == len(tacmap.LINE_COLOURS)
+    assert {entry['label'] for entry in palette} >= {
+        'Red', 'Yellow', 'Green', 'Blue', 'Pink', 'Purple'}
+
+
+def test_a_symbol_still_cannot_take_a_colour_of_its_own():
+    """Whose a unit is has to stay readable from its colour."""
+    item = _parse_one(unit(color=tacmap.LINE_COLOURS[0][0]))
+    assert 'color' not in item
+
+
+def test_a_line_carries_no_arrow_unless_it_was_asked_for():
+    """An arrow says "this way", and most lines on a plan say no such thing."""
+    item = _parse_one({'kind': 'line', 'points': [[1, 1], [2, 2]]})
+    assert item['arrow'] is False
+    assert '<polygon' not in tacmap.item_svg(item)
+    pointed = _parse_one({'kind': 'line', 'points': [[1, 1], [2, 2]], 'arrow': True})
+    assert '<polygon' in tacmap.item_svg(pointed)
