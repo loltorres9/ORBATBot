@@ -1052,7 +1052,7 @@ Times are entered and displayed in the **server timezone** (`/set-timezone`), th
 **1. Create the OAuth2 credentials.** In the [Discord Developer Portal](https://discord.com/developers/applications) → your application → **OAuth2**:
 
 - copy the **Client ID** and generate a **Client Secret**
-- under **Redirects**, add `https://your-domain/auth/callback` — it must match `WEB_BASE_URL` exactly, including `https://` and with no trailing slash
+- under **Redirects**, add `https://your-domain/auth/callback` — it must match `WEB_BASE_URL` exactly, including `https://` and with no trailing slash. **Serving the site on two names?** Put both in `WEB_BASE_URL`, separated by a space, and add a redirect URI here for each — the site then keeps whoever opened one of them on that one
 
 > **Already have a Discord OAuth2 app?** Reuse it. Take its existing client ID and secret, and just add `https://your-domain/auth/callback` as an *additional* redirect URI — Discord allows several per application and the existing ones keep working. Do **not** regenerate the client secret if that app is used elsewhere; that would break the other integration. It doesn't even have to be the bot's own application: membership and roles are read through the bot's connection, not through the user's token, so any application works — only the name on the consent screen changes. Using the bot's application is still the tidiest.
 
@@ -1075,7 +1075,7 @@ WEB_BASE_URL=https://orbat.example.com
 
 **4. Expose it.**
 
-- **Railway** — service → **Settings → Networking → Generate Domain**. Railway injects `PORT` and the app listens on it; use that domain as `WEB_BASE_URL`.
+- **Railway** — service → **Settings → Networking → Generate Domain**. Railway injects `PORT` and the app listens on it; use that domain as `WEB_BASE_URL`. A domain of your own goes in the same place (**Custom Domain**, then the CNAME it gives you at your DNS provider); put both names in `WEB_BASE_URL` if the old one should keep working.
 - **Docker** — port `8080` is published by `docker-compose.yml`; put it behind a reverse proxy that terminates TLS (Caddy or nginx), and point `WEB_BASE_URL` at the public name.
 
 Restart the bot. The log line `✅ Web UI listening on …` means it is up; `/healthz` answers `ok` once the bot is connected to Discord.
