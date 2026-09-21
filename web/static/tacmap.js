@@ -667,6 +667,25 @@
     var point = at(event);
     var group = event.target.closest ? event.target.closest('.tm-item') : null;
 
+    // Ctrl and drag draws freehand, which is the gesture Arma's own map uses
+    // and the one people arrive here with. It works from any tool, because
+    // reaching for the Line button first is exactly the step that made
+    // drawing one feel like being trapped in a mode. The Area tool closes
+    // the shape; everything else leaves it a line.
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      state.draft = {
+        kind: state.tool === 'area' ? 'area' : 'line',
+        points: [[round(point.x), round(point.y)]],
+        cursor: null,
+        free: true
+      };
+      overlay.innerHTML = draftSVG();
+      say('Drawing — let go to finish');
+      svg.setPointerCapture(event.pointerId);
+      return;
+    }
+
     if (state.tool === 'line' || state.tool === 'area') {
       if (!state.draft) state.draft = { kind: state.tool, points: [], cursor: null };
       state.draft.points.push([round(point.x), round(point.y)]);
@@ -695,6 +714,22 @@
   });
 
   svg.addEventListener('pointermove', function (event) {
+    if (state.draft && state.draft.free) {
+      var here = at(event);
+      var points = state.draft.points;
+      var last = points[points.length - 1];
+      // Thinned as it is drawn rather than afterwards: a pointer reports
+      // every pixel it passes and the document takes MAX_POINTS of them, so
+      // an unthinned stroke would hit the cap within one gesture. The step
+      // is a fraction of what is on screen, so it thins by how far the line
+      // actually looks, not by how far zoomed in it happens to be.
+      var step = view.w / 90;
+      if (Math.hypot(here.x - last[0], here.y - last[1]) < step) return;
+      if (points.length >= catalog.limits.points) return;
+      points.push([round(here.x), round(here.y)]);
+      overlay.innerHTML = draftSVG();
+      return;
+    }
     if (state.draft) {
       var cursor = at(event);
       state.draft.cursor = [round(cursor.x), round(cursor.y)];
@@ -732,9 +767,19 @@
   });
 
   svg.addEventListener('pointerup', function () {
+    if (state.draft && state.draft.free) {
+      finishDraft();
+      return;
+    }
     if (state.drag && state.drag.moved) touched();
     state.drag = null;
     state.pan = null;
+  });
+
+  // Letting go outside the sheet still ends the stroke; without this the
+  // draft would hang around and the next click would extend it.
+  svg.addEventListener('pointercancel', function () {
+    if (state.draft && state.draft.free) finishDraft();
   });
 
   svg.addEventListener('dblclick', function (event) {
@@ -752,7 +797,11 @@
     var least = draft.kind === 'area' ? 3 : 2;
     if (draft.points.length < least) {
       overlay.innerHTML = '';
-      say('A ' + draft.kind + ' needs at least ' + least + ' points.', 'err');
+      // A click-by-click draft was deliberate and is worth explaining; a
+      // ctrl-drag that went nowhere is a slipped finger, so it just goes.
+      if (!draft.free) {
+        say('A ' + draft.kind + ' needs at least ' + least + ' points.', 'err');
+      }
       return;
     }
     add({
@@ -1197,6 +1246,14 @@
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       undo();
+      return;
+    }
+    if (event.key === 'Escape' && state.draft) {
+      // Before the modifier guard below: a ctrl-drag is cancelled with the
+      // key still held down, so a draft would otherwise be unescapable.
+      state.draft = null;
+      overlay.innerHTML = '';
+      say('');
       return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;

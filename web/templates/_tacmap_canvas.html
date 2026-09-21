@@ -19,6 +19,11 @@
         <button type="button" class="tmtool" data-tool="area">⬟ Area</button>
         <button type="button" class="tmtool" data-tool="text">🔤 Text</button>
       </div>
+      {# The gesture is the one Arma's own map uses, so it is what people try
+         first — but nothing on the page would otherwise say it is here. #}
+      <p class="tmhint">Hold <kbd>Ctrl</kbd> and drag to draw a line, from any
+        tool. The Line and Area tools also take it point by point —
+        <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> cancels.</p>
       <div class="tmpick">
         <label>Side <select id="tmside"></select></label>
         <label>Layer <select id="tmlayerpick"></select></label>
