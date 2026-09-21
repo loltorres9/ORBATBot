@@ -886,10 +886,6 @@ def create_app(bot, config: WebConfig) -> FastAPI:
     # The palette never changes between requests, so it is built once.
     _map_catalog = tacmap_lib.json_payload(tacmap_lib.catalog())
 
-    def origin(request: Request) -> str:
-        """The absolute origin a share link has to carry."""
-        return config.request_origin(request) or str(request.base_url).rstrip('/')
-
     async def map_context(request: Request, guild_id: str, map_id: int) -> dict:
         context = await guild_context(request, guild_id)
         record = await database.get_tac_map(map_id)
@@ -931,7 +927,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         # the listing route — opening the page must never read somebody
         # else's server.
         if ocap_base is None:
-            ocap_base = await database.get_ocap_base_url(str(context['guild'].id))
+            ocap_base = (await database.get_ocap_base_url(str(context['guild'].id))
+                         or tacmap_service.DEFAULT_OCAP_BASE)
         return render(request, 'tacmap_edit.html', {
             **context,
             'doc_json': tacmap_lib.json_payload(doc),
@@ -948,8 +945,12 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'arma_channels': tacmap_lib.ARMA_CHANNELS,
             'save_url': f"/g/{context['guild'].id}/maps/{record['id']}/save",
             'share_modes': tacmap_service.SHARE_MODES,
-            'share_url': (f"{origin(request)}{tacmap_service.share_path(record)}"
-                          if record['share_token'] else ''),
+            # The canonical origin, not the one this request came in on: a
+            # share link is made to be copied somewhere else, and it has to
+            # carry the unit's own domain even when it was made from a
+            # different one.
+            'share_url': config.public_url(tacmap_service.share_path(record),
+                                           request),
             'channels': postable_channels(context['guild']),
             'terrains': terrains,
             'ocap_base': ocap_base,
@@ -1213,7 +1214,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         try:
             note = await tacmap_service.post(
                 context['guild'], context['record'], form.get('channel_id'),
-                tacmap_service.map_url(origin(request), guild_id, context['record']),
+                tacmap_service.map_url(config.public_origin(request), guild_id,
+                                       context['record']),
                 context['member'],
             )
         except ValueError as e:

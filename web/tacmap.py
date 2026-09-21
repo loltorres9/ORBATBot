@@ -104,6 +104,12 @@ OCAP_TIMEOUT = 15
 # well before anything that is not one could arrive.
 MAX_INDEX_BYTES = 512 * 1024
 
+# What the directory field is filled in with before anybody has saved one.
+# Only a suggestion — it is not read until somebody presses the button, and
+# the first directory that actually answers replaces it for that guild. Change
+# it for a unit that runs its OCAP somewhere else.
+DEFAULT_OCAP_BASE = 'https://ocap.taskforcephalanx.com/images/maps'
+
 
 def clean_base_url(raw: str) -> str:
     """An OCAP address, tidied — or a message saying why it is not one."""

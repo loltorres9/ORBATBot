@@ -97,6 +97,26 @@ class WebConfig:
             return self.cookie_secure
         return self.request_origin(request).startswith('https://')
 
+    def public_origin(self, request=None) -> str:
+        """The origin to put in a link that **leaves** this site.
+
+        Not the same question as `request_origin()`, and the difference is the
+        whole reason both exist. A link in the page keeps whoever is looking on
+        the name they are already on; a share link is copied into Discord and a
+        posted map link is read by people who were never here at all, so those
+        have to carry the unit's own domain whatever host the person who made
+        them happened to be browsing.
+
+        Falling back to the request is only for a local run, where nothing is
+        configured and there is no canonical name to prefer.
+        """
+        return self.base_url or self.request_origin(request)
+
+    def public_url(self, path: str, request=None) -> str:
+        """`public_origin()` with a path on the end, or '' when there is none."""
+        origin = self.public_origin(request)
+        return f"{origin}{path}" if origin and path else ''
+
     def redirect_uri(self, request=None) -> str:
         """The OAuth2 callback URL, which has to match a Developer Portal entry.
 
