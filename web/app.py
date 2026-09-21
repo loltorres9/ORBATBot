@@ -933,6 +933,9 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'editable': context['may_draw'],
             'sqf': tacmap_lib.to_sqf(doc, prefix=tacmap_service.arma_prefix(record),
                                      title=record['name']),
+            'sqf_editable': tacmap_lib.to_sqf(
+                doc, prefix=tacmap_service.arma_prefix(record),
+                title=record['name'], editable=True),
             'save_url': f"/g/{context['guild'].id}/maps/{record['id']}/save",
             'share_modes': tacmap_service.SHARE_MODES,
             'share_url': (f"{origin(request)}{tacmap_service.share_path(record)}"
@@ -996,15 +999,18 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         return JSONResponse({'ok': True, 'notes': notes})
 
     @app.get('/g/{guild_id}/maps/{map_id}/arma.sqf', response_class=PlainTextResponse)
-    async def map_sqf(request: Request, guild_id: str, map_id: int):
+    async def map_sqf(request: Request, guild_id: str, map_id: int,
+                      editable: int = 0):
         """The markers as a script, for pasting into a running mission.
 
         Served as a file as well as shown on the page, because a plan being
         briefed off a second screen is easier to keep somewhere than to
-        re-copy out of the browser each time it changes.
+        re-copy out of the browser each time it changes. `editable=1` is the
+        variant whose markers can be moved and deleted in game.
         """
         context = await map_context(request, guild_id, map_id)
-        return PlainTextResponse(tacmap_service.sqf(context['record']))
+        return PlainTextResponse(
+            tacmap_service.sqf(context['record'], editable=bool(editable)))
 
     # -- terrains, uploaded and served from here ----------------------------
 

@@ -731,3 +731,34 @@ def test_the_export_writes_what_arma_cannot_draw():
                            strength='reinforced')])
     script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='m1')
     assert '"1-1 Alpha (Plt +)"' in script
+
+
+def test_the_export_is_read_only_in_game_by_default():
+    doc = _doc(items=[unit(label='A')])
+    script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1')
+    assert '_USER_DEFINED' not in script
+    assert 'private _p = "map1_";' in script
+
+
+def test_the_editable_export_hands_the_markers_over():
+    """Arma only lets a player touch a marker named `_USER_DEFINED…`."""
+    doc = _doc(items=[unit(label='A')])
+    script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1', editable=True)
+    assert 'private _p = "_USER_DEFINED map1_";' in script
+    # The map's own prefix stays inside the name, so pasting a corrected plan
+    # still replaces exactly this map's markers and no other map's.
+    assert 'map1_' in script
+    assert 'DEL' in script
+
+
+def test_both_exports_delete_what_they_are_about_to_draw():
+    doc = _doc(items=[unit(label='A')])
+    for editable in (False, True):
+        script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1',
+                               editable=editable)
+        prefix = 'private _p = '
+        line = next(row for row in script.splitlines() if row.startswith(prefix))
+        name = line[len(prefix):].strip(';').strip('"')
+        assert f'createMarker [_p + "1"' in script
+        assert name.endswith('map1_')
+        assert '_x select [0, count _p] == _p' in script

@@ -106,7 +106,7 @@ Draw the plan on the terrain and share it with a link — unit symbols, movement
 - **Movement lines with arrow heads, areas, markers and free text** — everything a briefing needs to say where people are going
 - **Your actual terrain as the background** — upload the same tile archive you prepare for [OCAP](https://github.com/OCAP2/OCAP) (zip or 7z) and the bot serves it itself, or point it at a running OCAP server; either way the Arma coordinates come along with the terrain
 - **A share link** anyone can open without signing in, read-only or with drawing rights, and **replaceable** the moment it has travelled further than intended
-- **Straight into Arma 3** — the whole plan as markers in a running mission, pasted into the debug console, no mod on either side
+- **Straight into Arma 3** — the whole plan as markers in a running mission, pasted into the debug console, no mod on either side; a second version of the script hands the markers over, so they can be dragged and deleted in game
 - **Post it in a channel** as a link, so it stays current while the plan is still being drawn
 - Works read-only with JavaScript off, because the map is rendered on the server as well
 

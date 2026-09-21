@@ -1378,7 +1378,11 @@ def _bearing(start: tuple, end: tuple) -> float:
     return round(math.degrees(math.atan2(end[0] - start[0], end[1] - start[1])) % 360, 1)
 
 
-def to_sqf(doc: dict, *, prefix: str, title: str = '') -> str:
+USER_MARKER = '_USER_DEFINED '
+
+
+def to_sqf(doc: dict, *, prefix: str, title: str = '',
+           editable: bool = False) -> str:
     """The map as a script that puts these markers into a running mission.
 
     A script somebody pastes, rather than something this bot sends: vanilla
@@ -1390,10 +1394,24 @@ def to_sqf(doc: dict, *, prefix: str, title: str = '') -> str:
     them — every marker is named after this map, and the script deletes that
     set before it draws. Which is also why the prefix has to be this map's
     alone: a prefix two maps shared would have them deleting each other.
+
+    **`editable` decides whether the plan can be touched in game.** A marker
+    a script creates is read-only on the map: the engine only lets a player
+    pick up or delete one whose name begins with `_USER_DEFINED`, which is
+    how it tells a marker somebody placed from one the mission drew. Putting
+    that in front of our own prefix hands the plan over — click a marker and
+    press DEL, or drag it — while the prefix stays inside the name, so
+    pasting a corrected plan still replaces exactly this map's set and no
+    other.
+
+    It is off by default because it cuts both ways: the same click that
+    fixes a misplaced objective deletes it, and nobody is stopped from it.
     """
     prefix = ''.join(character for character in (prefix or 'tacmap')
                      if character.isalnum() or character == '_')
     prefix = (prefix or 'tacmap') + '_'
+    if editable:
+        prefix = USER_MARKER + prefix
 
     # Only what is on a visible layer: a marker somebody switched off is not
     # part of the plan they are handing over, and Arma has no way to switch it
@@ -1403,6 +1421,14 @@ def to_sqf(doc: dict, *, prefix: str, title: str = '') -> str:
         f'// {title or "Tactical map"} — {summarise(doc)}',
         '// Paste into the Arma 3 debug console and press GLOBAL EXEC as a',
         '// logged-in admin. Running it again replaces these markers.',
+    ]
+    if editable:
+        lines += [
+            '// You can move and delete these in game: click one on the map',
+            '// and press DEL, or drag it. Lines and areas are polyline',
+            '// markers, which the map may not let you pick up.',
+        ]
+    lines += [
         f'private _p = {_sqf_string(prefix)};',
         '{ if (_x select [0, count _p] == _p) then { deleteMarker _x } } '
         'forEach allMapMarkers;',

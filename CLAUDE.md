@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(203 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(206 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1940,6 +1940,23 @@ Four things in there are load-bearing:
 have no counterpart — there is no anti-tank or sniper marker — so they land on
 the nearest thing that exists rather than on nothing, and `hq` wins over the
 branch icon because `b_hq` says more about the unit than its branch does.
+
+**`editable=True` is the variant the plan can be touched in.** A marker a
+script creates is read-only on Arma's map; the engine only lets a player pick
+one up or delete it when its name begins with `_USER_DEFINED`, which is how it
+tells a marker somebody placed from one the mission drew. `USER_MARKER` goes in
+front of our own prefix rather than replacing it, so the marker becomes
+click-and-DEL while the prefix stays inside the name and a corrected plan still
+replaces exactly this map's set. Two things to know:
+
+- **It is off by default and offered as a second script**, not a replacement.
+  The same click that drags a misplaced objective into place deletes it, and
+  nothing asks first — which is right for a plan being worked on and wrong for
+  one being briefed off.
+- **Lines and areas are polylines**, and the map's own editing is built around
+  icon markers, so those may well stay fixed while the symbols and objective
+  markers move. That has not been tried in a mission — nothing in this repo
+  has, since the console is the only way in.
 
 ### Posting is a link, not a picture
 
