@@ -32,9 +32,11 @@ background image is stretched across the same box: the document *is* the map
 sheet, and nothing here knows about pixels or zoom levels.
 """
 
+import html as _html
 import json
 import math
 import re
+from urllib.parse import unquote
 from xml.sax.saxutils import escape, quoteattr
 
 DEFAULT_WIDTH = 1000
@@ -95,29 +97,105 @@ AFFILIATIONS = {
 }
 DEFAULT_SIDE = 'friend'
 
+# What dimension an object is in. APP-6 says it with the frame itself: "A
+# closed frame is used to denote the Land and Sea Surface Dimensions, a frame
+# open at the bottom to denote the Air and Space Dimensions and a frame open at
+# the top to denote the Sea Subsurface Dimension." So an air symbol is not a
+# different icon, it is the same icon in a frame that is missing its floor.
+DIMENSIONS = {
+    'land': {'label': 'Land / sea surface'},
+    'air': {'label': 'Air'},
+    'sub': {'label': 'Subsurface'},
+}
+DEFAULT_DIMENSION = 'land'
+
+# Present, or planned. The other thing APP-6 says with the frame rather than
+# with an icon: a solid line is what is there now, a dashed one what is
+# anticipated or planned. On a planning map that is the distinction the whole
+# sheet turns on, so it rides on the frame here exactly as it does on paper.
+STATUSES = {
+    'present': {'label': 'Present', 'dash': ''},
+    'planned': {'label': 'Planned / anticipated', 'dash': '13 9'},
+}
+DEFAULT_STATUS = 'present'
+
 # The frames, drawn in a 100 x 100 box centred on (50, 50). They carry no
 # paint of their own so the `<use>` that places one decides the colours.
 #
-# `top` is where the echelon marks go above the frame, and `staff` is where a
-# headquarters staff hangs off it — both differ per shape, which is the whole
-# reason a frame is a record here rather than a path.
+# One record per side *and* dimension, because everything hung off a frame is
+# measured from the frame's own edges: `top` is where the echelon marks go,
+# `bottom` is where a mobility indicator hangs and how far the label drops, and
+# `staff` is where a headquarters staff comes off. A diamond reaches half the
+# box higher than a rectangle and an air frame has no floor at all, so none of
+# the three can be a constant.
 _FRAMES = {
-    'friend': {'path': '<path d="M10,30 H90 V70 H10 Z"/>', 'top': 30,
-               'staff': (10, 70)},
+    'friend': {
+        'land': {'path': '<path d="M10,30 H90 V70 H10 Z"/>',
+                 'top': 30, 'bottom': 70, 'staff': (10, 70)},
+        # A dome: the sides run up and the top closes over them, with nothing
+        # along the bottom. The arc is r=40 about the centre, so at the top of
+        # the icon box (y 33) it is still wider than the icon.
+        'air': {'path': '<path d="M10,72 V50 A40,40 0 0 1 90,50 V72"/>',
+                'top': 10, 'bottom': 72, 'staff': (10, 72)},
+        'sub': {'path': '<path d="M10,28 V50 A40,40 0 0 0 90,50 V28"/>',
+                'top': 28, 'bottom': 90, 'staff': (10, 28)},
+    },
     # Wider than the frame it circumscribes: a diamond is narrowest exactly
     # where the pictogram is tallest, so a diamond sized like the rectangle
     # clips the X off an infantry symbol.
-    'hostile': {'path': '<path d="M50,0 L100,50 L50,100 L0,50 Z"/>', 'top': 0,
-                'staff': (25, 75)},
-    'neutral': {'path': '<path d="M14,14 H86 V86 H14 Z"/>', 'top': 14,
-                'staff': (14, 86)},
-    # A quatrefoil: four half-circles bulging out of a square.
-    'civ': {'path': '<path d="M10,30 H90 V70 H10 Z"/>', 'top': 30,
-            'staff': (10, 70)},
-    'unknown': {'path': ('<path d="M26,26 A22,22 0 0 1 74,26 A22,22 0 0 1 74,74 '
-                         'A22,22 0 0 1 26,74 A22,22 0 0 1 26,26 Z"/>'),
-                'top': 15, 'staff': (21, 79)},
+    'hostile': {
+        'land': {'path': '<path d="M50,0 L100,50 L50,100 L0,50 Z"/>',
+                 'top': 0, 'bottom': 100, 'staff': (25, 75)},
+        # Not half a diamond: the pictogram box runs y 33-67 and half a
+        # diamond stops at y 50, so the icon hung out of its own frame. A
+        # roof on short walls is what APP-6 draws and it encloses the box.
+        'air': {'path': '<path d="M2,72 V50 L50,8 L98,50 V72"/>',
+                'top': 8, 'bottom': 72, 'staff': (2, 72)},
+        'sub': {'path': '<path d="M2,28 V50 L50,92 L98,50 V28"/>',
+                'top': 28, 'bottom': 92, 'staff': (2, 28)},
+    },
+    'neutral': {
+        'land': {'path': '<path d="M14,14 H86 V86 H14 Z"/>',
+                 'top': 14, 'bottom': 86, 'staff': (14, 86)},
+        'air': {'path': '<path d="M14,86 V14 H86 V86"/>',
+                'top': 14, 'bottom': 86, 'staff': (14, 86)},
+        'sub': {'path': '<path d="M14,14 V86 H86 V14"/>',
+                'top': 14, 'bottom': 86, 'staff': (14, 14)},
+    },
+    'civ': {
+        'land': {'path': '<path d="M10,30 H90 V70 H10 Z"/>',
+                 'top': 30, 'bottom': 70, 'staff': (10, 70)},
+        'air': {'path': '<path d="M10,72 V50 A40,40 0 0 1 90,50 V72"/>',
+                'top': 10, 'bottom': 72, 'staff': (10, 72)},
+        'sub': {'path': '<path d="M10,28 V50 A40,40 0 0 0 90,50 V28"/>',
+                'top': 28, 'bottom': 90, 'staff': (10, 28)},
+    },
+    # A quatrefoil: four half-circles bulging out of a square. Its air and
+    # subsurface forms are the same lobes with one side of them left off.
+    'unknown': {
+        'land': {'path': ('<path d="M26,26 A22,22 0 0 1 74,26 A22,22 0 0 1 74,74 '
+                          'A22,22 0 0 1 26,74 A22,22 0 0 1 26,26 Z"/>'),
+                 'top': 15, 'bottom': 85, 'staff': (21, 79)},
+        'air': {'path': ('<path d="M26,74 A22,22 0 0 1 26,26 A22,22 0 0 1 74,26 '
+                         'A22,22 0 0 1 74,74"/>'),
+                'top': 15, 'bottom': 74, 'staff': (26, 74)},
+        'sub': {'path': ('<path d="M74,26 A22,22 0 0 1 74,74 A22,22 0 0 1 26,74 '
+                         'A22,22 0 0 1 26,26"/>'),
+                'top': 26, 'bottom': 85, 'staff': (26, 26)},
+    },
 }
+
+
+def frame_of(side: str, dimension: str = DEFAULT_DIMENSION) -> dict:
+    """The frame record for one side in one dimension, never missing."""
+    shapes = _FRAMES.get(side) or _FRAMES[DEFAULT_SIDE]
+    return shapes.get(dimension) or shapes[DEFAULT_DIMENSION]
+
+
+def item_frame(item: dict) -> dict:
+    """The frame the item is drawn in."""
+    return frame_of(item.get('side', DEFAULT_SIDE),
+                    item.get('dimension', DEFAULT_DIMENSION))
 
 # The size marks that sit above the frame. A symbol without one is a unit of
 # unsaid size, which is what most things on a plan are — so this is opt-in and
@@ -160,6 +238,44 @@ STRENGTHS = {
     'reduced': {'label': 'Reduced (-)', 'text': '(-)'},
     'both': {'label': 'Reinforced and reduced (\u00b1)', 'text': '(\u00b1)'},
 }
+
+# APP-6 field R, the mobility indicator: what the thing moves on, drawn as a
+# short chassis hung under the frame. Arma tells a towed gun from a
+# self-propelled one by which vehicle is parked next to it and a plan cannot,
+# so this is the one amplifier that changes what a battery on the sheet means.
+#
+# Each icon is drawn in the 100-box on a baseline of y=0 and is moved under
+# whatever the frame's own bottom happens to be, so it hangs off a diamond's
+# tip and off a rectangle's edge alike.
+MOBILITY = {
+    'wheeled': {'label': 'Wheeled', 'short': 'whl',
+                'icon': '<path d="M30,0 H70"/>'
+                        '<circle cx="36" cy="8" r="7" fill="none"/>'
+                        '<circle cx="64" cy="8" r="7" fill="none"/>'},
+    'crosscountry': {'label': 'Wheeled, cross-country', 'short': 'x-c',
+                     'icon': '<path d="M28,0 H72"/>'
+                             '<circle cx="34" cy="8" r="7" fill="none"/>'
+                             '<circle cx="50" cy="8" r="7" fill="none"/>'
+                             '<circle cx="66" cy="8" r="7" fill="none"/>'},
+    'tracked': {'label': 'Tracked', 'short': 'trk',
+                'icon': '<rect x="28" y="0" width="44" height="16" rx="8" '
+                        'fill="none"/>'},
+    # A tow bar with a tongue on it, not two bars: two lines this close
+    # merge into a capsule once each is drawn twice for contrast.
+    'towed': {'label': 'Towed', 'short': 'twd',
+              'icon': '<path d="M12,15 L26,1 H74"/>'
+                      '<circle cx="36" cy="9" r="7" fill="none"/>'
+                      '<circle cx="66" cy="9" r="7" fill="none"/>'},
+    'amphib': {'label': 'Amphibious', 'short': 'amph',
+               'icon': '<path d="M26,3 Q37,-7 48,3 Q59,13 70,3" fill="none"/>'
+                       '<path d="M26,15 Q37,5 48,15 Q59,25 70,15" fill="none"/>'},
+}
+
+# How far under the frame's own bottom the mobility chassis hangs, and how
+# much room it then takes up. The drop clears the frame's own stroke, which
+# is 5 wide and drawn centred on the path.
+MOBILITY_DROP = 13
+MOBILITY_DEPTH = 26
 
 # The icon sits in x 25-75, y 33-67, which is the largest box that fits inside
 # every frame — the diamond is narrowest exactly where the icon is tallest.
@@ -260,8 +376,8 @@ DEFAULT_SYMBOL = 'inf'
 # than its own symbol because any unit can be the one in charge — an HQ that
 # is also a medical company is a medical icon on a staff. Where it hangs from
 # differs per frame, which is what `staff` in `_FRAMES` says.
-def _hq_staff(side: str) -> str:
-    x, y = _FRAMES[side]['staff']
+def _hq_staff(side: str, dimension: str = DEFAULT_DIMENSION) -> str:
+    x, y = frame_of(side, dimension)['staff']
     return f'<path d="M{x},{y} V{y + 46}" fill="none" stroke-linecap="square"/>'
 
 
@@ -682,7 +798,12 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         item['echelon'] = echelon if echelon in ECHELONS else ''
         strength = raw.get('strength')
         item['strength'] = strength if strength in STRENGTHS else ''
+        mobility = raw.get('mobility')
+        item['mobility'] = mobility if mobility in MOBILITY else ''
+        dimension = raw.get('dimension')
+        item['dimension'] = dimension if dimension in DIMENSIONS else DEFAULT_DIMENSION
         item['text'] = _text(raw.get('text'), MAX_MOD)
+        item['higher'] = _text(raw.get('higher'), MAX_MOD)
     elif kind == 'point':
         item['glyph'] = _text(raw.get('glyph'), MAX_GLYPH).upper()
         # A map drawn before the marker shapes existed carries none. Its
@@ -693,6 +814,13 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         if marker not in MARKERS:
             marker = ARMA_POINTS.get(item['glyph'], DEFAULT_MARKER)
         item['marker'] = marker
+
+    if kind in ('unit', 'point'):
+        # Present or planned rides on the frame of a unit and on the shape of
+        # a task alike; a line or an area already says it with `style`, so
+        # giving those a status too would be two switches for one fact.
+        status = raw.get('status')
+        item['status'] = status if status in STATUSES else DEFAULT_STATUS
 
     if kind in ('line', 'area', 'text'):
         # The side says whose a symbol is and must keep saying it, but a line
@@ -846,6 +974,18 @@ def catalog() -> dict:
             {'key': key, 'label': value['label'], 'text': value['text']}
             for key, value in STRENGTHS.items()
         ],
+        'mobility': [
+            {'key': key, 'label': value['label']}
+            for key, value in MOBILITY.items()
+        ],
+        'dimensions': [
+            {'key': key, 'label': value['label']}
+            for key, value in DIMENSIONS.items()
+        ],
+        'statuses': [
+            {'key': key, 'label': value['label'], 'dash': value['dash']}
+            for key, value in STATUSES.items()
+        ],
         'markers': [
             {'key': key, 'label': value['label'], 'text': value['text']}
             for key, value in MARKERS.items()
@@ -867,9 +1007,19 @@ def catalog() -> dict:
         'minLabel': MIN_LABEL,
         'defaultMarker': DEFAULT_MARKER,
         'echelonLift': ECHELON_LIFT,
+        'mobilityDrop': MOBILITY_DROP,
+        'mobilityDepth': MOBILITY_DEPTH,
+        'defaultDimension': DEFAULT_DIMENSION,
+        'defaultStatus': DEFAULT_STATUS,
+        # Keyed side → dimension, the same two steps the renderer takes, so
+        # the browser reads a frame's geometry rather than assuming any of it.
         'frames': {
-            side: {'top': frame['top'], 'staff': list(frame['staff'])}
-            for side, frame in _FRAMES.items()
+            side: {
+                dimension: {'top': frame['top'], 'bottom': frame['bottom'],
+                            'staff': list(frame['staff'])}
+                for dimension, frame in shapes.items()
+            }
+            for side, shapes in _FRAMES.items()
         },
     }
 
@@ -901,11 +1051,16 @@ def defs() -> str:
     is all either renderer needs. Adding a symbol here adds it to both.
     """
     parts = ['<defs>']
-    for side, frame in _FRAMES.items():
-        parts.append(f'<g id="tmf-{side}">{frame["path"]}</g>')
-        parts.append(f'<g id="tmh-{side}">{_hq_staff(side)}</g>')
+    for side, shapes in _FRAMES.items():
+        for dimension, frame in shapes.items():
+            parts.append(f'<g id="tmf-{side}-{dimension}">{frame["path"]}</g>')
+            parts.append(
+                f'<g id="tmh-{side}-{dimension}">{_hq_staff(side, dimension)}</g>'
+            )
     for key, echelon in ECHELONS.items():
         parts.append(f'<g id="tmx-{key}">{echelon["icon"]}</g>')
+    for key, mobility in MOBILITY.items():
+        parts.append(f'<g id="tmv-{key}">{mobility["icon"]}</g>')
     for key, symbol in SYMBOLS.items():
         parts.append(f'<g id="tmi-{key}">{symbol["icon"]}</g>')
     for key, marker in MARKERS.items():
@@ -959,19 +1114,26 @@ def _unit_svg(item: dict) -> str:
     """One unit symbol: the frame, what is in it, and what is written round it."""
     colours = AFFILIATIONS[item['side']]
     side = item['side']
+    dimension = item.get('dimension', DEFAULT_DIMENSION)
+    frame = item_frame(item)
     scale = UNIT_BOX * item['size'] / 100
     # The symbol is drawn in its own 100 × 100 box and then moved onto the map,
     # so a rotation turns the symbol about its own centre rather than the sheet.
     transform = (f"translate({round(item['x'], 2)},{round(item['y'], 2)}) "
                  f"rotate({item.get('rotation', 0)}) scale({round(scale, 4)}) "
                  f"translate(-50,-50)")
+    # An air or subsurface frame has no floor, so the fill would leak out of
+    # the open side; those paths carry `fill="none"` of their own and the
+    # attribute here is what the closed ones use.
+    dash = STATUSES[item.get('status') or DEFAULT_STATUS]['dash']
     parts = [
-        f'<use href="#tmf-{side}" fill="{colours["fill"]}" '
-        f'stroke="{colours["edge"]}" stroke-width="5"/>'
+        f'<use href="#tmf-{side}-{dimension}" fill="{colours["fill"]}" '
+        f'stroke="{colours["edge"]}" stroke-width="5"'
+        f'{_attrs(stroke_dasharray=dash)}/>'
     ]
     if item.get('hq'):
-        parts.append(f'<use href="#tmh-{side}" stroke="{colours["edge"]}" '
-                     f'stroke-width="5"/>')
+        parts.append(f'<use href="#tmh-{side}-{dimension}" '
+                     f'stroke="{colours["edge"]}" stroke-width="5"/>')
     if SYMBOLS[item['symbol']]['icon']:
         parts.append(
             f'<use href="#tmi-{item["symbol"]}" fill="none" '
@@ -979,9 +1141,15 @@ def _unit_svg(item: dict) -> str:
             f'stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>'
         )
     parts.extend(_modifier_svg(item, colours))
-    # The label sits under the frame, and under the staff when there is one —
-    # a headquarters would otherwise have its own name drawn over its staff.
-    drop = UNIT_BOX * item['size'] * (0.85 if item.get('hq') else 0.62) + 6
+    # The label sits under everything the symbol hangs downwards: the frame
+    # itself, the mobility chassis below it, and the staff of a headquarters.
+    # The old fixed drop is kept as a floor so a symbol that grew none of
+    # those sits exactly where it always did.
+    depth = frame['bottom']
+    if item.get('mobility') in MOBILITY:
+        depth += MOBILITY_DROP + MOBILITY_DEPTH
+    depth = max(depth, 135 if item.get('hq') else 112)
+    drop = UNIT_BOX * item['size'] * (depth - 50) / 100 + 6
     label = _label_svg(item['label'], item['x'], item['y'] + drop, item['size'])
     return f'<g transform="{transform}">{"".join(parts)}</g>{label}'
 
@@ -997,7 +1165,7 @@ def _modifier_svg(item: dict, colours: dict) -> list:
     sits on terrain rather than on paper and has to read over both.
     """
     parts = []
-    frame = _FRAMES[item['side']]
+    frame = item_frame(item)
     top = frame['top']
     line = top - ECHELON_LIFT
     echelon = item.get('echelon')
@@ -1016,6 +1184,21 @@ def _modifier_svg(item: dict, colours: dict) -> list:
         x = 103 if echelon in ECHELONS else 50
         parts.append(_chrome_text(STRENGTHS[strength]['text'], x, line + 7, 20,
                                   colours))
+    higher = item.get('higher', '')
+    if higher:
+        # APP-6 field M, on the same line as the size marks and on the other
+        # side of them: read together they say which unit this is and whose
+        # it is, which is the pair the designation is useless without.
+        parts.append(_chrome_text(higher, -3, line + 7, 20, colours, anchor='end'))
+    mobility = item.get('mobility')
+    if mobility in MOBILITY:
+        shift = f'translate(0,{round(frame["bottom"] + MOBILITY_DROP, 2)})'
+        for colour, width in ((colours['fill'], 11), (colours['glyph'], 4.5)):
+            parts.append(
+                f'<use href="#tmv-{mobility}" fill="none" stroke="{colour}" '
+                f'color="{colour}" stroke-width="{width}" stroke-linecap="round" '
+                f'stroke-linejoin="round" transform="{shift}"/>'
+            )
     text = item.get('text', '')
     if text:
         # An empty frame has room for it; a frame with a pictogram in it does
@@ -1057,14 +1240,18 @@ def _point_svg(item: dict) -> str:
     scale = POINT_BOX * item['size'] / 100 * 1.55
     transform = (f"translate({round(item['x'], 2)},{round(item['y'], 2)}) "
                  f"scale({round(scale, 4)}) translate(-50,-50)")
+    # A planned task is dashed exactly as a planned unit's frame is, and both
+    # passes carry the same pattern or the solid one shows through the gaps.
+    dash = _attrs(stroke_dasharray=STATUSES[item.get('status')
+                                            or DEFAULT_STATUS]['dash'])
     shape = (
         f'<g transform="{transform}">'
         f'<use href="#tmm-{marker_key(item)}" fill="none" '
         f'stroke="{colours["edge"]}" color="{colours["edge"]}" stroke-width="15" '
-        f'stroke-linecap="round" stroke-linejoin="round"/>'
+        f'stroke-linecap="round" stroke-linejoin="round"{dash}/>'
         f'<use href="#tmm-{marker_key(item)}" fill="none" '
         f'stroke="{colours["fill"]}" color="{colours["fill"]}" stroke-width="7" '
-        f'stroke-linecap="round" stroke-linejoin="round"/>'
+        f'stroke-linecap="round" stroke-linejoin="round"{dash}/>'
         f'</g>'
     )
     reach = POINT_BOX * item['size'] * 0.8
@@ -1243,6 +1430,96 @@ def render(doc: dict, *, standalone: bool = False, extra_class: str = '') -> str
 # ---------------------------------------------------------------------------
 
 
+# How many terrains one directory listing may offer. A unit's OCAP folder
+# holds a few dozen; a listing far longer than that is not a map directory
+# and there is no reason to render it into a dropdown.
+MAX_INDEX_ENTRIES = 300
+
+# What a folder name may be. OCAP names them after the terrain's world name
+# (`tem_cham`, `tanoa`), and anything outside this is either a file or
+# something that should not be pasted back into a URL.
+_INDEX_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+_HREF = re.compile(r'<a\s[^>]*?href=["\']([^"\'>]+)["\']', re.I)
+
+
+def parse_map_index(body) -> list:
+    """The terrain folders a directory listing offers, as plain names.
+
+    Typing out an OCAP map URL by hand means knowing the world name of a
+    terrain, which is exactly the thing nobody remembers — so the folder is
+    read and its contents offered as a list. What comes back differs per web
+    server, and none of them is worth requiring:
+
+    * nginx with `autoindex_format json`, a list of `{"name", "type"}`
+    * a plain JSON list of names, which is what a hand-written index gives
+    * nginx or Apache's HTML autoindex, which is a page of `<a href>`
+
+    All three are read the same way, because the answer wanted from each is
+    the same: the subdirectory names. Anything that is not a directory name
+    is dropped rather than guessed at — a listing is somebody else's page
+    and its links are not a place this bot should follow blindly.
+    """
+    text = body.decode('utf-8', 'replace') if isinstance(body, bytes) else str(body or '')
+    names = _index_from_json(text)
+    if names is None:
+        names = _index_from_html(text)
+    keep = []
+    for name in names:
+        name = unquote(name).strip().strip('/')
+        # A listing links back to where it came from and sideways to itself;
+        # neither is a terrain.
+        if not name or name in ('.', '..') or not _INDEX_NAME.match(name):
+            continue
+        if name not in keep:
+            keep.append(name)
+        if len(keep) >= MAX_INDEX_ENTRIES:
+            break
+    keep.sort(key=str.lower)
+    return keep
+
+
+def _index_from_json(text: str):
+    """The names a JSON listing carries, or None when it is not JSON."""
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, list):
+        return None
+    names = []
+    for entry in payload:
+        if isinstance(entry, str):
+            names.append(entry)
+        elif isinstance(entry, dict):
+            # nginx says `"type": "directory"`; a listing that says nothing
+            # about type is taken at its word, since a file would not have
+            # passed the name test anyway.
+            if entry.get('type') not in (None, 'directory'):
+                continue
+            name = entry.get('name') or entry.get('path') or ''
+            if isinstance(name, str):
+                names.append(name)
+    return names
+
+
+def _index_from_html(text: str) -> list:
+    """The hrefs an HTML autoindex carries, unescaped and made relative."""
+    names = []
+    for href in _HREF.findall(text):
+        href = _html.unescape(href)
+        # Only a link into this folder is a terrain in it: an absolute URL,
+        # a scheme, a query or a fragment all point somewhere else.
+        if href.startswith(('http://', 'https://', '//', '/', '?', '#', 'mailto:')):
+            continue
+        names.append(href.split('?')[0].split('#')[0])
+    # nginx and Apache both write a directory with a trailing slash, which is
+    # the only thing on the page that tells a terrain from the readme sitting
+    # next to it. A hand-written index may link without one, so the rule is
+    # "prefer the folders when the page marks any" rather than "require it".
+    folders = [name for name in names if name.endswith('/')]
+    return folders or names
+
+
 def ocap_settings(payload: dict, base_url: str) -> dict:
     """An OCAP `map.json` turned into a background and an Arma extent.
 
@@ -1344,6 +1621,11 @@ def _arma_type(item: dict) -> str:
     # it says more about the unit than its branch does.
     if item.get('hq'):
         return f'{side}_hq'
+    # Arma says the air dimension with a marker of its own, and it says more
+    # about a symbol drawn in an open-bottomed frame than its branch does.
+    if item.get('dimension') == 'air' and item.get('symbol') not in ('air', 'heli',
+                                                                     'uav'):
+        return f'{side}_air'
     return f"{side}_{ARMA_TYPES.get(item.get('symbol'), 'unknown')}"
 
 
@@ -1359,6 +1641,10 @@ def _marker_text(item: dict) -> str:
     # around its frame is written into the marker's text instead of being lost
     # on the way into the mission.
     extra = []
+    if item.get('status') == 'planned':
+        # Arma has no dashed marker, so the one thing a dashed frame says has
+        # to be said in words or it is lost on the way into the mission.
+        extra.append('planned')
     if item.get('text'):
         extra.append(item['text'])
     if item.get('echelon') in ECHELONS:
@@ -1367,10 +1653,17 @@ def _marker_text(item: dict) -> str:
         # Without its brackets: the whole tail is already in brackets, and
         # "Alpha (Plt (+))" reads as a typo.
         extra.append(STRENGTHS[item['strength']]['text'].strip('()'))
+    if item.get('mobility') in MOBILITY:
+        extra.append(MOBILITY[item['mobility']]['short'])
+    name = item['label']
+    if item.get('higher'):
+        # "1-1 Alpha / A Coy" — the pair APP-6 draws as two fields, written
+        # the way a unit writes it when it only has one line to write on.
+        name = f'{name} / {item["higher"]}' if name else item['higher']
     if not extra:
-        return item['label']
+        return name
     tail = ' '.join(extra)
-    return f'{item["label"]} ({tail})' if item['label'] else tail
+    return f'{name} ({tail})' if name else tail
 
 
 def _bearing(start: tuple, end: tuple) -> float:

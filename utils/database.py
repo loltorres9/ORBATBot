@@ -549,6 +549,12 @@ async def init_db():
             await db.execute(
                 f'ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS {column} TEXT'
             )
+        # The OCAP map directory this guild's terrains are served from, so a
+        # map is picked from a list instead of its world name being typed out
+        # from memory. NULL means nobody has said where it is yet.
+        await db.execute(
+            'ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS ocap_base_url TEXT'
+        )
 
 
 async def get_active_operation(guild_id: str):
@@ -792,6 +798,28 @@ async def get_guild_timezone(guild_id: str) -> str:
             'SELECT timezone FROM guild_settings WHERE guild_id = $1', guild_id
         )
         return row['timezone'] if row else 'UTC'
+
+
+async def get_ocap_base_url(guild_id: str) -> str:
+    """Where this guild's OCAP serves its terrains — '' until one is saved."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            'SELECT ocap_base_url FROM guild_settings WHERE guild_id = $1', guild_id
+        )
+        return (row['ocap_base_url'] or '') if row else ''
+
+
+async def set_ocap_base_url(guild_id: str, url: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            '''INSERT INTO guild_settings (guild_id, timezone, ocap_base_url)
+               VALUES ($1, 'UTC', $2)
+               ON CONFLICT (guild_id)
+               DO UPDATE SET ocap_base_url = EXCLUDED.ocap_base_url''',
+            guild_id, url or None,
+        )
 
 
 async def set_guild_timezone(guild_id: str, timezone: str):

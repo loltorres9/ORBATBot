@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(209 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(239 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -303,6 +303,7 @@ background at all.
 | `orbat_channel_id` | TEXT | Where the live board and the reminder ping go |
 | `approvals_channel_id` | TEXT | Where a new request goes to be decided |
 | `archive_channel_id` | TEXT | Where every decided request is recorded |
+| `ocap_base_url` | TEXT | The OCAP folder this guild's terrains are served from, so a terrain is picked from a list rather than its world name typed out. NULL until a directory has actually answered — see [the background](#the-background-is-a-picture-a-terrain-from-ocap-or-one-you-upload) |
 
 **All three channel columns are NULL until an admin picks something**, and NULL
 means the channel *named* `#orbat` / `#slot-approvals` / `#approval-archive`,
@@ -1222,6 +1223,7 @@ POST /g/{guild}/maps/{id}/duplicate     the plan, not the share link
 POST /g/{guild}/maps/{id}/share         off / view / edit, or action=new for a fresh link
 POST /g/{guild}/maps/{id}/post          announce it in a channel, as a link
 GET  /g/{guild}/maps/{id}/arma.sqf      the markers as a script for a live mission
+POST /g/{guild}/maps/{id}/ocap-list     read the OCAP directory, list its terrains
 POST /g/{guild}/maps/{id}/ocap          read an OCAP map folder: terrain + calibration
 POST /g/{guild}/maps/{id}/terrain       put the map on one of this guild's terrains
 GET  /g/{guild}/terrains                the uploaded terrains, POST to upload one
@@ -1724,6 +1726,12 @@ written.
   diamond and the quatrefoil are drawn **larger than the rectangle**: a
   diamond is narrowest exactly where the pictogram is tallest, and one sized
   like the rectangle cuts the arms off an infantry X.
+- **And a frame per dimension.** *"A closed frame is used to denote the Land
+  and Sea Surface Dimensions, a frame open at the bottom to denote the Air
+  and Space Dimensions and a frame open at the top to denote the Sea
+  Subsurface Dimension."* So `_FRAMES` is keyed side **and** dimension, and
+  an air symbol is the same pictogram in a frame missing its floor rather
+  than an icon of its own.
 - **Pale fill, dark line work.** `fill` is the frame, `edge` its outline and
   `glyph` both the pictogram and every modifier — so unlike a solid block
   with a white icon, the whole symbol stays legible against a terrain that is
@@ -1736,6 +1744,28 @@ written.
 - **Headquarters is a modifier, not a symbol**, because any unit can be the
   one in charge. Where its staff hangs from differs per frame, which is why
   `_FRAMES` holds a record per side rather than a path.
+
+### The frame says three things, and none of them is an icon
+
+Whose a unit is, where it is, and whether it is there yet — APP-6 puts all
+three on the frame, which is why they live in `_FRAMES` and `STATUSES`
+rather than in `SYMBOLS`.
+
+- **An open frame is still filled.** SVG closes an open subpath implicitly
+  when it fills one, so an air frame keeps the pale field its pictogram
+  needs. The first cut set `fill="none"` on those paths and both the line
+  work and the icon disappeared into a dark terrain — a frame nobody can
+  see is not a frame.
+- **The hostile air frame is a roof on short walls, not half a diamond.**
+  Half a diamond stops at y 50 and the pictogram box runs to y 67, so an
+  infantry X hung out of its own symbol. `test_every_frame_encloses_the_
+  pictogram_box` checks `top <= 33 and bottom >= 67` for all fifteen frames
+  rather than for the one that broke.
+- **Status is a dashed frame**: solid is what is there, dashed is planned or
+  anticipated. It rides on unit frames and on task markers — a point is
+  dashed on **both** of its passes, or the solid one shows through the gaps
+  — and deliberately not on lines and areas, which already say it with
+  `style`. Two switches for one fact is how they end up disagreeing.
 
 **`ECHELONS` and `STRENGTHS` are what a card has and a map marker does not.**
 The size marks sit above the frame — Ø team, • squad, •• section, ••• platoon,
@@ -1756,6 +1786,24 @@ frame. Three things about them:
 - **Arma has neither**, so `_marker_text()` writes them into the exported
   marker's text: `1-1 Alpha (Plt +)` rather than a platoon that arrives in the
   mission as an unqualified name.
+
+**`MOBILITY` and the higher formation are the two amplifier fields that
+change what a symbol means.** Field R hangs a chassis — wheeled, tracked,
+towed, amphibious — under whatever the frame's own bottom happens to be, so
+it sits on a diamond's tip and a rectangle's edge alike; field M writes the
+parent unit on the line above the frame, opposite the strength, so the two
+read as one designation. Three things follow:
+
+- **The label drop is measured from the frame**, not fixed, because the
+  chassis and a headquarters staff both hang below it. The old fixed value
+  is kept as a **floor**, so no existing map's name moves.
+- **The chassis is drawn twice**, pale under dark, like everything else
+  outside the frame — but thinner than the echelon marks are, or the pale
+  pass swallows the shape instead of backing it.
+- **Arma has neither of these either**, so both go into the marker text:
+  `1-1 Alpha / A Coy (planned Plt twd)`. A symbol in an air frame also gets
+  the game's own `*_air` marker rather than its branch icon, since that
+  says more about it.
 
 **`MARKERS` is the other half of the game's set** — `mil_dot`, `mil_objective`,
 `mil_destroy`, `mil_flag` and the rest. A point carries one of those shapes and
@@ -1803,6 +1851,31 @@ server-side and the editor takes that markup over rather than building it from
 nothing, so the fallback is a map you can read, not an empty box. That is also
 why the read-only page and the share link need no JavaScript at all.
 
+#### A line is drawn by holding Ctrl and dragging
+
+Click, click, click, Enter is a mode, and one you have to leave before
+anything else works. The gesture people arrive with is Arma's own, so
+**Ctrl and drag draws freehand from any tool**, Select included — reaching
+for the Line button first was the part that felt like being trapped. The
+Area tool closes the shape; everything else leaves it a line. Clicking it
+out point by point stays for a polyline that has to hit exact points, and
+the toolbar names both, because nothing on the page said the gesture
+existed.
+
+Three details are load-bearing:
+
+- **The stroke is thinned as it is drawn.** A pointer reports every pixel it
+  crosses and a document holds `MAX_POINTS` of them, so an unthinned stroke
+  spends the whole budget in one gesture. The step is a fraction of the
+  *view* rather than of the sheet, so it thins by how far the line looks
+  rather than by how far zoomed in it happens to be.
+- **A stroke that goes nowhere is dropped in silence** (`draft.free`). A
+  click-by-click draft that is too short was deliberate and is told why; a
+  slipped finger does not need an error.
+- **Escape is handled before the modifier guard** in the key handler,
+  because a ctrl-drag is cancelled with Ctrl still held down. Otherwise the
+  one key you reach for to get out is the one that cannot reach it.
+
 ### The share link is the whole credential
 
 `/m/{token}` opens a map with no session and no Discord — which is the point,
@@ -1840,6 +1913,28 @@ A tile set gets onto a map two ways, and they meet in the same background:
 The upload is the one to prefer for anything shared outside the unit: a share
 link is meant for people who do not sign in here, and expecting them to reach an
 OCAP instance as well is how a link ends up showing an empty sheet.
+
+**The terrain is picked from a list, not typed.** OCAP names a folder after
+the terrain's *world* name — Cham is `tem_cham` — which is exactly the thing
+nobody remembers, so `POST …/ocap-list` reads the directory it keeps them in
+and the panel offers what is in it. The directory is remembered per guild
+(`guild_settings.ocap_base_url`) and only **once it has answered**: a saved
+address that does not work is worse than none. Listing is its own route
+rather than part of opening the map, because reading it is a request to
+somebody else's server and should happen when somebody asks, not when they
+look at a page. Pasting one map's address still works as the fallback it now
+is, since some servers do not list a directory at all.
+
+`tacmap.parse_map_index()` is what reads the answer, in `utils/tacmap.py`
+with the rest of the stdlib-only code. What a listing looks like differs per
+web server and none of them is worth requiring — nginx's JSON autoindex, a
+plain list of names, and nginx's or Apache's HTML page all answer the same
+question. Two rules in it matter: the HTML path **prefers links with a
+trailing slash**, which is the only thing on such a page that tells a
+terrain from the readme beside it, and falls back to every link when a
+hand-written index marks none; and a link pointing off this folder —
+absolute, rooted, `mailto:`, the parent — is **dropped rather than
+followed**, because a listing is somebody else's page.
 
 `POST …/ocap` takes the address of one of those map folders, reads its
 `map.json` and settles both halves of setting a map up:

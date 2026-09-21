@@ -921,10 +921,17 @@ def create_app(bot, config: WebConfig) -> FastAPI:
 
     async def map_editor(request: Request, context: dict, error: str = None,
                          status: int = 200, panel: str = None,
-                         channel: int = tacmap_lib.DEFAULT_CHANNEL):
+                         channel: int = tacmap_lib.DEFAULT_CHANNEL,
+                         ocap_maps: list = None, ocap_base: str = None):
         record = context['record']
         doc = tacmap_service.load(record)
         terrains = await database.get_guild_tac_terrains(str(context['guild'].id))
+        # The directory is remembered per guild, so it is typed once and the
+        # terrains are a dropdown from then on. `ocap_maps` is only filled by
+        # the listing route — opening the page must never read somebody
+        # else's server.
+        if ocap_base is None:
+            ocap_base = await database.get_ocap_base_url(str(context['guild'].id))
         return render(request, 'tacmap_edit.html', {
             **context,
             'doc_json': tacmap_lib.json_payload(doc),
@@ -945,6 +952,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                           if record['share_token'] else ''),
             'channels': postable_channels(context['guild']),
             'terrains': terrains,
+            'ocap_base': ocap_base,
+            'ocap_maps': ocap_maps or [],
             'panel': panel,
             'error': error,
         }, status=status)
@@ -1107,18 +1116,49 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         )
         return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
 
+    @app.post('/g/{guild_id}/maps/{map_id}/ocap-list')
+    async def map_ocap_list(request: Request, guild_id: str, map_id: int):
+        """Read the OCAP directory and come back with its terrains as a list.
+
+        Its own route rather than part of opening the page: reading it is a
+        request to somebody else's server, and that must happen because a
+        person asked for it, not because they looked at a map.
+        """
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+        base = form.get('base') or ''
+        try:
+            names = await tacmap_service.list_ocap_maps(base)
+        except ValueError as e:
+            return await map_editor(request, context, error=str(e), status=400,
+                                    panel='ocap', ocap_base=base)
+        # Only a directory that answered is worth remembering.
+        await database.set_ocap_base_url(
+            str(context['guild'].id), tacmap_service.clean_base_url(base)
+        )
+        return await map_editor(request, context, panel='ocap', ocap_maps=names,
+                                ocap_base=tacmap_service.clean_base_url(base))
+
     @app.post('/g/{guild_id}/maps/{map_id}/ocap')
     async def map_ocap(request: Request, guild_id: str, map_id: int):
         context = await map_context(request, guild_id, map_id)
         require_draw(context)
         form = await request.form()
         auth.check_csrf(context['session'], form.get('csrf'))
+        url = (form.get('url') or '').strip()
+        chosen = (form.get('name') or '').strip()
+        if chosen:
+            base = tacmap_service.clean_base_url(form.get('base') or '')
+            url = f'{base}/{chosen}' if base else chosen
         try:
             note = await tacmap_service.import_ocap(
-                context['record'], form.get('url'), context['member'].display_name
+                context['record'], url, context['member'].display_name
             )
         except ValueError as e:
-            return await map_editor(request, context, error=str(e), status=400, panel='ocap')
+            return await map_editor(request, context, error=str(e), status=400,
+                                    panel='ocap')
         return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
 
     @app.post('/g/{guild_id}/maps/{map_id}/rename')

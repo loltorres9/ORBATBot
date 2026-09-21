@@ -100,6 +100,67 @@ async def save(record, raw_doc: str, member_name: str = None) -> list:
 OCAP_TIMEOUT = 15
 
 
+# The listing a directory answers with can be a page of links; cut it off
+# well before anything that is not one could arrive.
+MAX_INDEX_BYTES = 512 * 1024
+
+
+def clean_base_url(raw: str) -> str:
+    """An OCAP address, tidied — or a message saying why it is not one."""
+    url = (raw or '').strip().rstrip('/')
+    if not url:
+        return ''
+    if not url.startswith(('http://', 'https://')):
+        raise ValueError(
+            'The OCAP address has to start with https:// — for example '
+            'https://ocap.example.com/images/maps'
+        )
+    return url
+
+
+async def list_ocap_maps(base_url: str) -> list:
+    """The terrains that OCAP directory carries, by name.
+
+    Pointing a map at a terrain used to mean knowing its world name and
+    typing the whole URL out, which is the one thing nobody remembers —
+    `tem_cham` is not what anybody calls Cham. So the folder is read and
+    what is in it is offered as a list.
+
+    Read here and not in the browser for exactly the reason `import_ocap()`
+    is: the OCAP server is somebody else's origin, and a fetch from the page
+    would need CORS headers nobody has set.
+    """
+    base = clean_base_url(base_url)
+    if not base:
+        raise ValueError('Say where OCAP serves its terrains first.')
+
+    import aiohttp                      # as utils/sheets.py does with its own
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=OCAP_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f'{base}/') as response:
+                if response.status != 200:
+                    raise ValueError(
+                        f'{base}/ answered {response.status}. That should be the '
+                        'folder holding one directory per terrain.'
+                    )
+                body = await response.content.read(MAX_INDEX_BYTES)
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(f'Could not read {base}/ — {e}')
+
+    names = tacmap.parse_map_index(body)
+    if not names:
+        raise ValueError(
+            f'{base}/ answered, but nothing in it looks like a terrain folder. '
+            'Some servers do not list a directory at all — paste one map\'s '
+            'address instead.'
+        )
+    return names
+
+
 async def import_ocap(record, raw_url: str, member_name: str = None) -> str:
     """Point this map at an OCAP terrain, and take its calibration with it.
 

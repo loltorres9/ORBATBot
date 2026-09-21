@@ -19,11 +19,18 @@
         <button type="button" class="tmtool" data-tool="area">⬟ Area</button>
         <button type="button" class="tmtool" data-tool="text">🔤 Text</button>
       </div>
+      {# The gesture is the one Arma's own map uses, so it is what people try
+         first — but nothing on the page would otherwise say it is here. #}
+      <p class="tmhint">Hold <kbd>Ctrl</kbd> and drag to draw a line, from any
+        tool. The Line and Area tools also take it point by point —
+        <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> cancels.</p>
       <div class="tmpick">
         <label>Side <select id="tmside"></select></label>
         <label>Layer <select id="tmlayerpick"></select></label>
         <label data-for="unit">Symbol <select id="tmsymbol"></select></label>
         <label data-for="unit">Size <select id="tmechelon"></select></label>
+        <label data-for="unit">Where <select id="tmdimension"></select></label>
+        <label data-for="unit point">State <select id="tmstatuspick"></select></label>
         <label data-for="unit" class="tmcheck"><input type="checkbox" id="tmhq"> HQ</label>
         <label data-for="point">Marker <select id="tmmarker"></select></label>
         <label data-for="point">Text <select id="tmglyph"></select></label>
@@ -67,6 +74,20 @@
             <select id="tmf-echelon"></select></label>
           <label class="field" data-for="unit"><span>Strength</span>
             <select id="tmf-strength"></select></label>
+          <label class="field" data-for="unit"><span>Dimension</span>
+            <select id="tmf-dimension"></select>
+            <span class="hint">Air and subsurface are the same symbol in a frame
+              with its floor or its roof left off — that is how APP-6 says
+              it.</span></label>
+          <label class="field" data-for="unit point"><span>State</span>
+            <select id="tmf-status"></select>
+            <span class="hint">Planned is drawn dashed. Arma has no dashed
+              marker, so the export writes it into the marker's name
+              instead.</span></label>
+          <label class="field" data-for="unit"><span>Mobility</span>
+            <select id="tmf-mobility"></select></label>
+          <label class="field" data-for="unit"><span>Higher formation</span>
+            <input id="tmf-higher" maxlength="5" placeholder="A Coy"></label>
           <label class="field" data-for="unit"><span>Abbreviation</span>
             <input id="tmf-text" maxlength="5" placeholder="SF">
             <span class="hint">Written in an empty frame, or beside one that

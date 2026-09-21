@@ -38,6 +38,8 @@
     glyph: catalog.points.length ? catalog.points[0].glyph : 'OBJ',
     marker: catalog.defaultMarker,
     echelon: '',
+    dimension: catalog.defaultDimension,
+    status: catalog.defaultStatus,
     layer: '',
     hq: false,
     selected: -1,
@@ -59,6 +61,30 @@
   catalog.echelons.forEach(function (entry) { echelons[entry.key] = entry; });
   var strengths = {};
   catalog.strengths.forEach(function (entry) { strengths[entry.key] = entry; });
+  var mobility = {};
+  catalog.mobility.forEach(function (entry) { mobility[entry.key] = entry; });
+  var statuses = {};
+  catalog.statuses.forEach(function (entry) { statuses[entry.key] = entry; });
+
+  function dimensionOf(item) {
+    // Which frame a symbol is actually drawn in. A document written by a
+    // newer version can name a dimension this one has not got, and the `use`
+    // and the geometry have to agree on the fallback or the label would be
+    // measured off a frame that is not on the page.
+    var shapes = catalog.frames[item.side] || catalog.frames.friend;
+    return shapes[item.dimension] ? item.dimension : catalog.defaultDimension;
+  }
+
+  function frameOf(item) {
+    // Mirrors frame_of() in utils/tacmap.py: side first, then dimension.
+    var shapes = catalog.frames[item.side] || catalog.frames.friend;
+    return shapes[dimensionOf(item)];
+  }
+
+  function dashOf(item) {
+    var status = statuses[item.status] || statuses[catalog.defaultStatus];
+    return status && status.dash ? ' stroke-dasharray="' + status.dash + '"' : '';
+  }
 
   var layer = svg.querySelector('.tm-items');
   var back = svg.querySelector('#tm-back');
@@ -113,7 +139,7 @@
   function modifierSVG(item, paint) {
     // Mirrors _modifier_svg() in utils/tacmap.py.
     var parts = [];
-    var frame = catalog.frames[item.side] || { top: 30 };
+    var frame = frameOf(item);
     var line = frame.top - catalog.echelonLift;
     var hasEchelon = !!echelons[item.echelon];
     if (hasEchelon) {
@@ -127,6 +153,18 @@
     if (strengths[item.strength]) {
       parts.push(chromeText(strengths[item.strength].text,
         hasEchelon ? 103 : 50, line + 7, 20, paint));
+    }
+    if (item.higher) {
+      parts.push(chromeText(item.higher, -3, line + 7, 20, paint, 'end'));
+    }
+    if (mobility[item.mobility]) {
+      var under = 'translate(0,' + round(frame.bottom + catalog.mobilityDrop) + ')';
+      [[paint.fill, 14], [paint.glyph, 6]].forEach(function (pass) {
+        parts.push('<use href="#tmv-' + item.mobility + '" fill="none" stroke="' +
+          pass[0] + '" color="' + pass[0] + '" stroke-width="' + pass[1] +
+          '" stroke-linecap="round" stroke-linejoin="round" transform="' +
+          under + '"/>');
+      });
     }
     if (item.text) {
       if ((symbols[item.symbol] || {}).hasIcon) {
@@ -145,11 +183,13 @@
     var scale = catalog.unitBox * item.size / 100;
     var transform = 'translate(' + round(item.x) + ',' + round(item.y) + ') rotate(' +
       (item.rotation || 0) + ') scale(' + scale + ') translate(-50,-50)';
-    var parts = ['<use href="#tmf-' + item.side + '" fill="' + paint.fill +
-      '" stroke="' + paint.edge + '" stroke-width="5"/>'];
+    var dimension = dimensionOf(item);
+    var parts = ['<use href="#tmf-' + item.side + '-' + dimension + '" fill="' +
+      paint.fill + '" stroke="' + paint.edge + '" stroke-width="5"' +
+      dashOf(item) + '/>'];
     if (item.hq) {
-      parts.push('<use href="#tmh-' + item.side + '" stroke="' + paint.edge +
-        '" stroke-width="5"/>');
+      parts.push('<use href="#tmh-' + item.side + '-' + dimension +
+        '" stroke="' + paint.edge + '" stroke-width="5"/>');
     }
     if ((symbols[item.symbol] || {}).hasIcon) {
       parts.push('<use href="#tmi-' + item.symbol + '" fill="none" stroke="' +
@@ -157,7 +197,12 @@
         ' stroke-linecap="round" stroke-linejoin="round"/>');
     }
     parts.push(modifierSVG(item, paint));
-    var drop = catalog.unitBox * item.size * (item.hq ? 0.85 : 0.62) + 6;
+    var depth = frameOf(item).bottom;
+    if (mobility[item.mobility]) {
+      depth += catalog.mobilityDrop + catalog.mobilityDepth;
+    }
+    depth = Math.max(depth, item.hq ? 135 : 112);
+    var drop = catalog.unitBox * item.size * (depth - 50) / 100 + 6;
     return '<g transform="' + transform + '">' + parts.join('') + '</g>' +
       label(item.label, item.x, item.y + drop, item.size);
   }
@@ -174,13 +219,14 @@
     var scale = catalog.pointBox * item.size / 100 * 1.55;
     var transform = 'translate(' + round(item.x) + ',' + round(item.y) + ') scale(' +
       scale + ') translate(-50,-50)';
+    var dash = dashOf(item);
     var shape = '<g transform="' + transform + '">' +
       '<use href="#tmm-' + key + '" fill="none" stroke="' + paint.edge +
       '" color="' + paint.edge + '" stroke-width="15"' +
-      ' stroke-linecap="round" stroke-linejoin="round"/>' +
+      ' stroke-linecap="round" stroke-linejoin="round"' + dash + '/>' +
       '<use href="#tmm-' + key + '" fill="none" stroke="' + paint.fill +
       '" color="' + paint.fill + '" stroke-width="7"' +
-      ' stroke-linecap="round" stroke-linejoin="round"/></g>';
+      ' stroke-linecap="round" stroke-linejoin="round"' + dash + '/></g>';
     var parts = [shape];
     var glyph = item.glyph || '';
     var name = item.label;
@@ -596,11 +642,16 @@
       item.echelon = state.echelon;
       item.strength = '';
       item.text = '';
+      item.higher = '';
+      item.mobility = '';
+      item.dimension = state.dimension;
+      item.status = state.status;
     } else if (kind === 'point') {
       item.x = round(point.x);
       item.y = round(point.y);
       item.glyph = state.glyph;
       item.marker = state.marker;
+      item.status = state.status;
     } else if (kind === 'text') {
       item.x = round(point.x);
       item.y = round(point.y);
@@ -615,6 +666,25 @@
     if (event.button !== 0) return;
     var point = at(event);
     var group = event.target.closest ? event.target.closest('.tm-item') : null;
+
+    // Ctrl and drag draws freehand, which is the gesture Arma's own map uses
+    // and the one people arrive here with. It works from any tool, because
+    // reaching for the Line button first is exactly the step that made
+    // drawing one feel like being trapped in a mode. The Area tool closes
+    // the shape; everything else leaves it a line.
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      state.draft = {
+        kind: state.tool === 'area' ? 'area' : 'line',
+        points: [[round(point.x), round(point.y)]],
+        cursor: null,
+        free: true
+      };
+      overlay.innerHTML = draftSVG();
+      say('Drawing — let go to finish');
+      svg.setPointerCapture(event.pointerId);
+      return;
+    }
 
     if (state.tool === 'line' || state.tool === 'area') {
       if (!state.draft) state.draft = { kind: state.tool, points: [], cursor: null };
@@ -644,6 +714,22 @@
   });
 
   svg.addEventListener('pointermove', function (event) {
+    if (state.draft && state.draft.free) {
+      var here = at(event);
+      var points = state.draft.points;
+      var last = points[points.length - 1];
+      // Thinned as it is drawn rather than afterwards: a pointer reports
+      // every pixel it passes and the document takes MAX_POINTS of them, so
+      // an unthinned stroke would hit the cap within one gesture. The step
+      // is a fraction of what is on screen, so it thins by how far the line
+      // actually looks, not by how far zoomed in it happens to be.
+      var step = view.w / 90;
+      if (Math.hypot(here.x - last[0], here.y - last[1]) < step) return;
+      if (points.length >= catalog.limits.points) return;
+      points.push([round(here.x), round(here.y)]);
+      overlay.innerHTML = draftSVG();
+      return;
+    }
     if (state.draft) {
       var cursor = at(event);
       state.draft.cursor = [round(cursor.x), round(cursor.y)];
@@ -681,9 +767,19 @@
   });
 
   svg.addEventListener('pointerup', function () {
+    if (state.draft && state.draft.free) {
+      finishDraft();
+      return;
+    }
     if (state.drag && state.drag.moved) touched();
     state.drag = null;
     state.pan = null;
+  });
+
+  // Letting go outside the sheet still ends the stroke; without this the
+  // draft would hang around and the next click would extend it.
+  svg.addEventListener('pointercancel', function () {
+    if (state.draft && state.draft.free) finishDraft();
   });
 
   svg.addEventListener('dblclick', function (event) {
@@ -701,7 +797,11 @@
     var least = draft.kind === 'area' ? 3 : 2;
     if (draft.points.length < least) {
       overlay.innerHTML = '';
-      say('A ' + draft.kind + ' needs at least ' + least + ' points.', 'err');
+      // A click-by-click draft was deliberate and is worth explaining; a
+      // ctrl-drag that went nowhere is a slipped finger, so it just goes.
+      if (!draft.free) {
+        say('A ' + draft.kind + ' needs at least ' + least + ' points.', 'err');
+      }
       return;
     }
     add({
@@ -756,6 +856,16 @@
     catalog.strengths.map(function (entry) {
       return { value: entry.key, label: entry.label };
     }));
+  var mobilityOptions = [{ value: '', label: 'Not stated' }].concat(
+    catalog.mobility.map(function (entry) {
+      return { value: entry.key, label: entry.label };
+    }));
+  var dimensionOptions = catalog.dimensions.map(function (entry) {
+    return { value: entry.key, label: entry.label };
+  });
+  var statusOptions = catalog.statuses.map(function (entry) {
+    return { value: entry.key, label: entry.label };
+  });
 
   var sidePick = document.getElementById('tmside');
   var symbolPick = document.getElementById('tmsymbol');
@@ -763,12 +873,16 @@
   var markerPick = document.getElementById('tmmarker');
   var echelonPick = document.getElementById('tmechelon');
   var hqPick = document.getElementById('tmhq');
+  var dimensionPick = document.getElementById('tmdimension');
+  var statusPick = document.getElementById('tmstatuspick');
 
   fillOptions(sidePick, sideOptions, state.side);
   fillOptions(symbolPick, symbolOptions, state.symbol);
   fillOptions(glyphPick, glyphOptions, state.glyph);
   fillOptions(markerPick, markerOptions, state.marker);
   fillOptions(echelonPick, echelonOptions, state.echelon);
+  fillOptions(dimensionPick, dimensionOptions, state.dimension);
+  fillOptions(statusPick, statusOptions, state.status);
 
   var layerPick = document.getElementById('tmlayerpick');
   var layerAdd = document.getElementById('tmlayeradd');
@@ -823,6 +937,10 @@
   markerPick.addEventListener('change', function () { state.marker = markerPick.value; });
   echelonPick.addEventListener('change', function () { state.echelon = echelonPick.value; });
   hqPick.addEventListener('change', function () { state.hq = hqPick.checked; });
+  dimensionPick.addEventListener('change', function () {
+    state.dimension = dimensionPick.value;
+  });
+  statusPick.addEventListener('change', function () { state.status = statusPick.value; });
 
   /* -- the inspector -------------------------------------------------------- */
 
@@ -836,6 +954,10 @@
     marker: document.getElementById('tmf-marker'),
     echelon: document.getElementById('tmf-echelon'),
     strength: document.getElementById('tmf-strength'),
+    mobility: document.getElementById('tmf-mobility'),
+    dimension: document.getElementById('tmf-dimension'),
+    status: document.getElementById('tmf-status'),
+    higher: document.getElementById('tmf-higher'),
     text: document.getElementById('tmf-text'),
     rotation: document.getElementById('tmf-rotation'),
     size: document.getElementById('tmf-size'),
@@ -850,6 +972,9 @@
   fillOptions(fields.marker, markerOptions, state.marker);
   fillOptions(fields.echelon, echelonOptions, state.echelon);
   fillOptions(fields.strength, strengthOptions, '');
+  fillOptions(fields.mobility, mobilityOptions, '');
+  fillOptions(fields.dimension, dimensionOptions, catalog.defaultDimension);
+  fillOptions(fields.status, statusOptions, catalog.defaultStatus);
 
   function fillInspector() {
     var item = selected();
@@ -867,6 +992,10 @@
     fields.marker.value = markerKey(item);
     fields.echelon.value = item.echelon || '';
     fields.strength.value = item.strength || '';
+    fields.mobility.value = item.mobility || '';
+    fields.dimension.value = dimensionOf(item);
+    fields.status.value = statuses[item.status] ? item.status : catalog.defaultStatus;
+    fields.higher.value = item.higher || '';
     fields.text.value = item.text || '';
     fields.rotation.value = item.rotation || 0;
     fields.size.value = item.size;
@@ -891,7 +1020,9 @@
   editField(fields.side, function (item) { item.side = fields.side.value; });
   editField(fields.symbol, function (item) { item.symbol = fields.symbol.value; });
   editField(fields.hq, function (item) { item.hq = fields.hq.checked; });
-  [['echelon', fields.echelon], ['strength', fields.strength]].forEach(
+  [['echelon', fields.echelon], ['strength', fields.strength],
+   ['mobility', fields.mobility], ['dimension', fields.dimension],
+   ['status', fields.status]].forEach(
     function (pair) {
       pair[1].addEventListener('change', function () {
         var item = selected();
@@ -904,6 +1035,9 @@
 
   editField(fields.text, function (item) {
     item.text = fields.text.value.slice(0, catalog.limits.mod);
+  });
+  editField(fields.higher, function (item) {
+    item.higher = fields.higher.value.slice(0, catalog.limits.mod);
   });
 
   fields.marker.addEventListener('change', function () {
@@ -1112,6 +1246,14 @@
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       undo();
+      return;
+    }
+    if (event.key === 'Escape' && state.draft) {
+      // Before the modifier guard below: a ctrl-drag is cancelled with the
+      // key still held down, so a draft would otherwise be unescapable.
+      state.draft = null;
+      overlay.innerHTML = '';
+      say('');
       return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
