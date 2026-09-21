@@ -331,16 +331,22 @@
     var perSide = Math.pow(2, background.zoom);
     var width = state.doc.width / perSide;
     var height = state.doc.height / perSide;
-    var bleedX = state.doc.width * catalog.tileBleed;
-    var bleedY = state.doc.height * catalog.tileBleed;
     var tiles = [];
+    // Mirrors _tiles_svg() in utils/tacmap.py: a coarse copy of the terrain
+    // under the grid, then every tile at its own exact size. Stretching a tile
+    // to overlap its neighbour is what made features jump at a boundary.
+    if (background.zoom > catalog.backdropZoom) {
+      tiles.push('<image href="' + attr(background.url + '/' +
+        catalog.backdropZoom + '/0/0.png') +
+        '" x="0" y="0" width="' + state.doc.width +
+        '" height="' + state.doc.height + '" preserveAspectRatio="none"/>');
+    }
     for (var column = 0; column < perSide; column++) {
       for (var row = 0; row < perSide; row++) {
         tiles.push('<image href="' + attr(background.url + '/' + background.zoom +
           '/' + column + '/' + row + '.png') +
           '" x="' + round(column * width) + '" y="' + round(row * height) +
-          '" width="' + round(width + bleedX) +
-          '" height="' + round(height + bleedY) +
+          '" width="' + round(width) + '" height="' + round(height) +
           '" preserveAspectRatio="none"/>');
       }
     }
