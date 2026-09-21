@@ -861,3 +861,13 @@ svg.tacmap.tm-drawing { cursor: crosshair; }
    Every panel and field here sets `display`, which would otherwise beat the
    browser's own rule for [hidden] and leave them all on screen at once. */
 .tmapp [hidden] { display: none; }
+
+/* A second, quieter script inside the Arma panel — the variant whose markers
+   can be picked up in game. It is folded away because it is the exception. */
+.subpanel { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.subpanel > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+.subpanel[open] > summary { margin-bottom: 10px; color: var(--text); }
+
+/* A one-line form inside a panel — the channel picker beside its button. */
+.form.inline { display: flex; align-items: flex-end; gap: 10px; margin: 12px 0; }
+.form.inline .field { margin: 0; }

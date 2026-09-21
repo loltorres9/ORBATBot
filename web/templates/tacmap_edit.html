@@ -177,6 +177,48 @@
         <a class="button" href="/g/{{ guild.id }}/maps/{{ record.id }}/arma.sqf"
            download="{{ record.name }}.sqf">Download .sqf</a>
       </div>
+
+      <details class="subpanel">
+        <summary>Let people move and delete them in game</summary>
+        <p class="hint">
+          A marker a script creates is read-only on Arma's map. The engine only
+          lets somebody pick up or delete a marker whose name starts with
+          <code>_USER_DEFINED</code> — that is how it tells one somebody placed
+          from one the mission drew. This version puts that in front of the
+          name, so a marker can be <strong>clicked and deleted with DEL</strong>
+          or dragged, and pasting a corrected plan still replaces exactly this
+          map's markers. Lines and areas are polyline markers and may well stay
+          fixed; the symbols and objective markers are the part this is for.
+        </p>
+        <p class="hint">
+          It cuts both ways — the same click that fixes a misplaced objective
+          deletes it, and nothing asks first. Run this one with
+          <strong>LOCAL EXEC</strong>, once: the markers are global either way,
+          and GLOBAL EXEC would draw one set per machine, because the name
+          carries the owner of whoever ran it.
+        </p>
+        <form class="form inline" method="get"
+              action="/g/{{ guild.id }}/maps/{{ record.id }}">
+          <label class="field"><span>Channel</span>
+            <select name="channel">
+              {% for key, name in arma_channels %}
+                <option value="{{ key }}"
+                        {% if key == arma_channel %}selected{% endif %}>{{ name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="button" type="submit">Show</button>
+        </form>
+        <label class="field"><span>Script</span>
+          <textarea class="sqfbox" rows="10" readonly spellcheck="false"
+                    onclick="this.select()">{{ sqf_editable }}</textarea>
+        </label>
+        <div class="actions">
+          <a class="button"
+             href="/g/{{ guild.id }}/maps/{{ record.id }}/arma.sqf?editable=1&amp;channel={{ arma_channel }}"
+             download="{{ record.name }}.sqf">Download .sqf</a>
+        </div>
+      </details>
     </div>
   </details>
 

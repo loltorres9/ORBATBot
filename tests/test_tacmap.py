@@ -731,3 +731,70 @@ def test_the_export_writes_what_arma_cannot_draw():
                            strength='reinforced')])
     script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='m1')
     assert '"1-1 Alpha (Plt +)"' in script
+
+
+def test_the_export_is_read_only_in_game_by_default():
+    doc = _doc(items=[unit(label='A')])
+    script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1')
+    assert '_USER_DEFINED' not in script
+    assert 'private _p = "map1_";' in script
+
+
+def test_the_editable_export_names_markers_the_way_arma_does():
+    """The engine parses `_USER_DEFINED #owner/index/channel` to decide who
+    may move or delete a marker, and all three parts are numbers. Sticking
+    `_USER_DEFINED ` in front of our own prefix is not that shape — it was
+    tried in a mission and the markers stayed read-only."""
+    doc = _doc(items=[unit(label='A')])
+    script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1', editable=True)
+    assert 'format ["_USER_DEFINED #%1/", clientOwner]' in script
+    assert '_own + "1001" + _c' in script
+    assert '_USER_DEFINED map1_' not in script
+
+
+def test_the_editable_export_says_to_run_it_once():
+    """GLOBAL EXEC runs the code everywhere, and each machine would write its
+    own `clientOwner` into the name — one plan per player."""
+    doc = _doc(items=[unit(label='A')])
+    script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1', editable=True)
+    assert 'LOCAL EXEC' in script
+    assert 'GLOBAL EXEC would draw one set per machine' in script
+
+
+def test_the_channel_is_the_last_part_of_the_name():
+    doc = _doc(items=[unit(label='A')])
+    for key, _name in tacmap.ARMA_CHANNELS:
+        script = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1',
+                               editable=True, channel=key)
+        assert f'private _chan = {key};' in script
+    # A channel this version does not have falls back rather than writing a
+    # name the engine cannot parse.
+    odd = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1', editable=True,
+                        channel=99)
+    assert f'private _chan = {tacmap.DEFAULT_CHANNEL};' in odd
+
+
+def test_two_maps_editable_markers_do_not_collide():
+    """The index is numeric, so the map's prefix cannot ride inside the name —
+    its digits do that job instead."""
+    doc = _doc(items=[unit(label='A')])
+    first = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1', editable=True)
+    second = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map2', editable=True)
+    assert '_own + "1001" + _c' in first
+    assert '_own + "2001" + _c' in second
+    assert 'tacmap_map1' in first and 'tacmap_map2' in second
+
+
+def test_both_exports_delete_what_they_are_about_to_draw():
+    """One by name, one by the list it wrote down — the same promise."""
+    doc = _doc(items=[unit(label='A')])
+    plain = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1')
+    assert 'private _p = "map1_";' in plain
+    assert '_x select [0, count _p] == _p' in plain
+
+    editable = tacmap.to_sqf(tacmap.parse(doc).doc, prefix='map1', editable=True)
+    assert ('{ deleteMarker _x } forEach (missionNamespace getVariable '
+            '["tacmap_map1", []]);') in editable
+    assert 'missionNamespace setVariable ["tacmap_map1", _n, true];' in editable
+    # Every marker it draws goes into that list, or the next run leaves some.
+    assert editable.count('_m = createMarker') == editable.count('_n pushBack _m;')

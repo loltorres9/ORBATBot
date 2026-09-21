@@ -8,7 +8,7 @@
         {% if squad %}
           <div>
             <div class="fieldname">{{ squad.name }}
-              {% if squad.excluded %}<span class="nocount">· zählt nicht</span>{% endif %}
+              {% if squad.excluded %}<span class="nocount">· not counted</span>{% endif %}
             </div>
             <div class="fieldval">{% for line in squad.lines %}{{ line.dot }} {% if line.state == 'open' %}<span class="off">{{ line.text }}</span>{% else %}{{ line.text }}{% endif %}
 {% endfor %}</div>
@@ -20,40 +20,40 @@
 {% endmacro %}
 
 {% block content %}
-  <p class="crumbs"><a href="/">← Alle ORBATs</a></p>
+  <p class="crumbs"><a href="/">← All ORBATs</a></p>
   <div class="pagehead">
     <div>
       <h1 style="margin-bottom:4px">{{ orbat.name }}</h1>
-      <p class="muted" style="margin:0">{{ stored_slots }} Slots gespeichert</p>
+      <p class="muted" style="margin:0">{{ stored_slots }} slots saved</p>
     </div>
   </div>
 
   {% if pending_text %}
     <div class="flash err">
-      <strong>Diese Änderung greift in bestehende Belegungen ein.</strong>
+      <strong>This edit reaches into bookings that already exist.</strong>
       {% if diff.losing_bookings %}
-        <p style="margin:10px 0 4px">Wird <strong>entfernt</strong> — die Leute werden ausgetragen:</p>
+        <p style="margin:10px 0 4px"><strong>Removed</strong> — these people lose their slot:</p>
         <ul class="issues">
           {% for change in diff.losing_bookings %}
             <li><strong>{{ change.squad }} — {{ change.old.role_name }}</strong>
               {% for booking in change.bookings %}
                 <br><span class="muted">↳ {{ booking.member_name }}
-                {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in „{{ booking.op_name }}“</span>
+                {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in "{{ booking.op_name }}"</span>
               {% endfor %}
             </li>
           {% endfor %}
         </ul>
       {% endif %}
       {% if diff.moving_bookings %}
-        <p style="margin:10px 0 4px">Wird <strong>umbenannt</strong> — die Belegung bleibt,
-          aber auf einer anderen Rolle:</p>
+        <p style="margin:10px 0 4px"><strong>Renamed</strong> — the booking stays,
+          but on a different role:</p>
         <ul class="issues">
           {% for change in diff.moving_bookings %}
             <li><strong>{{ change.squad }}</strong> — {{ change.old.role_name }}
               → {{ change.new.role_name }}
               {% for booking in change.bookings %}
                 <br><span class="muted">↳ {{ booking.member_name }}
-                {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in „{{ booking.op_name }}“</span>
+                {%- if booking.unit %} [{{ booking.unit }}]{% endif %} in "{{ booking.op_name }}"</span>
               {% endfor %}
             </li>
           {% endfor %}
@@ -62,42 +62,42 @@
       <form method="post" action="/orbats/{{ orbat.id }}" style="margin-top:12px">
         <input type="hidden" name="text" value="{{ pending_text }}">
         <input type="hidden" name="action" value="confirm">
-        <button class="button danger" type="submit">Trotzdem speichern</button>
-        <span class="muted" style="margin-left:8px">oder oben weiter bearbeiten</span>
+        <button class="button danger" type="submit">Save anyway</button>
+        <span class="muted" style="margin-left:8px">or keep editing above</span>
       </form>
     </div>
   {% endif %}
 
   <div class="split">
     <form method="post" action="/orbats/{{ orbat.id }}" class="editor stack">
-      <label class="field"><span>ORBAT-Text</span>
+      <label class="field"><span>ORBAT text</span>
         <textarea name="text" spellcheck="false">{{ text }}</textarea></label>
       <div class="rowbtns">
-        <button class="button" type="submit" name="action" value="preview">Vorschau</button>
-        <button class="button primary" type="submit" name="action" value="save">Speichern</button>
+        <button class="button" type="submit" name="action" value="preview">Preview</button>
+        <button class="button primary" type="submit" name="action" value="save">Save</button>
       </div>
       <details class="card pad">
         <summary>Format</summary>
-        <div class="fieldval" style="margin-top:10px">Squad ganz links, Slots eingerückt:
+        <div class="fieldval" style="margin-top:10px">Squads at the left margin, slots indented:
 
 1-1 Alpha  | right
   Squad Leader  | unit:TFP
   Rifleman
 
-Squad-Optionen: <code>left</code>, <code>right</code>, <code>nocount</code>
-Slot-Optionen: <code>unit:TAG</code>
-<code>#</code> am Zeilenanfang ist ein Kommentar.
-Führende Nummerierung („1. Rifleman“) wird entfernt.</div>
+Squad options: <code>left</code>, <code>right</code>, <code>nocount</code>
+Slot options: <code>unit:TAG</code>
+<code>#</code> at the start of a line is a comment.
+A leading number ("1. Rifleman") is stripped.</div>
       </details>
     </form>
 
     <div class="stack">
       {% if result and not result.ok %}
         <div class="card pad">
-          <h3 style="margin-top:0;color:var(--err)">{{ result.errors|length }} Fehler</h3>
+          <h3 style="margin-top:0;color:var(--err)">{{ result.errors|length }} errors</h3>
           <ul class="issues">
             {% for line, message in result.errors %}
-              <li>{% if line %}<span class="lineno">Zeile {{ line }}</span> {% endif %}{{ message }}</li>
+              <li>{% if line %}<span class="lineno">Line {{ line }}</span> {% endif %}{{ message }}</li>
             {% endfor %}
           </ul>
         </div>
@@ -105,10 +105,10 @@ Führende Nummerierung („1. Rifleman“) wird entfernt.</div>
 
       {% if result and result.warnings %}
         <div class="card pad">
-          <h3 style="margin-top:0;color:var(--warn)">Hinweise</h3>
+          <h3 style="margin-top:0;color:var(--warn)">Warnings</h3>
           <ul class="issues">
             {% for line, message in result.warnings %}
-              <li>{% if line %}<span class="lineno">Zeile {{ line }}</span> {% endif %}{{ message }}</li>
+              <li>{% if line %}<span class="lineno">Line {{ line }}</span> {% endif %}{{ message }}</li>
             {% endfor %}
           </ul>
         </div>
@@ -117,21 +117,21 @@ Führende Nummerierung („1. Rifleman“) wird entfernt.</div>
       {% if preview %}
         {% if preview.warnings %}
           <div class="card pad">
-            <h3 style="margin-top:0;color:var(--warn)">Discord-Grenzen</h3>
+            <h3 style="margin-top:0;color:var(--warn)">Discord's limits</h3>
             <ul class="issues">
               {% for warning in preview.warnings %}<li>{{ warning }}</li>{% endfor %}
             </ul>
           </div>
         {% endif %}
         <div class="card pad">
-          <h3 style="margin-top:0">So sähe das Board aus</h3>
-          <p class="muted" style="margin-top:-4px">Leere Gliederung — Belegungen hängen
-            am jeweiligen Einsatz, nicht an der Vorlage.</p>
+          <h3 style="margin-top:0">What the board would look like</h3>
+          <p class="muted" style="margin-top:-4px">An empty roster — bookings hang off
+            the operation, not off the template.</p>
           <div class="embed">
             <h3>🗺️ ORBAT — {{ orbat.name }}</h3>
-            <div class="desc">🟢 <strong>{{ preview.counts.open }}</strong> offen ·
+            <div class="desc">🟢 <strong>{{ preview.counts.open }}</strong> open ·
               🟡 <strong>{{ preview.counts.pending }}</strong> pending ·
-              🔴 <strong>{{ preview.counts.filled }}/{{ preview.counts.total }}</strong> belegt</div>
+              🔴 <strong>{{ preview.counts.filled }}/{{ preview.counts.total }}</strong> filled</div>
             {{ board_fields(preview) }}
           </div>
         </div>
@@ -139,25 +139,25 @@ Führende Nummerierung („1. Rifleman“) wird entfernt.</div>
 
       {% if diff %}
         <div class="card pad">
-          <h3 style="margin-top:0">Was sich ändert</h3>
+          <h3 style="margin-top:0">What changes</h3>
           <p class="muted" style="margin-top:0">{{ summary }}</p>
           <ul class="diff">
             {% for change in diff.added %}
-              <li><span class="tag added">neu</span> {{ change.squad }} — {{ change.new.role_name }}</li>
+              <li><span class="tag added">new</span> {{ change.squad }} — {{ change.new.role_name }}</li>
             {% endfor %}
             {% for change in diff.renamed %}
-              <li><span class="tag renamed">umbenannt</span> {{ change.squad }} —
+              <li><span class="tag renamed">renamed</span> {{ change.squad }} —
                 {{ change.old.role_name }} → {{ change.new.role_name }}
-                {% if change.bookings %}<span class="muted">(Belegung bleibt)</span>{% endif %}</li>
+                {% if change.bookings %}<span class="muted">(the booking stays)</span>{% endif %}</li>
             {% endfor %}
             {% for change in diff.removed %}
-              <li><span class="tag removed">entfernt</span> {{ change.squad }} — {{ change.old.role_name }}
+              <li><span class="tag removed">removed</span> {{ change.squad }} — {{ change.old.role_name }}
                 {% if change.bookings %}
-                  <span style="color:var(--err)">— {{ change.bookings|length }} Belegung(en) gehen verloren</span>
+                  <span style="color:var(--err)">— {{ change.bookings|length }} booking(s) lost</span>
                 {% endif %}</li>
             {% endfor %}
             {% if diff.kept %}
-              <li><span class="tag kept">unverändert</span> {{ diff.kept|length }} Slots behalten ihre ID und Belegung</li>
+              <li><span class="tag kept">unchanged</span> {{ diff.kept|length }} slots keep their id, and with it their booking</li>
             {% endif %}
           </ul>
         </div>
@@ -165,34 +165,34 @@ Führende Nummerierung („1. Rifleman“) wird entfernt.</div>
     </div>
   </div>
 
-  <h2 style="margin-top:32px">Einsätze auf dieser Gliederung</h2>
-  <p class="muted">Jeder Einsatz hat sein eigenes Board. Die Gliederung wird geteilt,
-    die Belegungen nicht — genau das, was heute „Sheet duplizieren“ ist.</p>
+  <h2 style="margin-top:32px">Operations on this roster</h2>
+  <p class="muted">Every operation has a board of its own. The roster is shared,
+    the bookings are not — which is what "duplicate the sheet" does today.</p>
   {% if ops %}
     <ul class="cards">
       {% for op in ops %}
         <li class="card pad">
           <div class="pagehead" style="margin:0">
             <div><strong><a href="/orbats/{{ orbat.id }}/ops/{{ op.id }}">{{ op.name }}</a></strong>
-              <span class="chip">{{ op.booked }} belegt</span></div>
+              <span class="chip">{{ op.booked }} booked</span></div>
             <form method="post" action="/orbats/{{ orbat.id }}/ops/{{ op.id }}/delete">
-              <button class="button danger mini" type="submit">Löschen</button>
+              <button class="button danger mini" type="submit">Delete</button>
             </form>
           </div>
         </li>
       {% endfor %}
     </ul>
   {% else %}
-    <p class="empty">Noch kein Einsatz angelegt.</p>
+    <p class="empty">No operation yet.</p>
   {% endif %}
   <form method="post" action="/orbats/{{ orbat.id }}/ops" class="rowbtns" style="margin-top:12px">
-    <input name="name" placeholder="z. B. Sonntag 19:00" required style="max-width:320px">
-    <button class="button" type="submit">Einsatz anlegen</button>
+    <input name="name" placeholder="e.g. Sunday 19:00" required style="max-width:320px">
+    <button class="button" type="submit">Create operation</button>
   </form>
 
-  <h2 style="margin-top:32px">Vorlage kopieren</h2>
+  <h2 style="margin-top:32px">Copy the template</h2>
   <form method="post" action="/orbats/{{ orbat.id }}/duplicate" class="rowbtns">
-    <input name="name" value="{{ orbat.name }} (Kopie)" required style="max-width:320px">
-    <button class="button" type="submit">Kopieren</button>
+    <input name="name" value="{{ orbat.name }} (copy)" required style="max-width:320px">
+    <button class="button" type="submit">Copy</button>
   </form>
 {% endblock %}

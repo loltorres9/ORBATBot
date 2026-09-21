@@ -3,8 +3,8 @@
   <div class="pagehead">
     <div>
       <h1>ORBATs</h1>
-      <p class="muted">Gliederungen als wiederverwendbare Vorlage — ein ORBAT trägt beliebig
-        viele Einsätze, ohne dass etwas zurückgesetzt werden muss.</p>
+      <p class="muted">A roster as a reusable template — one ORBAT carries any
+        number of operations without anything having to be reset.</p>
     </div>
   </div>
 
@@ -18,13 +18,13 @@
               {% if o.description %}<p class="muted" style="margin:0 0 8px">{{ o.description }}</p>{% endif %}
               <span class="chip">{{ o.squad_count }} Squads</span>
               <span class="chip">{{ o.slot_count }} Slots</span>
-              <span class="chip">{{ o.op_count }} Einsätze</span>
+              <span class="chip">{{ o.op_count }} operations</span>
             </div>
             <div class="rowbtns">
-              <a class="button" href="/orbats/{{ o.id }}">Bearbeiten</a>
+              <a class="button" href="/orbats/{{ o.id }}">Edit</a>
               <form method="post" action="/orbats/{{ o.id }}/delete"
-                    onsubmit="return confirm('ORBAT „{{ o.name }}“ mit allen Einsätzen löschen?')">
-                <button class="button danger" type="submit">Löschen</button>
+                    onsubmit="return confirm('Delete this ORBAT and every operation on it?')">
+                <button class="button danger" type="submit">Delete</button>
               </form>
             </div>
           </div>
@@ -32,15 +32,15 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p class="empty">Noch kein ORBAT angelegt.</p>
+    <p class="empty">No ORBAT yet.</p>
   {% endif %}
 
-  <h2 style="margin-top:28px">Neues ORBAT</h2>
+  <h2 style="margin-top:28px">New ORBAT</h2>
   <form method="post" action="/orbats" class="card pad stack">
     <label class="field"><span>Name</span>
-      <input name="name" placeholder="z. B. Zug-ORBAT Standard" required></label>
-    <label class="field"><span>Beschreibung (optional)</span>
+      <input name="name" placeholder="e.g. Platoon ORBAT, standard" required></label>
+    <label class="field"><span>Description (optional)</span>
       <input name="description"></label>
-    <div><button class="button primary" type="submit">Anlegen</button></div>
+    <div><button class="button primary" type="submit">Create</button></div>
   </form>
 {% endblock %}
