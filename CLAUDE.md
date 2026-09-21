@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(245 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(250 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1148,11 +1148,22 @@ was just given a role doesn't have to wait it out.
 
 `WEB_BASE_URL` takes a list, and `config.request_origin(request)` is what
 decides which of them a given request is on — from `x-forwarded-host`, since
-Railway's own host header is the internal one. Everything absolute goes
-through it: the OAuth callback, the share link, the map link posted into a
-channel.
+Railway's own host header is the internal one. The OAuth callback and the
+`Secure` flag go through it.
 
-Three things about it are load-bearing:
+**A link that leaves the site does not.** `public_origin()` / `public_url()`
+answer a different question and always give the **canonical** origin, the
+first in `WEB_BASE_URL`: a share link is copied into Discord and a posted map
+link is read by people who were never on this site at all, so both have to
+carry the unit's own domain whatever host the person who made them happened
+to be browsing. Otherwise somebody tidying up on the old Railway URL hands
+out links back to it, which is how a name you are retiring stays alive. They
+fall back to the request only when nothing is configured, which is a local
+run. Nothing persists an absolute site URL, so this is decided at render
+time every time — **except a map already announced in Discord**, whose embed
+keeps the link it was posted with; re-post it to refresh that.
+
+Three things about `request_origin()` are load-bearing:
 
 - **A host nobody configured is not echoed back.** The `Host` header belongs
   to whoever sent the request, so an unknown one falls back to the canonical
@@ -1922,6 +1933,10 @@ A tile set gets onto a map two ways, and they meet in the same background:
 The upload is the one to prefer for anything shared outside the unit: a share
 link is meant for people who do not sign in here, and expecting them to reach an
 OCAP instance as well is how a link ends up showing an empty sheet.
+
+The directory field starts filled in with `DEFAULT_OCAP_BASE`. It is only a
+suggestion — nothing is read until somebody presses the button, and the first
+directory that actually answers replaces it for that guild.
 
 **The terrain is picked from a list, not typed.** OCAP names a folder after
 the terrain's *world* name — Cham is `tem_cham` — which is exactly the thing

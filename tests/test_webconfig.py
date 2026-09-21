@@ -88,3 +88,49 @@ def test_nothing_configured_still_derives_from_the_request():
     request = _Request(host='127.0.0.1:8080', proto='http')
     assert config.request_origin(request) == 'http://127.0.0.1:8080'
     assert config.cookie_secure_for(request) is False
+
+
+# ---------------------------------------------------------------------------
+# A link that leaves the site is not the same question as a link on it
+# ---------------------------------------------------------------------------
+
+BOTH = webconfig.WebConfig(
+    origins=('https://bot.example.com', 'https://old.up.railway.app'),
+    base_url='https://bot.example.com',
+)
+
+
+def test_a_share_link_carries_the_canonical_domain_from_either_host():
+    """It is made to be copied somewhere else, so it cannot follow the host.
+
+    Somebody tidying up on the old Railway URL must not hand out links back
+    to it — that is how a name you are trying to retire stays alive.
+    """
+    for host in ('bot.example.com', 'old.up.railway.app'):
+        request = _Request(forwarded=host)
+        assert BOTH.public_origin(request) == 'https://bot.example.com'
+        assert (BOTH.public_url('/m/abc', request)
+                == 'https://bot.example.com/m/abc')
+
+
+def test_the_page_itself_still_follows_the_host_it_came_in_on():
+    """The other half of the pair: navigating must not throw you across names."""
+    request = _Request(forwarded='old.up.railway.app')
+    assert BOTH.request_origin(request) == 'https://old.up.railway.app'
+
+
+def test_with_nothing_configured_an_outbound_link_falls_back_to_the_request():
+    """A local run has no canonical name to prefer, and still has to work."""
+    local = webconfig.WebConfig()
+    request = _Request(host='127.0.0.1:8080', proto='http', scheme='http')
+    assert local.public_origin(request) == 'http://127.0.0.1:8080'
+
+
+def test_an_outbound_link_needs_no_request_at_all():
+    """Which is the case the bot posts from: a channel, not a browser."""
+    assert BOTH.public_url('/m/abc') == 'https://bot.example.com/m/abc'
+
+
+def test_an_empty_path_makes_no_link_rather_than_a_bare_origin():
+    """A map with no share token has no share link, and '' is what says so."""
+    assert BOTH.public_url('') == ''
