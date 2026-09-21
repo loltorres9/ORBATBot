@@ -5,8 +5,8 @@
   <div class="pagehead">
     <div>
       <h1 style="margin-bottom:4px">{{ op.name }}</h1>
-      <p class="muted" style="margin:0">Board für diesen Einsatz — die Gliederung stammt
-        aus der Vorlage, die Belegung gehört nur hierher.</p>
+      <p class="muted" style="margin:0">The board for this operation — the roster
+        comes from the template, the bookings belong to this operation alone.</p>
     </div>
   </div>
 
@@ -18,16 +18,16 @@
 
   <div class="embed">
     <h3>🗺️ ORBAT — {{ orbat.name }}</h3>
-    <div class="desc">🟢 <strong>{{ board.counts.open }}</strong> offen ·
+    <div class="desc">🟢 <strong>{{ board.counts.open }}</strong> open ·
       🟡 <strong>{{ board.counts.pending }}</strong> pending ·
-      🔴 <strong>{{ board.counts.filled }}/{{ board.counts.total }}</strong> belegt</div>
+      🔴 <strong>{{ board.counts.filled }}/{{ board.counts.total }}</strong> filled</div>
     <div class="fields">
       {% for left, right in board.rows %}
         {% for squad in (left, right) %}
           {% if squad %}
             <div>
               <div class="fieldname">{{ squad.name }}
-                {% if squad.excluded %}<span class="nocount">· zählt nicht</span>{% endif %}</div>
+                {% if squad.excluded %}<span class="nocount">· not counted</span>{% endif %}</div>
               <div class="fieldval">{% for line in squad.lines %}{{ line.dot }} {% if line.state == 'open' %}<span class="off">{{ line.text }}</span>{% else %}{{ line.text }}{% endif %}
 {% endfor %}</div>
             </div>
@@ -37,7 +37,7 @@
     </div>
   </div>
 
-  <h2 style="margin-top:28px">Slot belegen</h2>
+  <h2 style="margin-top:28px">Book a slot</h2>
   <form method="post" action="/orbats/{{ orbat.id }}/ops/{{ op.id }}/book"
         class="card pad grid3">
     <label class="field"><span>Slot</span>
@@ -50,13 +50,13 @@
     <label class="field"><span>Unit</span><input name="unit" placeholder="TFP"></label>
     <label class="field"><span>Status</span>
       <select name="status">
-        <option value="approved">bestätigt</option>
+        <option value="approved">approved</option>
         <option value="pending">pending</option>
       </select></label>
-    <div style="grid-column:1/-1"><button class="button primary" type="submit">Belegen</button></div>
+    <div style="grid-column:1/-1"><button class="button primary" type="submit">Book</button></div>
   </form>
 
-  <h2 style="margin-top:28px">Belegte Slots</h2>
+  <h2 style="margin-top:28px">Booked slots</h2>
   <div class="card pad">
     {% set any_booked = [] %}
     {% for squad in board.squads %}
@@ -72,12 +72,12 @@
                 {% endif %}{% endfor %}</span></span>
             <form method="post" action="/orbats/{{ orbat.id }}/ops/{{ op.id }}/free">
               <input type="hidden" name="slot_id" value="{{ slot.id }}">
-              <button class="button mini" type="submit">freigeben</button>
+              <button class="button mini" type="submit">release</button>
             </form>
           </div>
         {% endif %}
       {% endfor %}
     {% endfor %}
-    {% if not any_booked %}<p class="empty" style="padding:0">Noch niemand eingetragen.</p>{% endif %}
+    {% if not any_booked %}<p class="empty" style="padding:0">Nobody on the board yet.</p>{% endif %}
   </div>
 {% endblock %}

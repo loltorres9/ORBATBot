@@ -4,7 +4,7 @@ from lab import diff as diffing
 from lab import parser, store
 
 DEMO_TEXT = """\
-# Squad-Zeilen stehen links am Rand, Slots werden eingerückt.
+# Squad lines start at the left margin, slots are indented.
 # Optionen nach dem |: left / right, unit:TAG, nocount
 
 1-0 Platoon HQ  | left
@@ -54,14 +54,14 @@ def seed_if_empty() -> None:
     if store.list_orbats():
         return
     orbat_id = store.create_orbat(
-        'Operation Iron Tide — Zug-ORBAT',
-        'Beispiel-Gliederung, angelegt beim ersten Start des Labs.',
+        'Operation Iron Tide — platoon ORBAT',
+        'An example roster, created the first time the lab is started.',
     )
     result = parser.parse(DEMO_TEXT)
     changes = diffing.build_diff([], result.squads)
     store.apply_structure(orbat_id, result.squads, changes, source_text=DEMO_TEXT)
 
-    op_id = store.create_op(orbat_id, 'Iron Tide — Sonntag 19:00')
+    op_id = store.create_op(orbat_id, 'Iron Tide — Sunday 19:00')
     squads = store.load_squads(orbat_id, op_id=op_id)
     people = [
         ('Panz', 'TFP'), ('Ravioli', 'TFP'), ('Hawk', 'CNTO'),

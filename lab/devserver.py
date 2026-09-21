@@ -78,7 +78,7 @@ def duplicate_orbat(orbat_id: int, name: str = Form(...)):
 @app.post('/orbats/{orbat_id}/delete')
 def delete_orbat(orbat_id: int):
     store.delete_orbat(orbat_id)
-    return _back('/', 'ORBAT gelöscht.')
+    return _back('/', 'ORBAT deleted.')
 
 
 # -- the editor -------------------------------------------------------------
@@ -189,7 +189,7 @@ def free(orbat_id: int, op_id: int, slot_id: int = Form(...)):
 @app.post('/orbats/{orbat_id}/ops/{op_id}/delete')
 def delete_op(orbat_id: int, op_id: int):
     store.delete_op(op_id)
-    return _back(f'/orbats/{orbat_id}', 'Einsatz gelöscht.')
+    return _back(f'/orbats/{orbat_id}', 'Operation deleted.')
 
 
 @app.get('/healthz', response_class=PlainTextResponse)

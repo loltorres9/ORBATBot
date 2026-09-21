@@ -1,15 +1,15 @@
-# ORBAT Lab — Stufe A
+# ORBAT Lab — stage A
 
-Ein eigenständiger Prototyp der Idee, das ORBAT von Google Sheets zu lösen und
-im Browser zu bauen. **Er verändert nichts am Bot.** Kein File außerhalb von
-`lab/` wurde angefasst, nichts hier wird von `bot.py` oder `web/` importiert,
-und umgekehrt importiert `lab/` weder `cogs/` noch `web/` noch `discord.py`.
+A standalone prototype of the idea behind lifting the ORBAT out of Google
+Sheets and building it in the browser. **It changes nothing about the bot.** No
+file outside `lab/` was touched, nothing in here is imported by `bot.py` or
+`web/`, and `lab/` imports neither `cogs/` nor `web/` nor discord.py.
 
-Zweck: die eine offene Frage beantworten — lässt sich ein ORBAT auf einer Seite
-**ohne JavaScript** sinnvoll bauen und pflegen? Alles andere (Discord, OAuth,
-Rechte, Sheets) ist bewusst nicht drin.
+Its purpose was to answer the one open question — can an ORBAT be built and
+maintained on one page **without JavaScript**? Everything else (Discord, OAuth,
+permissions, Sheets) is deliberately absent.
 
-## Starten
+## Running it
 
 ```bash
 pip install fastapi uvicorn jinja2 python-multipart
@@ -17,10 +17,10 @@ python -m uvicorn lab.devserver:app --reload --port 8081
 # → http://127.0.0.1:8081
 ```
 
-Beim ersten Start legt `lab/seed.py` ein Beispiel-ORBAT samt Einsatz und ein paar
-Belegungen an, damit die Seite nicht leer ist. Gespeichert wird in
-`lab/orbat_lab.db` (SQLite, von `.gitignore` erfasst). Löschen = zurücksetzen.
-`LAB_DB=/pfad/zur.db` legt sie woanders hin.
+On the first start `lab/seed.py` creates an example ORBAT with an operation and
+a few bookings, so the page is not empty. It is stored in `lab/orbat_lab.db`
+(SQLite, covered by `.gitignore`). Deleting that file resets it. `LAB_DB=/path/to.db`
+puts it somewhere else.
 
 Tests:
 
@@ -28,18 +28,18 @@ Tests:
 pip install pytest && python -m pytest lab/tests -q
 ```
 
-## Was drin ist
+## What is in here
 
-| Datei | Inhalt |
+| File | What it is |
 |---|---|
-| `parser.py` | Das Textformat → Squads und Slots. Rein, ohne Abhängigkeiten. |
-| `diff.py` | Vergleicht den neuen Text gegen das Gespeicherte, damit Slot-IDs und damit Belegungen eine Bearbeitung überleben. |
-| `render.py` | Board-Aufbau plus Prüfung gegen Discords Embed-Grenzen. |
-| `store.py` | SQLite in der Form, die das Postgres-Schema hätte. |
-| `devserver.py` | Die Seiten. |
-| `seed.py` | Beispiel-ORBAT. |
+| `parser.py` | The text format → squads and slots. Pure, no dependencies. |
+| `diff.py` | Compares the new text against what is stored, so slot ids — and with them the bookings — survive an edit. |
+| `render.py` | Building the board, plus the check against Discord's embed limits. |
+| `store.py` | SQLite in the shape the PostgreSQL schema would have. |
+| `devserver.py` | The pages. |
+| `seed.py` | The example ORBAT. |
 
-## Das Textformat
+## The text format
 
 ```
 1-1 Alpha  | right
@@ -50,43 +50,41 @@ Reservists  | right, nocount
   Reserve
 ```
 
-Squad-Zeilen stehen links am Rand, Slots sind eingerückt. Optionen nach `|`:
-Squad `left` / `right` / `nocount`, Slot `unit:TAG`. `#` am Zeilenanfang ist ein
-Kommentar. Eine führende Nummerierung („1. Rifleman“) wird entfernt, damit aus
-einem Sheet kopierte Zeilen direkt passen.
+Squad lines start at the left margin, slots are indented. Options after `|`:
+`left` / `right` / `nocount` on a squad, `unit:TAG` on a slot. `#` at the start
+of a line is a comment. A leading number ("1. Rifleman") is stripped, so lines
+pasted out of a sheet land clean.
 
-## Die drei Entscheidungen, die geprüft werden sollten
+## The three decisions this was built to test
 
-**Ein Textfeld statt eines Slot-Editors.** `web/` hat kein JavaScript und keinen
-Build-Step, also gäbe es sonst nur Hoch/Runter-Buttons pro Zeile. Der Text ist
-ohne JS beliebig umsortierbar und entspricht der Art, wie ORBATs ohnehin
-geschrieben werden. Preis: es gibt kein Live-Update, die Vorschau ist ein
-Button.
+**One text field rather than a slot editor.** `web/` has no JavaScript and no
+build step, so the alternative would have been an up/down button per row. Text
+can be reordered freely without any of that, and it is how ORBATs get written
+down anyway. The price: there is no live update — the preview is a button.
 
-**Slots tragen keine Belegung.** Wer einen Slot hat, steht in `lab_bookings`,
-gekoppelt an `(Einsatz, Slot)` — also da, wo die Produktion es in `requests`
-schon führt. Damit ist ein ORBAT eine Vorlage, die beliebig viele Einsätze
-trägt, ohne dass etwas zurückgesetzt werden muss.
+**A slot carries no booking.** Who holds one lives in `lab_bookings`, keyed on
+`(operation, slot)` — which is where production already keeps it, in
+`requests`. That is what makes an ORBAT a template carrying any number of
+operations without anything having to be reset.
 
-**Eine Bearbeitung darf niemanden stillschweigend aussetzen.** `diff.py`
-ordnet Squads und Slots erst über den Namen zu, dann über die Position; eine
-Umbenennung behält deshalb die ID und die Belegung. Alles, was jemanden
-austrägt *oder* auf eine andere Rolle verschiebt, geht über eine
-Bestätigungsseite, die die betroffenen Leute namentlich nennt.
+**An edit must never unseat anybody silently.** `diff.py` matches squads and
+slots by name first and by position second, so a rename keeps the id and with
+it the booking. Anything that takes somebody off a slot *or* moves them to a
+different role goes through a confirmation page that names the people affected.
 
-## Wo das Lab hinter dem echten Editor liegt
+## Where the lab is behind the real editor
 
-Der ORBAT-Editor in `web/` ist inzwischen die echte Umsetzung. Das Lab teilt sich
-mit ihm den Parser (`utils/orbat.py`), hat aber **keine Netz-Liste** — die
-gemeinsamen Funknetze gibt es nur im echten Editor. Der Funkkanal pro Squad
-(`radio:`) wird hier gespeichert.
+The ORBAT editor in `web/` is the real implementation now. The lab shares its
+parser (`utils/orbat.py`) but has **no net list** — the shared radio nets exist
+only in the real editor. A squad's own channel (`radio:`) is stored here.
 
-## Was Stufe A nicht beantwortet
+## What stage A does not answer
 
-Rechte und OAuth, der Approval-Flow gegen echte Unit-Rollen, die View-Persistenz
-über Neustarts und die Migration laufender Requests. Das braucht Stufe B (Lab im
-Bot-Prozess hinter `ORBAT_LAB=1`) und Stufe C (eigener Test-Bot).
+Permissions and OAuth, the approval flow against real unit roles, view
+persistence across restarts, and migrating requests that are already running.
+Those need stage B (the lab inside the bot process behind `ORBAT_LAB=1`) and
+stage C (a test bot of its own).
 
-## Aufräumen
+## Cleaning up
 
-`rm -rf lab/` — sonst nichts.
+`rm -rf lab/` — nothing else.
