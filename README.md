@@ -103,6 +103,7 @@ Permission-free tag roles for games (Minecraft, DCS, …) that members opt into 
 Draw the plan on the terrain and share it with a link — unit symbols, movement lines, objectives and boundaries, in the browser. No slash command: the whole thing lives in the [web interface](#tactical-maps).
 
 - **Proper APP-6 symbols** — a blue rectangle for friendly, a red diamond for hostile, a green square for neutral, a yellow quatrefoil for unknown, with infantry, recon, armour, mechanised, mortars, artillery, medical, engineers, supply, aircraft and vehicles on them, **size marks above the frame** (Ø team · • squad · ••• platoon · I company · II battalion) and `(+)` / `(-)` beside them — plus Arma's own `mil_*` task markers for objectives, rally points and the rest
+- **The frame says where and whether, not just whose** — an open-bottomed frame for anything in the air, an open-topped one for subsurface, and a **dashed** frame for what is only planned, with the mobility indicator (wheeled, tracked, towed) under it and the parent unit beside the size mark
 - **Movement lines with arrow heads, areas, markers and free text** — everything a briefing needs to say where people are going
 - **Your actual terrain as the background** — upload the same tile archive you prepare for [OCAP](https://github.com/OCAP2/OCAP) (zip or 7z) and the bot serves it itself, or point it at a running OCAP server; either way the Arma coordinates come along with the terrain
 - **A share link** anyone can open without signing in, read-only or with drawing rights, and **replaceable** the moment it has travelled further than intended
@@ -925,9 +926,11 @@ Open **Operations → Maps**. Every member of the server can read the maps; crea
 | **Area** | A shaded boundary or a suspected position | `A` |
 | **Text** | A free label — phase names, timings | `T` |
 
-Pick the side (friendly, hostile, neutral, civilian, unknown), the layer, the symbol and the size mark in the toolbar before you place something; everything can be changed afterwards in the panel on the right. A **line** or an **area** is drawn by clicking each corner in turn — `Enter` finishes it, `Esc` throws it away.
+Pick the side (friendly, hostile, neutral, civilian, unknown), the layer, the symbol, the size mark, whether it is in the air and whether it is there yet or only planned, in the toolbar before you place something; everything can be changed afterwards in the panel on the right, which also holds the mobility indicator and the parent unit.
 
-The symbols are drawn the way Arma draws its own map markers — a solid block of the side's colour with a white pictogram — so what you plan looks like what everyone sees in game. A **line or an area can take a colour of its own**; a unit symbol can't, because its colour is what says whose it is.
+**Drawing a line is like the game:** hold `Ctrl`, press the left button and drag — it works from any tool, and letting go finishes the line. With the **Area** tool the shape closes into an area. For a route that has to hit exact points, the **Line** and **Area** tools still take it corner by corner: click each one, `Enter` finishes, `Esc` throws it away.
+
+The symbols follow APP-6, the way the planning tools and pocket cards do: the frame's **shape** says whose a unit is, so the plan still reads when it is printed, projected, or looked at by somebody who is colour-blind. A **line or an area can take a colour of its own**; a unit symbol can't, because its colour is what says whose it is.
 
 - **Scroll** to zoom, **drag the background** to pan, **⛶ Full screen** gives the map the whole window
 - `Del` removes what is selected, `Ctrl`+`Z` undoes, `Ctrl`+`S` saves
@@ -954,7 +957,7 @@ Uploading is worth the storage for one reason: the bot then serves the tiles its
 - **Deepest level to keep** decides the size: each step is four times the tiles. Level 4 is around 7 MB per terrain and is plenty for planning; deeper levels in the archive are simply left out, and the reply tells you how many.
 - A terrain can't be deleted while a map is drawn on it — the reply names the maps.
 
-Alternative: **point at a running OCAP server**. Open **🛰️ Load a terrain from OCAP** and paste the address of one of its map folders — e.g. `https://ocap.your-unit.net/images/maps/tanoa`. Same terrain, same automatic Arma coordinates, nothing stored here; the catch is that everyone opening the map loads the tiles from that server, so it has to be reachable for them too.
+Alternative: **point at a running OCAP server**. Open **🛰️ Load a terrain from OCAP**, give it the folder OCAP keeps its terrains in — e.g. `https://ocap.your-unit.net/images/maps` — and press **List the terrains**: everything in it comes back as a dropdown, so you never have to remember that Cham is `tem_cham`. The address is saved for the server, so it is typed once. Same terrain, same automatic Arma coordinates, nothing stored here; the catch is that everyone opening the map loads the tiles from that server, so it has to be reachable for them too. If your OCAP does not list its directory, **Paste an address instead** takes one map folder's URL as before.
 
 Or paste the URL of **any image** the browser can load — a terrain screenshot, a map export — under **Map settings**. It is stretched across the sheet, so pick the sheet shape (square, landscape, portrait) that matches it, and set the Arma corners yourself if you want the export.
 
@@ -991,12 +994,14 @@ What comes across:
 | On the map | In Arma |
 |---|---|
 | Unit symbols | The matching NATO marker, in the side's colour — `b_inf`, `o_armor`, `n_med` … |
+| Anything in the air | That side's `air` marker, whatever branch the symbol was |
 | Headquarters | The `hq` marker of that side |
+| Size, strength, mobility, parent unit, planned | Written into the marker's name: `1-1 Alpha / A Coy (planned Plt twd)` |
 | Markers (OBJ, TGT, RP …) | `mil_objective`, `mil_destroy`, `mil_dot` and friends, with the text |
 | Lines and areas | Polyline markers; an area closes itself, a line's arrow becomes a `mil_arrow` |
 | Text labels | An empty marker carrying the text |
 
-Anti-tank, snipers and a few others have no marker in vanilla Arma, so they come across as the nearest one that exists. Dashed lines arrive solid — Arma has no dashed marker.
+Anti-tank, snipers and a few others have no marker in vanilla Arma, so they come across as the nearest one that exists. Dashed lines arrive solid, and so does a planned symbol's dashed frame — Arma has no dashed marker, which is why "planned" is written into the name instead.
 
 ### Good to know
 
