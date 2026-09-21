@@ -81,7 +81,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(206 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
+(209 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
 places where a bug silently deletes somebody's slot — and `tests/` covers
 `utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
 `check_feed()` promises about announcing a post exactly once, and
@@ -1941,22 +1941,35 @@ have no counterpart — there is no anti-tank or sniper marker — so they land 
 the nearest thing that exists rather than on nothing, and `hq` wins over the
 branch icon because `b_hq` says more about the unit than its branch does.
 
-**`editable=True` is the variant the plan can be touched in.** A marker a
-script creates is read-only on Arma's map; the engine only lets a player pick
-one up or delete it when its name begins with `_USER_DEFINED`, which is how it
-tells a marker somebody placed from one the mission drew. `USER_MARKER` goes in
-front of our own prefix rather than replacing it, so the marker becomes
-click-and-DEL while the prefix stays inside the name and a corrected plan still
-replaces exactly this map's set. Two things to know:
+**`editable=True` is the variant the plan can be touched in**, and it names
+its markers differently because that is the only thing that decides it. Arma
+works out who owns a marker by parsing the name it gives its own —
+`_USER_DEFINED #owner/index/channel`, all three numeric — and only the owner
+may move or delete one. Sticking `_USER_DEFINED ` in front of our own prefix
+is not that shape; that was shipped first and the markers stayed read-only in
+a mission, which is what `ARMA_CHANNELS` and `_map_number()` exist to fix.
 
-- **It is off by default and offered as a second script**, not a replacement.
-  The same click that drags a misplaced objective into place deletes it, and
-  nothing asks first — which is right for a plan being worked on and wrong for
-  one being briefed off.
-- **Lines and areas are polylines**, and the map's own editing is built around
-  icon markers, so those may well stay fixed while the symbols and objective
-  markers move. That has not been tried in a mission — nothing in this repo
-  has, since the console is the only way in.
+Four things follow, and each is a promise the plain export made by other
+means:
+
+- **The owner is `clientOwner`, so it is run once, locally.** GLOBAL EXEC runs
+  the code on every machine and each would write its own id into the name,
+  drawing one plan per player. `createMarker` is global anyway, so LOCAL EXEC
+  is both enough and required — the script's header says so.
+- **The map's prefix cannot ride in the name**, since the index is numeric.
+  `_map_number()` takes the digits out of the prefix instead, so two maps'
+  markers cannot collide, and the script remembers what it drew in a public
+  mission variable (`tacmap_map7`) and deletes exactly that on the next run.
+  Every `createMarker` is matched by a `pushBack`, which a test pins: one
+  missed and the next run leaves markers behind.
+- **The channel is the last part of the name** (`ARMA_CHANNELS`, Arma's own
+  ids). It is a choice on the panel rather than a constant because a plan
+  meant for one side should not sit in Global.
+- **It is still the second script, not the first.** The same click that drags
+  a misplaced objective into place deletes it, and nothing asks first.
+
+Lines and areas are `POLYLINE` markers and the map's own editing is built
+around icon markers, so those may stay fixed while the symbols move.
 
 ### Posting is a link, not a picture
 

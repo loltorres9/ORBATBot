@@ -187,9 +187,11 @@ def arma_prefix(record) -> str:
     return f"map{record['id']}"
 
 
-def sqf(record, editable: bool = False) -> str:
+def sqf(record, editable: bool = False, channel: int = None) -> str:
     return tacmap.to_sqf(load(record), prefix=arma_prefix(record),
-                         title=record['name'], editable=editable)
+                         title=record['name'], editable=editable,
+                         channel=tacmap.DEFAULT_CHANNEL if channel is None
+                         else channel)
 
 
 def share_path(record) -> str:

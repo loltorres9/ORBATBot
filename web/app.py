@@ -920,7 +920,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         }, status=status)
 
     async def map_editor(request: Request, context: dict, error: str = None,
-                         status: int = 200, panel: str = None):
+                         status: int = 200, panel: str = None,
+                         channel: int = tacmap_lib.DEFAULT_CHANNEL):
         record = context['record']
         doc = tacmap_service.load(record)
         terrains = await database.get_guild_tac_terrains(str(context['guild'].id))
@@ -935,7 +936,9 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                                      title=record['name']),
             'sqf_editable': tacmap_lib.to_sqf(
                 doc, prefix=tacmap_service.arma_prefix(record),
-                title=record['name'], editable=True),
+                title=record['name'], editable=True, channel=channel),
+            'arma_channel': channel,
+            'arma_channels': tacmap_lib.ARMA_CHANNELS,
             'save_url': f"/g/{context['guild'].id}/maps/{record['id']}/save",
             'share_modes': tacmap_service.SHARE_MODES,
             'share_url': (f"{origin(request)}{tacmap_service.share_path(record)}"
@@ -979,9 +982,10 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                         'Map created — now draw the plan.')
 
     @app.get('/g/{guild_id}/maps/{map_id}', response_class=HTMLResponse)
-    async def map_edit(request: Request, guild_id: str, map_id: int):
+    async def map_edit(request: Request, guild_id: str, map_id: int,
+                       channel: int = tacmap_lib.DEFAULT_CHANNEL):
         context = await map_context(request, guild_id, map_id)
-        return await map_editor(request, context)
+        return await map_editor(request, context, channel=channel)
 
     @app.post('/g/{guild_id}/maps/{map_id}/save')
     async def map_save(request: Request, guild_id: str, map_id: int):
@@ -1000,7 +1004,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
 
     @app.get('/g/{guild_id}/maps/{map_id}/arma.sqf', response_class=PlainTextResponse)
     async def map_sqf(request: Request, guild_id: str, map_id: int,
-                      editable: int = 0):
+                      editable: int = 0,
+                      channel: int = tacmap_lib.DEFAULT_CHANNEL):
         """The markers as a script, for pasting into a running mission.
 
         Served as a file as well as shown on the page, because a plan being
@@ -1010,7 +1015,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         """
         context = await map_context(request, guild_id, map_id)
         return PlainTextResponse(
-            tacmap_service.sqf(context['record'], editable=bool(editable)))
+            tacmap_service.sqf(context['record'], editable=bool(editable),
+                               channel=channel))
 
     # -- terrains, uploaded and served from here ----------------------------
 

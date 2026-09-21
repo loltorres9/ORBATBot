@@ -1378,66 +1378,133 @@ def _bearing(start: tuple, end: tuple) -> float:
     return round(math.degrees(math.atan2(end[0] - start[0], end[1] - start[1])) % 360, 1)
 
 
-USER_MARKER = '_USER_DEFINED '
+# The name Arma gives a marker somebody placed themselves, and the only shape
+# it lets that person move or delete: `_USER_DEFINED #owner/index/channel`.
+# The owner is the machine's own `clientOwner`, which is why an editable export
+# is run once, locally, rather than broadcast — see `to_sqf()`.
+USER_MARKER = '_USER_DEFINED #'
+
+# Which channel an editable marker belongs to. Arma's own ids, and the reason
+# this is a choice: markers placed in Global are seen by everybody in the
+# server, Side by one side, Group by one group.
+ARMA_CHANNELS = (
+    (0, 'Global'),
+    (1, 'Side'),
+    (2, 'Command'),
+    (3, 'Group'),
+    (4, 'Vehicle'),
+    (5, 'Direct'),
+)
+DEFAULT_CHANNEL = 0
+
+
+def _map_number(prefix: str) -> str:
+    """A number of this map's own, to keep two maps' markers apart.
+
+    An editable marker's index has to be a number — the engine parses the
+    name — so the prefix cannot ride along in it as text. The map's own digits
+    do the same job, and a prefix carrying none falls back to something stable
+    rather than colliding with every other such map.
+    """
+    digits = ''.join(character for character in prefix if character.isdigit())
+    return digits or str(sum(ord(character) for character in prefix) % 900 + 100)
 
 
 def to_sqf(doc: dict, *, prefix: str, title: str = '',
-           editable: bool = False) -> str:
+           editable: bool = False, channel: int = DEFAULT_CHANNEL) -> str:
     """The map as a script that puts these markers into a running mission.
 
     A script somebody pastes, rather than something this bot sends: vanilla
     Arma has no way to fetch anything from outside, so the way in without a mod
-    is the debug console, where a logged-in admin can run it globally.
-    `createMarker` is global by nature, so every player sees the result.
+    is the debug console. `createMarker` is global by nature — one machine
+    running it draws the plan for everybody — so LOCAL EXEC is enough.
 
     Running it a second time **replaces** these markers instead of doubling
-    them — every marker is named after this map, and the script deletes that
-    set before it draws. Which is also why the prefix has to be this map's
-    alone: a prefix two maps shared would have them deleting each other.
+    them. The read-only export does that by name: every marker is named after
+    this map and the script deletes that set before it draws, which is why the
+    prefix has to be this map's alone.
 
-    **`editable` decides whether the plan can be touched in game.** A marker
-    a script creates is read-only on the map: the engine only lets a player
-    pick up or delete one whose name begins with `_USER_DEFINED`, which is
-    how it tells a marker somebody placed from one the mission drew. Putting
-    that in front of our own prefix hands the plan over — click a marker and
-    press DEL, or drag it — while the prefix stays inside the name, so
-    pasting a corrected plan still replaces exactly this map's set and no
-    other.
+    **`editable` decides whether the plan can be touched in game**, and it
+    changes how the markers are named. Arma only lets somebody move or delete
+    a marker they own, and it works out who owns one by parsing the name it
+    gives its own: `_USER_DEFINED #owner/index/channel`, all three numeric.
+    Anything else — including our prefix with `_USER_DEFINED ` merely stuck in
+    front of it, which is what this first tried — is read-only on the map.
 
-    It is off by default because it cuts both ways: the same click that
-    fixes a misplaced objective deletes it, and nobody is stopped from it.
+    Two things follow from that name, and both are load-bearing:
+
+    - **The owner is `clientOwner`, so the script is run once, locally.**
+      GLOBAL EXEC runs the code on every machine, and each would fill its own
+      id into the name and create its own set — the same plan three times over
+      on a three-player server. With a read-only export the names match and
+      the duplicates collapse; here they do not.
+    - **The map's prefix cannot ride in the name**, since the index is
+      numeric. So an editable export remembers what it drew in a public
+      mission variable and deletes that on the next run, which is the same
+      promise by a different route.
+
+    `channel` is the last part of that name — see `ARMA_CHANNELS`.
     """
     prefix = ''.join(character for character in (prefix or 'tacmap')
                      if character.isalnum() or character == '_')
     prefix = (prefix or 'tacmap') + '_'
-    if editable:
-        prefix = USER_MARKER + prefix
+    channel = channel if channel in dict(ARMA_CHANNELS) else DEFAULT_CHANNEL
+    number = _map_number(prefix)
+    store = f'tacmap_{prefix}'.rstrip('_')
 
     # Only what is on a visible layer: a marker somebody switched off is not
     # part of the plan they are handing over, and Arma has no way to switch it
     # off again once it is drawn.
     items = ordered_items(doc)
-    lines = [
-        f'// {title or "Tactical map"} — {summarise(doc)}',
-        '// Paste into the Arma 3 debug console and press GLOBAL EXEC as a',
-        '// logged-in admin. Running it again replaces these markers.',
-    ]
+    lines = [f'// {title or "Tactical map"} — {summarise(doc)}']
     if editable:
+        channel_name = dict(ARMA_CHANNELS)[channel]
         lines += [
-            '// You can move and delete these in game: click one on the map',
-            '// and press DEL, or drag it. Lines and areas are polyline',
-            '// markers, which the map may not let you pick up.',
+            '// Paste into the Arma 3 debug console and press LOCAL EXEC as a',
+            '// logged-in admin — once, on one machine. The markers are global',
+            '// either way, and GLOBAL EXEC would draw one set per machine.',
+            '// Click a marker and press DEL to remove it, or drag it to move',
+            '// it. Lines and areas are polyline markers, which the map may',
+            '// not let you pick up. Running this again replaces the set.',
+            f'private _chan = {channel};  '
+            f'// {" · ".join(f"{key} {name}" for key, name in ARMA_CHANNELS)}',
+            'private _own = format ["' + USER_MARKER + '%1/", clientOwner];',
+            "private _c = '/' + str _chan;",
+            f'{{ deleteMarker _x }} forEach (missionNamespace getVariable '
+            f'[{_sqf_string(store)}, []]);',
+            'private _n = [];',
+            'private _m = "";',
         ]
-    lines += [
-        f'private _p = {_sqf_string(prefix)};',
-        '{ if (_x select [0, count _p] == _p) then { deleteMarker _x } } '
-        'forEach allMapMarkers;',
-        'private _m = "";',
-    ]
+    else:
+        lines += [
+            '// Paste into the Arma 3 debug console and press LOCAL EXEC as a',
+            '// logged-in admin. The markers are global, so one machine',
+            '// running this draws them for everybody. Running it again',
+            '// replaces these markers.',
+            f'private _p = {_sqf_string(prefix)};',
+            '{ if (_x select [0, count _p] == _p) then { deleteMarker _x } } '
+            'forEach allMapMarkers;',
+            'private _m = "";',
+        ]
+
+    drawn = [0]
+
+    def marker_name(index: int, suffix: str = '') -> str:
+        """What goes in the `createMarker` call, as SQF.
+
+        The two exports name a marker differently on purpose — see `to_sqf`.
+        An editable one is numbered per marker rather than per item, because
+        the engine parses that part of the name as a number and an arrow's
+        "2a" is not one.
+        """
+        if not editable:
+            return f'_p + "{index}{suffix}"'
+        drawn[0] += 1
+        return f'_own + "{number}{drawn[0]:03d}" + _c'
 
     for index, item in enumerate(items, start=1):
         colour = ARMA_SIDES.get(item['side'], ARMA_SIDES['unknown'])[1]
-        name = f'_p + "{index}"'
+        name = marker_name(index)
         text = _marker_text(item)
 
         if item['kind'] in ('line', 'area'):
@@ -1452,12 +1519,16 @@ def to_sqf(doc: dict, *, prefix: str, title: str = '',
             lines.append(f'_m setMarkerPolyline [{flat}];')
             if text:
                 lines.append(f'_m setMarkerText {_sqf_string(text)};')
+            if editable:
+                lines.append('_n pushBack _m;')
             if item['kind'] == 'line' and item.get('arrow') and len(points) > 1:
-                lines.append(f'_m = createMarker [_p + "{index}a", '
+                lines.append(f'_m = createMarker [{marker_name(index, "a")}, '
                              f'[{points[-1][0]}, {points[-1][1]}]];')
                 lines.append('_m setMarkerType "mil_arrow";')
                 lines.append(f'_m setMarkerColor "{colour}";')
                 lines.append(f'_m setMarkerDir {_bearing(points[-2], points[-1])};')
+                if editable:
+                    lines.append('_n pushBack _m;')
             continue
 
         world = to_world(doc, item['x'], item['y'])
@@ -1471,6 +1542,15 @@ def to_sqf(doc: dict, *, prefix: str, title: str = '',
             lines.append(f'_m setMarkerSize [{size}, {size}];')
         if item['kind'] == 'unit' and item.get('rotation'):
             lines.append(f"_m setMarkerDir {round(item['rotation'] % 360, 1)};")
+        if editable:
+            lines.append('_n pushBack _m;')
+
+    if editable:
+        # What was drawn, so the next run can take exactly it away again —
+        # public, so it is the same list on every machine and for whoever
+        # pastes the corrected plan next.
+        lines.append(f'missionNamespace setVariable [{_sqf_string(store)}, _n, true];')
+        lines.append('hint format ["%1 markers drawn", count _n];')
 
     if not items:
         lines.append('// Nothing is drawn on this map yet.')
