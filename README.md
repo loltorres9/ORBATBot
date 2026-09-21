@@ -104,10 +104,10 @@ Draw the plan on the terrain and share it with a link — unit symbols, movement
 
 - **Proper APP-6 symbols** — a blue rectangle for friendly, a red diamond for hostile, a green square for neutral, a yellow quatrefoil for unknown, with infantry, recon, armour, mechanised, mortars, artillery, medical, engineers, supply, aircraft and vehicles on them, **size marks above the frame** (Ø team · • squad · ••• platoon · I company · II battalion) and `(+)` / `(-)` beside them — plus Arma's own `mil_*` task markers for objectives, rally points and the rest
 - **The frame says where and whether, not just whose** — an open-bottomed frame for anything in the air, an open-topped one for subsurface, and a **dashed** frame for what is only planned, with the mobility indicator (wheeled, tracked, towed) under it and the parent unit beside the size mark
-- **Movement lines with arrow heads, areas, markers and free text** — everything a briefing needs to say where people are going
+- **Movement lines, areas, markers and free text** — drawn by dragging, the way Arma's own map does it, in any of ten colours; an arrow head goes on the lines that mean a direction rather than on all of them
 - **Your actual terrain as the background** — upload the same tile archive you prepare for [OCAP](https://github.com/OCAP2/OCAP) (zip or 7z) and the bot serves it itself, or point it at a running OCAP server; either way the Arma coordinates come along with the terrain
 - **A share link** anyone can open without signing in, read-only or with drawing rights, and **replaceable** the moment it has travelled further than intended
-- **Straight into Arma 3** — the whole plan as markers in a running mission, pasted into the debug console, no mod on either side; a second version of the script hands the markers over, so they can be dragged and deleted in game — in whichever channel you pick
+- **Straight into Arma 3** — the whole plan as markers in a running mission, pasted into the debug console, no mod on either side. Two scripts side by side: one whose markers stay put, and one whose markers can be dragged and deleted in game, in whichever map channel you pick
 - **Post it in a channel** as a link, so it stays current while the plan is still being drawn
 - Works read-only with JavaScript off, because the map is rendered on the server as well
 
@@ -922,7 +922,7 @@ Open **Operations → Maps**. Every member of the server can read the maps; crea
 | **Select** | Pick something up and move it; drag the background to pan | `V` |
 | **Unit** | An APP-6 symbol — infantry, armour, mortars, air, medical, supply… — with its size mark | `U` |
 | **Marker** | One of Arma's task markers — objective, destroy, flag, warning, pick-up… with optional text | `M` |
-| **Line** | A movement line, with an arrow head | `L` |
+| **Line** | A route, a boundary or a phase line | `L` |
 | **Area** | A shaded boundary or a suspected position | `A` |
 | **Text** | A free label — phase names, timings | `T` |
 
@@ -932,7 +932,7 @@ Pick the side (friendly, hostile, neutral, civilian, unknown), the layer, the sy
 
 Lines and areas can be **red, orange, yellow, green, blue, cyan, pink, purple, white or black**, picked from the swatches in the toolbar before you draw or in the panel afterwards — or any other colour from the colour field beside them. A unit symbol keeps its side's colour, because that is what says whose it is. A line gets **no arrowhead unless you tick one**: most lines on a plan are boundaries and phase lines, not directions of attack.
 
-The symbols follow APP-6, the way the planning tools and pocket cards do: the frame's **shape** says whose a unit is, so the plan still reads when it is printed, projected, or looked at by somebody who is colour-blind. A **line or an area can take a colour of its own**; a unit symbol can't, because its colour is what says whose it is.
+The symbols follow APP-6, the way the planning tools and pocket cards do: the frame's **shape** says whose a unit is, so the plan still reads when it is printed, projected, or looked at by somebody who is colour-blind.
 
 - **Scroll** to zoom, **drag the background** to pan, **⛶ Full screen** gives the map the whole window
 - `Del` removes what is selected, `Ctrl`+`Z` undoes, `Ctrl`+`S` saves
@@ -974,6 +974,8 @@ A map is private to people who can sign in here until you give it a link. Under 
 - **Anyone with the link can draw on it** — for co-planning with somebody who is not on the server
 
 The link looks like `https://your-domain/m/xxxxxxxx`, works without a Discord login, and **Replace the link** issues a new one — the old link stops opening the map immediately, for everyone who has it. That is how you take a plan back once it has been forwarded further than you meant.
+
+If the site answers on more than one name, the link always carries the **first** one in `WEB_BASE_URL` — even if you made it while browsing the other. That is deliberate: a share link is copied to somebody who was never on the site, so it has to be the name you want people to see. The same goes for the link the bot posts into a channel. A map **already announced** in Discord keeps the link its message was posted with; post it again to refresh that.
 
 ### Posting it in a channel
 
@@ -1040,6 +1042,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | · Slot Approvals | Approve, deny or withdraw the pending requests, release a booked slot, or put somebody on one outright |
 | · ORBATs | Build and edit the slot roster |
 | · Maps | Draw the tactical plan, share it with a link, post it in a channel |
+| · Terrains | Upload the tile archives the maps are drawn on, and see what each one costs |
 | · Settings | Which channels the bot posts into, and the server timezone |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
@@ -1052,7 +1055,7 @@ Who may do what is **read live from your Discord roles**, not from the login:
 - **Any member of the server** — view events, RSVP, pick their own game roles, see the voice leaderboard, read the tactical maps
 - **Unit Leader or Manage Server** — create events; draw, share and post tactical maps; approve and deny slot requests (Unit Leaders for their own unit only)
 - **The organiser, or an admin** — edit, cancel and delete that event
-- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, build ORBATs, watch Reddit feeds, configure the member log and voice tracking
+- **Manage Server** — add and remove game roles, post the self-assign panel, build embeds, build ORBATs, watch Reddit feeds, upload and delete terrains, configure the member log and voice tracking
 
 That is the same rule set the slash commands use; it is literally the same code. Roles are cached for a minute, so if you have just been given a role, the **“Changed your roles on Discord? Re-read them”** link at the bottom of the event list picks it up immediately.
 
@@ -1086,7 +1089,7 @@ WEB_BASE_URL=https://orbat.example.com
 
 **4. Expose it.**
 
-- **Railway** — service → **Settings → Networking → Generate Domain**. Railway injects `PORT` and the app listens on it; use that domain as `WEB_BASE_URL`. A domain of your own goes in the same place (**Custom Domain**, then the CNAME it gives you at your DNS provider); put both names in `WEB_BASE_URL` if the old one should keep working.
+- **Railway** — service → **Settings → Networking → Generate Domain**. Railway injects `PORT` and the app listens on it; use that domain as `WEB_BASE_URL`. A domain of your own goes in the same place (**Custom Domain**, then the CNAME it gives you at your DNS provider); put both names in `WEB_BASE_URL` if the old one should keep working — **your own domain first**, because the first name is the one share links carry. Each name also needs its own redirect URI in the Developer Portal.
 - **Docker** — port `8080` is published by `docker-compose.yml`; put it behind a reverse proxy that terminates TLS (Caddy or nginx), and point `WEB_BASE_URL` at the public name.
 
 Restart the bot. The log line `✅ Web UI listening on …` means it is up; `/healthz` answers `ok` once the bot is connected to Discord.

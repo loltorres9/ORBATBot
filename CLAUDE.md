@@ -68,7 +68,7 @@ web/                    # Optional browser UI — Discord OAuth2 login, events, 
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates, one stylesheet, one script (the map editor)
 lab/                    # Standalone ORBAT-editor playground — no Discord, no Postgres
-tests/                  # pytest — utils/reddit.py, utils/tacmap.py, utils/tiles.py, check_feed()
+tests/                  # pytest — reddit, tacmap, tiles, web/config.py, check_feed()
 requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
@@ -81,15 +81,22 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(250 cases): `lab/tests` covers `utils/orbat.py`'s parser and diff — the two
-places where a bug silently deletes somebody's slot — and `tests/` covers
-`utils/reddit.py`'s feed parsing, templating and how a refusal is handled, what
-`check_feed()` promises about announcing a post exactly once, and
-`utils/tacmap.py`'s document parsing and escaping, and what `utils/tiles.py`
-keeps and drops out of an uploaded archive. The date logic in
-`cogs/events.py` (`_next_occurrence()`, `_weekday_day()`, `_add_months()`,
-`_nth_occurrence()`) is pure and Discord-free, so it is the obvious next thing
-to cover.
+(250 cases), and every one of them covers a module that imports nothing beyond
+the standard library — which is the rule that decides what is testable here at
+all:
+
+| | what it pins |
+|---|---|
+| `lab/tests` | `utils/orbat.py`'s parser and diff — the two places where a bug silently deletes somebody's slot |
+| `tests/test_reddit.py` | feed parsing, templating, and how a refusal is told apart from a broken feed |
+| `tests/test_redditfeed.py` | what `check_feed()` promises: a post is announced exactly once |
+| `tests/test_tacmap.py` | the document rules, the SVG and SQF escaping, every frame's geometry, and the tile layout |
+| `tests/test_tiles.py` | what an uploaded archive keeps and what it drops |
+| `tests/test_webconfig.py` | which origin a link gets — the page's own host, or the canonical one |
+
+The date logic in `cogs/events.py` (`_next_occurrence()`, `_weekday_day()`,
+`_add_months()`, `_nth_occurrence()`) is pure and Discord-free, so it is the
+obvious next thing to cover.
 
 ---
 
