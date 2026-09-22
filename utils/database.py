@@ -556,6 +556,16 @@ async def init_db():
             'ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS ocap_base_url TEXT'
         )
 
+        # The terrain's own place names, as JSON — see the place-names section
+        # of utils/tacmap.py. They hang off the terrain rather than off a map
+        # because every plan drawn on Tanoa wants the same ones, and they are
+        # one column rather than a table for the same reason orbat_nets is
+        # replaced wholesale: nothing hangs off a place name, so there is no
+        # identity for an edit to lose.
+        await db.execute(
+            'ALTER TABLE tac_terrains ADD COLUMN IF NOT EXISTS places TEXT'
+        )
+
 
 async def get_active_operation(guild_id: str):
     pool = await get_pool()
@@ -2359,7 +2369,7 @@ async def get_tac_terrain_tile(terrain_id: int, zoom: int, x: int, y: int):
 
 async def create_tac_terrain(guild_id: str, name: str, world_size: float,
                              max_zoom: int, tiles: list, created_by: str,
-                             created_by_name: str) -> int:
+                             created_by_name: str, places: str = None) -> int:
     """Store a terrain and all of its tiles, or neither.
 
     One transaction: a half-written terrain would render as a map with holes in
@@ -2371,10 +2381,11 @@ async def create_tac_terrain(guild_id: str, name: str, world_size: float,
             row = await db.fetchrow(
                 '''INSERT INTO tac_terrains
                    (guild_id, name, world_size, max_zoom, tile_count, bytes,
-                    created_by, created_by_name)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id''',
+                    created_by, created_by_name, places)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id''',
                 guild_id, name, float(world_size), max_zoom, len(tiles),
                 sum(len(tile.image) for tile in tiles), created_by, created_by_name,
+                places,
             )
             await db.copy_records_to_table(
                 'tac_terrain_tiles',
@@ -2383,6 +2394,20 @@ async def create_tac_terrain(guild_id: str, name: str, world_size: float,
                          for tile in tiles],
             )
             return row['id']
+
+
+async def set_tac_terrain_places(terrain_id: int, places: str) -> None:
+    """Replace a terrain's place names.
+
+    Wholesale, like the ORBAT net list: nothing hangs off a place name, so
+    there is no identity an edit could lose. NULL clears them again.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            'UPDATE tac_terrains SET places = $2 WHERE id = $1',
+            terrain_id, places or None,
+        )
 
 
 async def tac_terrain_usage(terrain_id: int) -> list:

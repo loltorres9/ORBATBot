@@ -167,6 +167,15 @@
             <label class="field"><span>Rows</span>
               <input type="number" id="tmf-rows" min="1" max="100"></label>
           </div>
+          <label class="field tmcheck">
+            <input type="checkbox" id="tmf-places"> <span>Show place names</span></label>
+          <div id="tmf-placebox">
+            <label class="field"><span>Name size</span>
+              <input type="range" id="tmf-placescale" min="0.4" max="3" step="0.1">
+            </label>
+            <div class="checkgrid" id="tmf-placegroups"></div>
+            <span class="hint" id="tmf-placenote"></span>
+          </div>
           <label class="field" data-bg="image"><span>Sheet shape</span>
             <select id="tmf-shape">
               <option value="1000x1000">Square</option>
@@ -216,5 +225,8 @@
 </div>
 
 <script type="application/json" id="tmdoc">{{ doc_json|safe }}</script>
+{# The terrain's town names. Separate from the document because they belong to
+   the terrain, and never saved back with it. #}
+<script type="application/json" id="tmplaces">{{ places_json|default('[]', true)|safe }}</script>
 <script type="application/json" id="tmcatalog">{{ catalog_json|safe }}</script>
 <script src="/static/tacmap.js" defer></script>
