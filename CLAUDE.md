@@ -86,7 +86,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(323 cases), and every one of them covers a module that imports nothing beyond
+(342 cases), and every one of them covers a module that imports nothing beyond
 the standard library — which is the rule that decides what is testable here at
 all:
 
@@ -299,7 +299,7 @@ A terrain uploaded as a tile archive and served back by this bot — see
 | `world_size` | DOUBLE PRECISION | The terrain's edge in metres — what the Arma corners come from |
 | `max_zoom` | INTEGER | The deepest level actually stored |
 | `tile_count` / `bytes` | INTEGER / BIGINT | What the list page shows, so the cost of a terrain is visible |
-| `places` | TEXT | The terrain's own town names, as JSON — see [place names](#place-names-the-terrain-knows-its-own-towns-the-tiles-do-not). NULL until somebody pastes them in. One column rather than a table for the same reason `orbat_nets` is replaced wholesale: nothing hangs off a place name |
+| `places` | TEXT | This terrain's own copy of its town names. Written on upload; what a map actually reads is `tac_places`, because an OCAP-backed map has no row here — see [place names](#place-names-the-terrain-knows-its-own-towns-the-tiles-do-not) |
 | `created_by` / `created_by_name` | TEXT | |
 | `created_at` | TIMESTAMP | |
 
@@ -308,6 +308,19 @@ on exactly that, with **ON DELETE CASCADE**. The tiles are in the database and
 not on disk because a container's filesystem does not survive a redeploy, and a
 map whose background disappears on every deploy is worse than one with no
 background at all.
+
+### `tac_places`
+The town names for one terrain, whether or not this bot stores that terrain —
+see [place names](#place-names-the-terrain-knows-its-own-towns-the-tiles-do-not).
+
+| Column | Type | Notes |
+|---|---|---|
+| `guild_id` / `scope` | TEXT | Composite primary key. `scope` is what `tacmap.place_scope()` returns: `t:7` for a terrain uploaded here, or the world name (`tem_cham`) for a map on an OCAP server. **That is the whole reason this is not a column on `tac_terrains`** — half the terrains a guild draws on have no row there |
+| `label` | TEXT | What to call it in a list — the terrain's name, or the world name |
+| `places` | TEXT | The names as JSON, replaced wholesale: nothing hangs off a place name, the same reasoning as `orbat_nets` |
+| `source` | TEXT | `ocap`, `upload`, `paste` or `terrain` — where this set came from, so a re-import can say what it replaced |
+| `updated_by_name` | TEXT | |
+| `updated_at` | TIMESTAMP | |
 
 ### `guild_settings`
 | Column | Type | Notes |
@@ -1251,6 +1264,7 @@ POST /g/{guild}/maps/{id}/post          announce it in a channel, as a link
 GET  /g/{guild}/maps/{id}/arma.sqf      the markers as a script for a live mission
 POST /g/{guild}/maps/{id}/ocap-list     read the OCAP directory, list its terrains
 POST /g/{guild}/maps/{id}/ocap          read an OCAP map folder: terrain + calibration
+POST /g/{guild}/maps/{id}/ocap-places  read the terrain's town names off OCAP
 POST /g/{guild}/maps/{id}/terrain       put the map on one of this guild's terrains
 GET  /g/{guild}/terrains                the uploaded terrains, POST to upload one
 POST /g/{guild}/terrains/{id}/places    replace its town names, wholesale
@@ -1959,29 +1973,49 @@ Three details are load-bearing:
 
 ### Place names: the terrain knows its own towns, the tiles do not
 
-A tile pyramid arrives with roads, buildings and contours and **not one label**.
-Nothing here was dropping them: OCAP's renders come out of Arma's own map export
-as pure topography, and the game draws the names over that afterwards from
-`CfgWorlds >> worldName >> Names`. OCAP's `map.json` carries `worldName`,
-`worldSize`, `imageSize` and `multiplier` and no locations at all, so the names
-genuinely never arrived.
+A tile pyramid arrives with roads, buildings and contours and **not one label**:
+the renders come out of Arma's own map export as pure topography, and the game
+draws the names over that afterwards from `CfgWorlds >> worldName >> Names`.
 
-They hang off **`tac_terrains.places`**, not off a map, because every plan drawn
-on Tanoa wants the same ones. A map only stores how much of them to show
-(`doc['places']`: `show`, `groups`, `scale`), and finds its terrain through
-`tacmap.terrain_id()`, which reads the id back out of the `/t/{id}` background
-address — the same string `database.tac_terrain_usage()` searches for going the
-other way, which is why the pattern lives next to its own code at both ends.
+**The names are in the OCAP data, though — just not in `map.json`.** That was
+got wrong once, on the strength of `map.json` carrying only `worldName`,
+`worldSize`, `imageSize` and `multiplier`, and it is worth knowing why the first
+answer was wrong: OCAP's maptool builds a terrain from a **grad_meh** export
+(`internal/maptool/vector.go` walks `geojson/**/*.geojson.gz`), and grad_meh
+writes the locations beside the tiles as
+`geojson/locations/<locationtype>.geojson.gz` — one gzipped GeoJSON file per
+Arma location type, `Point` geometry already in Arma's CRS, the name in
+`properties.name`. The file names are lowercase location types, which is exactly
+what `PLACE_KINDS` is keyed on, so **the file a place came from is its kind** and
+nothing is guessed.
+
+They hang off a **terrain**, not a map, because every plan drawn on Tanoa wants
+the same ones — and a terrain here is one of two things: a row we store (`/t/7`)
+or somebody else's OCAP folder (`…/maps/tem_cham`). Only the first has a row to
+hang anything off, so **`tacmap.place_scope()`** turns both into one key
+(`t:7`, `tem_cham`) and **`tac_places`** is keyed on that. Two maps on the same
+OCAP terrain therefore share one import, which is the whole point.
+
+`tac_terrains.places` still exists and is written on upload; `init_db()` copies
+it into `tac_places` once so the one release that stored them there strands
+nothing. A map stores only how much of them to show (`doc['places']`: `show`,
+`groups`, `scale`).
 
 Four things are deliberate:
 
-- **Two sources, because neither reaches everywhere.** `places_sqf()` is the
-  mirror of `to_sqf()` and the same door: vanilla Arma cannot send anything out,
-  so the clipboard is how data leaves it exactly as the debug console is how the
-  plan gets in. It reads the config rather than `nearestLocations`, which is the
-  terrain's whole list including the types a radius search misses. The other
-  source is an archive's own `locations` list — the Gruppe Adler format has one,
-  OCAP's does not — read on upload for free when it is there.
+- **`import_ocap_places()` probes and reports; it does not assume.** What a
+  given OCAP instance serves cannot be known from here, so it tries each of
+  `GEOJSON_DIRS`, listing the folder where the server lists directories and
+  otherwise asking for `PROBE_KINDS` by name, and a server carrying none of it
+  gets a message **naming every address tried**. That is the difference between
+  "this feature is broken" and "your OCAP only serves tiles", and it is the only
+  honest thing to build when the answer depends on somebody else's deployment.
+- **`places_sqf()` is the fallback, not the front door.** It is the mirror of
+  `to_sqf()` and the same door — vanilla Arma cannot send anything out, so the
+  clipboard is how data leaves it — and it exists for a terrain whose export
+  never carried the locations. Leading with it was the mistake the first cut
+  made: asking somebody to start a mission per terrain is how a tool stops being
+  worth using.
 - **SQF spells a literal quote `""` and has no backslash escape.** A `\"` in
   that script is a syntax error costing the whole thing, which is what
   `test_the_dump_script_uses_sqf_quote_escaping` pins. The script also strips

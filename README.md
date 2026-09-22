@@ -686,23 +686,21 @@ See also: [Draw the plan](#draw-the-plan)
 
 #### Put the town names on the map
 
-**Who:** Admin · **Where:** Web — **Terrains**, then the map’s background panel
+**Who:** Admin · **Where:** Web — the map’s background panel, or **Terrains**
 
 A terrain arrives with roads and contours and no labels. This is how it learns what its towns are called.
 
-1. Start a mission **on that terrain** and open the debug console as a logged-in admin.
-2. Go to **Terrains**, copy the script under *Where the place names come from*, paste it into the console and press **LOCAL EXEC**.
-3. The names are now on your clipboard. Paste them into that terrain’s **Place names** box and save.
-4. Open a map drawn on it — the names are there, under the plan.
-5. Too many? The editor’s background panel has a switch per group and a size slider.
+1. **On an OCAP terrain:** open the map, go to *Terrain and background* → **Place names from OCAP**, and press **Import place names**. It reads them off the same server the map already points at.
+2. **On a terrain uploaded here:** the archive’s own `locations` files are read on upload, if it has them.
+3. Either way it is once per **terrain** — every map drawn on it gains the names.
+4. Too many? The editor’s background panel has a switch per group and a size slider.
+5. **Only if neither works:** the Terrains page has a script that copies the names out of a running mission, for a terrain whose export never carried them.
 
-> The tiles genuinely have no labels in them: they come out of Arma’s own map export as pure topography, and the game draws the names over that from its config afterwards. So this has to be fetched once per terrain — nothing was lost on the way in.
+> The names are in the OCAP data, just not in `map.json`. OCAP builds a terrain from a **grad_meh** export, which writes them beside the tiles as `geojson/locations/<type>.geojson.gz` — one file per Arma location type, and the file name is the type.
 >
-> The names belong to the **terrain**, not to one map. Do it once and every plan drawn on that terrain has them.
+> Whether a given server publishes that export is the one thing the import cannot know in advance, so a server that carries none answers with **every address it tried**. That is the difference between a broken feature and an OCAP that only serves tiles.
 >
-> An archive in the Gruppe Adler format carries a `locations` list and is read on upload, so it needs none of this. An OCAP archive has no names in it.
->
-> A map whose background points at an **OCAP server** has no terrain stored here to hang names off. Upload the terrain instead, which is the better answer anyway for anything behind a share link.
+> The tiles genuinely have no labels in them: they come out of Arma’s own map export as pure topography, and the game draws the names over that from its config afterwards.
 >
 > Place names are never exported to Arma — the game already draws its own.
 
@@ -1795,14 +1793,29 @@ However the background got there, **Detail** under *Map settings* picks how deep
 
 ### Town names
 
-A terrain arrives with **no labels on it**. That is not something the bot loses:
-OCAP's tiles come out of Arma's own map export as pure topography, and the game
-draws the names over that afterwards from `CfgWorlds`. So the names have to be
-fetched once per terrain, and then every map drawn on it has them.
+A terrain arrives with **no labels on it** — the tiles come out of Arma's own map
+export as pure topography, and the game draws the names over that afterwards.
+But the names *are* in the OCAP data: OCAP builds a terrain from a
+[grad_meh](https://github.com/gruppe-adler/grad_meh) export, which writes them
+beside the tiles as `geojson/locations/<type>.geojson.gz`, one file per Arma
+location type. So this is a read, not a trip into the game.
 
-1. Start a mission **on that terrain**, open the debug console as a logged-in admin.
-2. On **Terrains**, copy the script under *Where the place names come from*, paste it in and press **LOCAL EXEC**. The names land on your clipboard.
-3. Paste them into that terrain's **Place names** box and save.
+**On an OCAP terrain:** open the map → *Terrain and background* → **Place names
+from OCAP** → **Import place names**. It reads them off the server the map
+already points at.
+
+**On a terrain uploaded here:** the archive's own `locations` files are read on
+upload if it has them.
+
+Whether a given server publishes that export is the one thing the import cannot
+know in advance, so a server carrying none answers with **every address it
+tried** — which is the difference between a broken feature and an OCAP that only
+serves tiles. For that case only, the Terrains page carries a script that copies
+the names out of a running mission onto your clipboard.
+
+Names belong to the **terrain**, not to one map, so this is once per terrain and
+every plan drawn on it gains them — including maps on an OCAP server, which have
+no terrain record here but are matched by the folder's world name.
 
 They are drawn **under the plan**, so a symbol you place is never hidden behind a
 village name, and they scale by rank the way a paper map does — a capital larger
@@ -1815,12 +1828,6 @@ briefing sheet, the editor's background panel carries a **switch per group** —
 towns and villages, hills and landmarks, water and coast, places of interest,
 everything else — plus a size slider. That setting belongs to the map; the names
 themselves belong to the terrain.
-
-An archive in the [Gruppe Adler](https://github.com/gruppe-adler/maps.gruppe-adler.de)
-format already carries a `locations` list and is read on upload, so it needs none
-of the above. An OCAP archive has no names in it. A map pointed at a **running
-OCAP server** has no terrain stored here to hang names off — upload the terrain
-instead, which is the better answer for anything behind a share link anyway.
 
 Place names are never exported to Arma: the game draws its own.
 

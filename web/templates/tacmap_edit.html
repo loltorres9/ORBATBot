@@ -133,6 +133,29 @@
           </div>
         </form>
       </details>
+
+      <details class="subpanel">
+        <summary>🏷️ Place names from OCAP</summary>
+        <p class="hint">
+          The town names are in the OCAP data, just not in
+          <code>map.json</code>: OCAP builds a terrain from a
+          <strong>grad_meh</strong> export, which writes them beside the tiles
+          as <code>geojson/locations/…</code>. This reads them from the server
+          this map already points at — no trip into the game.
+        </p>
+        <p class="hint">
+          Names belong to the <strong>terrain</strong>, so this only has to be
+          done once per terrain and every map on it gains them. If the server
+          carries none, the reply names every address it tried.
+        </p>
+        <form class="form" method="post"
+              action="/g/{{ guild.id }}/maps/{{ record.id }}/ocap-places">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <div class="actions">
+            <button class="button" type="submit">Import place names</button>
+          </div>
+        </form>
+      </details>
     </div>
   </details>
 

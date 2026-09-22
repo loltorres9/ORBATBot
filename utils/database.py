@@ -566,6 +566,35 @@ async def init_db():
             'ALTER TABLE tac_terrains ADD COLUMN IF NOT EXISTS places TEXT'
         )
 
+        # Place names, filed under a terrain rather than a map — see
+        # `tacmap.place_scope()`. This exists beside `tac_terrains.places`
+        # because half the terrains have no row here at all: a map drawn on an
+        # OCAP server points at somebody else's folder, and that folder's world
+        # name is the only identity it has. One table keyed on that string
+        # serves both, so a map gains its names from whichever import reached
+        # them first.
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS tac_places (
+                guild_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                label TEXT,
+                places TEXT NOT NULL,
+                source TEXT,
+                updated_by_name TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, scope)
+            )
+        ''')
+        # Anything already pasted onto an uploaded terrain moves across, so the
+        # one release that stored them there does not strand them.
+        await db.execute('''
+            INSERT INTO tac_places (guild_id, scope, label, places, source)
+                SELECT guild_id, 't:' || id, name, places, 'terrain'
+                  FROM tac_terrains
+                 WHERE places IS NOT NULL AND places <> ''
+            ON CONFLICT (guild_id, scope) DO NOTHING
+        ''')
+
 
 async def get_active_operation(guild_id: str):
     pool = await get_pool()
@@ -2407,6 +2436,58 @@ async def set_tac_terrain_places(terrain_id: int, places: str) -> None:
         await db.execute(
             'UPDATE tac_terrains SET places = $2 WHERE id = $1',
             terrain_id, places or None,
+        )
+
+
+async def get_tac_places(guild_id: str, scope: str):
+    """The stored place names for one terrain scope, or None."""
+    if not scope:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetchrow(
+            'SELECT * FROM tac_places WHERE guild_id = $1 AND scope = $2',
+            str(guild_id), scope,
+        )
+
+
+async def get_guild_tac_places(guild_id: str) -> list:
+    """Every terrain this guild has names for, for the list page."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        return await db.fetch(
+            'SELECT * FROM tac_places WHERE guild_id = $1 ORDER BY scope',
+            str(guild_id),
+        )
+
+
+async def set_tac_places(guild_id: str, scope: str, places: str,
+                         label: str = None, source: str = None,
+                         updated_by_name: str = None) -> None:
+    """Replace one scope's place names, or clear them.
+
+    Wholesale, like the ORBAT net list: nothing hangs off a place name, so
+    there is no identity an edit could lose.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        if not places:
+            await db.execute(
+                'DELETE FROM tac_places WHERE guild_id = $1 AND scope = $2',
+                str(guild_id), scope)
+            return
+        await db.execute(
+            """INSERT INTO tac_places
+                   (guild_id, scope, label, places, source, updated_by_name,
+                    updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+               ON CONFLICT (guild_id, scope) DO UPDATE
+                   SET label = EXCLUDED.label,
+                       places = EXCLUDED.places,
+                       source = EXCLUDED.source,
+                       updated_by_name = EXCLUDED.updated_by_name,
+                       updated_at = CURRENT_TIMESTAMP""",
+            str(guild_id), scope, label, places, source, updated_by_name,
         )
 
 
