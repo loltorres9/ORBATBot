@@ -4,6 +4,8 @@ quietly. A parse that drops the wrong thing loses somebody's planning without
 saying so, and a render that forgets to escape puts whatever anybody with the
 share link typed straight into the page."""
 
+import gzip
+import json
 import re
 
 from utils import tacmap
@@ -1344,3 +1346,173 @@ def test_nothing_offered_is_not_a_malformed_list():
 
 def test_an_empty_paste_box_is_silent_too():
     assert tacmap.parse_places('   ') == ([], [])
+
+
+# ---------------------------------------------------------------------------
+# Reading the names out of an OCAP / grad_meh export
+# ---------------------------------------------------------------------------
+#
+# The names really are in the OCAP data, just not in map.json: OCAP builds a
+# terrain from a grad_meh export, which writes them beside the tiles as
+# geojson/locations/<type>.geojson.gz. These pin the reading of that, because
+# the alternative is asking somebody to go into Arma once per terrain.
+
+
+def _fc(*features):
+    return json.dumps({'type': 'FeatureCollection', 'features': list(features)})
+
+
+def _feature(name, x, y, **properties):
+    return {'type': 'Feature',
+            'properties': {'name': name, **properties},
+            'geometry': {'type': 'Point', 'coordinates': [x, y]}}
+
+
+def test_a_gzipped_locations_file_is_read():
+    """grad_meh gzips each file, and a server may hand it over still gzipped."""
+    raw = gzip.compress(_fc(_feature('Kavala', 3500.5, 13300.25)).encode())
+    places, _ = tacmap.places_from_geojson(raw, 'namecity')
+    assert places == [{'name': 'Kavala', 'kind': 'namecity',
+                       'x': 3500.5, 'y': 13300.2}]
+
+
+def test_a_server_that_decompressed_it_for_us_is_also_read():
+    """Content-Encoding may have been unwrapped on the way out. Which happened
+    is not worth a branch at the call site."""
+    places, _ = tacmap.places_from_geojson(
+        _fc(_feature('Kavala', 1, 2)).encode(), 'namecity')
+    assert places[0]['name'] == 'Kavala'
+
+
+def test_a_bare_feature_array_is_read_too():
+    """grad_meh's spec says each file holds an array of features; a
+    FeatureCollection wrapper is also in the wild."""
+    places, _ = tacmap.places_from_geojson(
+        json.dumps([_feature('Pyrgos', 1, 2)]), 'namecity')
+    assert places[0]['name'] == 'Pyrgos'
+
+
+def test_the_file_name_is_the_kind():
+    """The type is the file name, so nothing has to be guessed from the data."""
+    assert tacmap.geojson_kind('geojson/locations/namevillage.geojson.gz') == 'namevillage'
+    assert tacmap.geojson_kind('hill.geojson') == 'hill'
+    assert tacmap.geojson_kind('NameCityCapital.json.gz') == 'namecitycapital'
+
+
+def test_an_unknown_type_file_still_lands():
+    assert tacmap.geojson_kind('somemodtype.geojson.gz') == tacmap.DEFAULT_PLACE_KIND
+
+
+def test_unnamed_locations_are_skipped_and_counted():
+    places, warnings = tacmap.places_from_geojson(
+        _fc(_feature('', 1, 2), _feature('Real', 3, 4)), 'hill')
+    assert [p['name'] for p in places] == ['Real']
+    assert 'skipped' in warnings[0]
+
+
+def test_a_feature_with_no_point_is_dropped():
+    broken = {'type': 'Feature', 'properties': {'name': 'X'},
+              'geometry': {'type': 'Polygon', 'coordinates': [[[1, 2]]]}}
+    places, _ = tacmap.places_from_geojson(_fc(broken), 'hill')
+    assert places == []
+
+
+def test_broken_gzip_is_a_message_not_an_exception():
+    places, warnings = tacmap.places_from_geojson(b'\x1f\x8b' + b'rubbish', 'hill')
+    assert places == []
+    assert 'gzip' in warnings[0]
+
+
+def test_html_instead_of_geojson_is_a_message():
+    """A server that answers a 404 page with a 200 must not look like a feed."""
+    places, warnings = tacmap.places_from_geojson(b'<html>Not found</html>', 'hill')
+    assert places == []
+    assert warnings
+
+
+def test_geojson_without_features_says_so():
+    places, warnings = tacmap.places_from_geojson('{"type":"FeatureCollection"}', 'hill')
+    assert places == []
+    assert 'features' in warnings[0]
+
+
+def test_merging_drops_the_same_place_named_twice():
+    """A village that is also a flat area appears in two files; drawing the
+    name twice is bolder and no more informative."""
+    places, _ = tacmap.merge_places([
+        [{'name': 'Kavala', 'kind': 'namecity', 'x': 100.0, 'y': 200.0}],
+        [{'name': 'kavala', 'kind': 'namelocal', 'x': 100.0, 'y': 200.0}],
+    ])
+    assert len(places) == 1
+
+
+def test_merging_keeps_two_places_that_share_a_name_elsewhere():
+    places, _ = tacmap.merge_places([
+        [{'name': 'Mill', 'kind': 'namelocal', 'x': 100.0, 'y': 200.0}],
+        [{'name': 'Mill', 'kind': 'namelocal', 'x': 900.0, 'y': 800.0}],
+    ])
+    assert len(places) == 2
+
+
+def test_merging_is_capped():
+    groups = [[{'name': f'P{n}', 'kind': 'hill', 'x': n, 'y': n}
+               for n in range(tacmap.MAX_PLACES + 20)]]
+    places, warnings = tacmap.merge_places(groups)
+    assert len(places) == tacmap.MAX_PLACES
+    assert warnings
+
+
+def test_every_probe_kind_is_a_known_kind():
+    """A probe for a type this table cannot file would fetch and discard."""
+    for kind in tacmap.PROBE_KINDS:
+        assert kind in tacmap.PLACE_KINDS, kind
+
+
+# --- the scope ------------------------------------------------------------
+
+def _tiles_doc(url):
+    doc = tacmap.blank_doc()
+    doc['background'] = {**doc['background'], 'kind': 'tiles', 'url': url}
+    return doc
+
+
+def test_an_uploaded_terrain_scopes_by_its_row():
+    assert tacmap.place_scope(_tiles_doc('/t/7')) == 't:7'
+
+
+def test_an_ocap_terrain_scopes_by_its_world_name():
+    """A map on somebody else's OCAP folder has no row here, and the folder's
+    world name is the only identity it has."""
+    assert tacmap.place_scope(
+        _tiles_doc('https://ocap.example/images/maps/tem_cham')) == 'tem_cham'
+
+
+def test_the_scope_ignores_case_and_a_trailing_slash():
+    assert tacmap.place_scope(_tiles_doc('https://ocap.example/maps/Tanoa/')) == 'tanoa'
+
+
+def test_two_maps_on_the_same_ocap_terrain_share_a_scope():
+    """That is the whole point: import once, every plan on it gains them."""
+    assert (tacmap.place_scope(_tiles_doc('https://a.example/maps/altis'))
+            == tacmap.place_scope(_tiles_doc('https://b.example/images/maps/altis')))
+
+
+def test_a_map_with_no_terrain_has_no_scope():
+    assert tacmap.place_scope(tacmap.blank_doc()) == ''
+    assert tacmap.place_scope(_tiles_doc('')) == ''
+
+
+def test_only_location_files_are_worth_fetching():
+    """A grad_meh geojson/ folder also holds roads, houses and objects — the
+    whole vector map, tens of megabytes, carrying no names at all. Fetching
+    those to find that out is the one way this import costs real bandwidth."""
+    assert tacmap.is_location_file('namecity.geojson.gz')
+    assert tacmap.is_location_file('locations/hill.geojson')
+    assert not tacmap.is_location_file('roads.geojson.gz')
+    assert not tacmap.is_location_file('houses.geojson.gz')
+    assert not tacmap.is_location_file('objects.geojson.gz')
+
+
+def test_every_known_kind_is_recognised_as_a_location_file():
+    for kind in tacmap.PLACE_KINDS:
+        assert tacmap.is_location_file(f'{kind}.geojson.gz'), kind

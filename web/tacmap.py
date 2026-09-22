@@ -16,6 +16,7 @@ forwarded further than intended, and `share_mode` decides whether that link may
 draw or only look.
 """
 
+import json
 import secrets
 
 import discord
@@ -84,19 +85,19 @@ def load(record) -> dict:
     return tacmap.parse(record['doc']).doc
 
 
-async def places_for(doc: dict) -> list:
+async def places_for(guild_id, doc: dict) -> list:
     """The place names to draw under this map, or an empty list.
 
-    They live on the terrain rather than on the map, because every plan drawn
-    on Tanoa wants the same ones — so the map says which terrain it is on
-    (`tacmap.terrain_id()`, read off the background address) and the names come
-    from there. A map on an OCAP server has no row here to hang them off and
-    gets none; the editor says so rather than leaving it a mystery.
+    They belong to the terrain rather than to the map, because every plan drawn
+    on Tanoa wants the same ones. `tacmap.place_scope()` is what turns "which
+    terrain is this" into one key for both kinds — a row we store and somebody
+    else's OCAP folder alike — so an OCAP-backed map is no longer the one that
+    cannot have names.
     """
-    terrain_id = tacmap.terrain_id(doc)
-    if terrain_id is None:
+    scope = tacmap.place_scope(doc)
+    if not scope:
         return []
-    record = await database.get_tac_terrain(terrain_id)
+    record = await database.get_tac_places(str(guild_id), scope)
     if record is None:
         return []
     places, _ = tacmap.parse_places(record['places'])
@@ -184,6 +185,120 @@ async def list_ocap_maps(base_url: str) -> list:
             'address instead.'
         )
     return names
+
+
+# How big one locations file may be. Tanoa's largest is a few hundred KB
+# gzipped; a megabyte is generous and still bounds a bad answer.
+MAX_PLACES_BYTES = 4 * 1024 * 1024
+
+# How many files one import may fetch. A directory listing usually names a
+# dozen or so; the cap is what stops a hand-written index from turning one
+# button press into a hundred requests.
+MAX_PLACE_FILES = 30
+
+
+async def _get(session, url: str, limit: int):
+    """One GET, as (status, body). A failure is a status of 0 and the reason."""
+    try:
+        async with session.get(url) as response:
+            if response.status != 200:
+                return response.status, b''
+            return 200, await response.content.read(limit)
+    except Exception as e:                       # noqa: BLE001 — reported, not raised
+        return 0, str(e).encode('utf-8', 'replace')
+
+
+async def import_ocap_places(guild_id, doc: dict, member_name: str = None) -> str:
+    """Read this map's terrain's town names off the OCAP server it sits on.
+
+    The names really are in the OCAP data, just not in `map.json`: OCAP builds
+    a terrain from a **grad_meh** export, which writes the locations beside the
+    tiles as `geojson/locations/<type>.geojson.gz` — one file per Arma location
+    type, Point geometry in Arma's own CRS, the name in `properties.name`. So
+    this is a read, not a trip into the game.
+
+    What a given server serves is the one thing that cannot be known from here,
+    so it **probes and says what it found**: the candidate folders in
+    `tacmap.GEOJSON_DIRS`, each listed if the server lists directories and
+    otherwise asked for `PROBE_KINDS` by name. A server that carries none of it
+    gets a message naming every address tried, which is the difference between
+    "this feature is broken" and "your OCAP does not publish that export".
+    """
+    base = (doc.get('background') or {}).get('url', '').strip().rstrip('/')
+    scope = tacmap.place_scope(doc)
+    if not base or not scope:
+        raise ValueError('Put this map on a terrain first.')
+    if base.startswith('/'):
+        raise ValueError(
+            'This map is on a terrain uploaded here, not on an OCAP server. '
+            'Paste its names on the Terrains page instead.'
+        )
+
+    import aiohttp                      # as utils/sheets.py does with its own
+
+    tried = []
+    groups = []
+    notes = []
+    timeout = aiohttp.ClientTimeout(total=OCAP_TIMEOUT * 3)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for folder in tacmap.GEOJSON_DIRS:
+            root = f'{base}/{folder}'
+            # A listing gets every type the terrain has, including the ones
+            # PROBE_KINDS leaves out. It is tried first for exactly that.
+            status, body = await _get(session, f'{root}/', MAX_INDEX_BYTES)
+            names = tacmap.parse_map_index(body) if status == 200 else []
+            # Only the location types. A grad_meh `geojson/` folder also
+            # holds roads, houses and objects — the whole vector map, tens of
+            # megabytes, and carrying no names at all.
+            files = [name for name in names
+                     if tacmap.is_location_file(name)][:MAX_PLACE_FILES]
+            if not files:
+                tried.append(f'{root}/ ({status or "unreachable"})')
+                files = [f'{kind}.geojson.gz' for kind in tacmap.PROBE_KINDS]
+                listed = False
+            else:
+                listed = True
+
+            found_here = 0
+            for name in files:
+                status, body = await _get(session, f'{root}/{name}',
+                                          MAX_PLACES_BYTES)
+                if status != 200 or not body:
+                    continue
+                places, problems = tacmap.places_from_geojson(
+                    body, tacmap.geojson_kind(name))
+                if places:
+                    groups.append(places)
+                    found_here += len(places)
+                elif problems and listed:
+                    notes.append(f'{name}: {problems[0]}')
+
+            if found_here:
+                notes.insert(0, f'Read from {root}/.')
+                break
+            if listed:
+                tried.append(f'{root}/ (listed, no usable locations)')
+
+    if not groups:
+        raise ValueError(
+            'No place names on that server. Tried: ' + '; '.join(tried) +
+            '. OCAP only carries these when its terrain was built from a '
+            'grad_meh export that included the locations — if yours was not, '
+            'the Terrains page has a script that copies them out of a mission.'
+        )
+
+    places, capped = tacmap.merge_places(groups)
+    counts = tacmap.place_counts(places)
+    await database.set_tac_places(
+        str(guild_id), scope, json.dumps(places, separators=(',', ':')),
+        label=(doc.get('arma') or {}).get('terrain') or scope,
+        source='ocap', updated_by_name=member_name,
+    )
+    summary = ', '.join(f'{counts[key]} {label.lower()}'
+                        for key, label in tacmap.PLACE_GROUPS if counts.get(key))
+    noun = 'place name' if len(places) == 1 else 'place names'
+    return (f'{len(places)} {noun} imported — {summary}. '
+            + ' '.join(notes[:3] + capped))
 
 
 async def import_ocap(record, raw_url: str, member_name: str = None) -> str:

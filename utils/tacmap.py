@@ -32,6 +32,7 @@ background image is stretched across the same box: the document *is* the map
 sheet, and nothing here knows about pixels or zoom levels.
 """
 
+import gzip
 import html as _html
 import json
 import math
@@ -2222,3 +2223,206 @@ def terrain_id(doc: dict):
         return None
     match = _TERRAIN_URL.match((background.get('url') or '').strip())
     return int(match.group(1)) if match else None
+
+
+# --- Reading the names out of an OCAP / grad_meh export --------------------
+#
+# The names are in the OCAP data after all — just not in `map.json`. OCAP's
+# maptool builds a terrain from a **grad_meh** export, and grad_meh writes the
+# locations as vector data beside the tiles:
+#
+#     geojson/locations/<locationtype>.geojson.gz
+#
+# one gzipped GeoJSON file per Arma location type, Point geometry, coordinates
+# already in Arma's own CRS, and the name in `properties.name`. The file names
+# are lowercase location types — `namecity`, `namevillage`, `hill` — which is
+# exactly what `PLACE_KINDS` is keyed on, so the file a place came from is its
+# kind and nothing has to be guessed.
+#
+# What a given server actually serves is the one thing this cannot know, so
+# `places_from_geojson()` takes one file at a time and the caller reports which
+# addresses answered. Probing beats assuming: an OCAP instance may serve the
+# whole grad_meh export, only the tiles, or the tiles under a different root.
+
+# Where a map folder may keep them, relative to the folder itself. Ordered by
+# how likely they are; the caller stops at the first that answers.
+GEOJSON_DIRS = ('geojson/locations', 'locations', 'geojson')
+
+# The location types worth asking for by name when a directory cannot be
+# listed. Every key of PLACE_KINDS would be 21 requests for a handful of files
+# that exist, so this is the settlement and landmark set people actually plan
+# by; a listing that works gets everything regardless.
+PROBE_KINDS = ('namecitycapital', 'namecity', 'namevillage', 'namelocal',
+               'airport', 'hill', 'mount', 'namemarine', 'ruin')
+
+
+def places_from_geojson(raw, kind: str = None) -> tuple:
+    """One grad_meh locations file, as places.
+
+    Accepts the gzipped bytes, the plain bytes or the decoded text — a server
+    may or may not decompress `.gz` for us on the way out, and which it did is
+    not worth a branch at the call site.
+
+    `kind` is the location type the file is named after; it is what the file
+    says every place in it is. An unknown one falls back the same way
+    `parse_places()` does, so a modded terrain's own type still lands.
+    """
+    warnings = []
+    if isinstance(raw, (bytes, bytearray)):
+        # gzip magic. A server that already decompressed leaves plain JSON.
+        if raw[:2] == b'\x1f\x8b':
+            try:
+                raw = gzip.decompress(bytes(raw))
+            except (OSError, EOFError) as e:
+                # A truncated stream raises EOFError rather than OSError, and a
+                # half-delivered file is exactly what a flaky server gives.
+                return [], [f'That file is not readable gzip ({e!r}).']
+        try:
+            raw = raw.decode('utf-8-sig')
+        except UnicodeDecodeError as e:
+            return [], [f'That file is not UTF-8 ({e}).']
+
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or '{}')
+        except (ValueError, TypeError) as e:
+            return [], [f'That is not valid GeoJSON ({e}).']
+
+    # A FeatureCollection, or the bare array of features grad_meh's spec
+    # describes. Both are in the wild, so both are read.
+    if isinstance(raw, dict):
+        features = raw.get('features')
+        if not isinstance(features, list):
+            return [], ['That GeoJSON has no features in it.']
+    elif isinstance(raw, list):
+        features = raw
+    else:
+        return [], ['That is not GeoJSON.']
+
+    resolved = place_kind(kind) if kind else DEFAULT_PLACE_KIND
+    places = []
+    nameless = 0
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        properties = feature.get('properties')
+        properties = properties if isinstance(properties, dict) else {}
+        name = _text(properties.get('name'), MAX_PLACE_NAME)
+        if not name:
+            # Arma's terrains are full of unnamed positioning helpers, and
+            # grad_meh exports them like any other location.
+            nameless += 1
+            continue
+
+        geometry = feature.get('geometry')
+        geometry = geometry if isinstance(geometry, dict) else {}
+        coordinates = geometry.get('coordinates')
+        # Point only. A location with an area is still placed by its centre in
+        # the export, and anything else is not a thing to write a name at.
+        if not (isinstance(coordinates, (list, tuple)) and len(coordinates) >= 2):
+            continue
+        x, y = _number(coordinates[0]), _number(coordinates[1])
+        if x is None or y is None:
+            continue
+
+        places.append({'name': name, 'kind': resolved,
+                       'x': round(float(x), 1), 'y': round(float(y), 1)})
+
+    if nameless:
+        warnings.append(
+            f'{nameless} unnamed location{" was" if nameless == 1 else "s were"} '
+            f'skipped.'
+        )
+    return places, warnings
+
+
+def geojson_kind(filename: str) -> str:
+    """The location type a grad_meh file name stands for.
+
+    `namecity.geojson.gz` → `namecity`. The name is the type, lowercased, which
+    is what makes the file its own label.
+    """
+    base = (filename or '').rsplit('/', 1)[-1]
+    for suffix in ('.geojson.gz', '.json.gz', '.geojson', '.json', '.gz'):
+        if base.lower().endswith(suffix):
+            base = base[:-len(suffix)]
+            break
+    return place_kind(base)
+
+
+def is_location_file(filename: str) -> bool:
+    """Whether a listed file is one of Arma's location types.
+
+    This is the guard on the fetching side, and it is not the same question
+    `geojson_kind()` answers. A grad_meh export's `geojson/` folder also holds
+    `roads`, `houses` and `objects` — the whole vector map, tens of megabytes —
+    and those carry no `name` anyway. Fetching them to discover that is the one
+    way this import could cost somebody real bandwidth, so a listed file is
+    only fetched when its name *is* a type we know.
+    """
+    base = (filename or '').rsplit('/', 1)[-1]
+    for suffix in ('.geojson.gz', '.json.gz', '.geojson', '.json', '.gz'):
+        if base.lower().endswith(suffix):
+            base = base[:-len(suffix)]
+            break
+    return re.sub(r'[^a-z]', '', base.lower()) in PLACE_KINDS
+
+
+def merge_places(groups) -> tuple:
+    """Several files' places as one list, capped and de-duplicated.
+
+    Two files can name the same place — a village that is also a flat area —
+    and a name at the same spot twice is a name drawn twice, slightly bolder
+    and no more informative.
+    """
+    seen = set()
+    places = []
+    dropped = 0
+    for group in groups:
+        for place in group:
+            if len(places) >= MAX_PLACES:
+                dropped += 1
+                continue
+            key = (place['name'].casefold(), round(place['x']), round(place['y']))
+            if key in seen:
+                continue
+            seen.add(key)
+            places.append(place)
+    warnings = []
+    if dropped:
+        warnings.append(f'{dropped} places past the {MAX_PLACES} cap were left out.')
+    return places, warnings
+
+
+def place_scope(doc: dict) -> str:
+    """What this map's place names are filed under, or '' when nothing fits.
+
+    Place names belong to a *terrain*, not to a map — every plan drawn on Tanoa
+    wants the same ones. But a terrain here is one of two things: a row we
+    store (`/t/7`) or somebody else's OCAP folder (`…/maps/tem_cham`), and only
+    the first has a row to hang anything off. So the scope is a string both can
+    produce:
+
+        /t/7                        -> 't:7'
+        https://ocap…/maps/tem_cham -> 'tem_cham'
+
+    The OCAP form is the terrain's own world name, which is what the folder is
+    named after — so two guilds' maps on the same OCAP terrain share a scope,
+    and a map moved between OCAP servers keeps one.
+    """
+    background = doc.get('background') or {}
+    if background.get('kind') != 'tiles':
+        return ''
+    url = (background.get('url') or '').strip().rstrip('/')
+    if not url:
+        return ''
+
+    stored = terrain_id(doc)
+    if stored is not None:
+        return f't:{stored}'
+
+    # The last path segment of the map folder. unquote first: a folder with a
+    # space in it arrives percent-encoded and would otherwise scope apart from
+    # itself.
+    segment = unquote(url.rsplit('/', 1)[-1]).strip().lower()
+    return segment[:80] if _INDEX_NAME.match(segment) else ''

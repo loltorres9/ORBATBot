@@ -104,22 +104,27 @@ def _places(pasted, archive):
     return json.dumps(places, separators=(',', ':')), warnings
 
 
-async def set_places(record, pasted: str) -> str:
+async def set_places(record, pasted: str, member_name: str = None) -> str:
     """Replace a terrain's place names with what was pasted in.
 
     An empty box clears them, which is the only way back from a paste that was
     the wrong terrain's.
     """
+    scope = f"t:{record['id']}"
     if not (pasted or '').strip():
         await database.set_tac_terrain_places(record['id'], None)
+        await database.set_tac_places(record['guild_id'], scope, None)
         return f"Cleared the place names on {record['name']}."
 
     places, problems = tacmap.parse_places(pasted)
     if not places:
         raise ValueError(problems[0] if problems else 'No place names in that.')
 
-    await database.set_tac_terrain_places(
-        record['id'], json.dumps(places, separators=(',', ':')))
+    stored = json.dumps(places, separators=(',', ':'))
+    await database.set_tac_terrain_places(record['id'], stored)
+    await database.set_tac_places(
+        record['guild_id'], scope, stored, label=record['name'],
+        source='paste', updated_by_name=member_name)
     counts = tacmap.place_counts(places)
     note = (f"{len(places)} place names stored on {record['name']} — "
             + ', '.join(f'{counts[key]} {label.lower()}'
@@ -163,10 +168,17 @@ async def upload(guild, member, handle, filename: str, name: str,
     size = _world_size(world_size, archive)
     place_json, place_notes = _places(places, archive)
 
-    await database.create_tac_terrain(
+    terrain_id = await database.create_tac_terrain(
         str(guild.id), stored_name, size, archive.deepest, archive.tiles,
         str(member.id), member.display_name, place_json,
     )
+    # The column above is this terrain's own copy; the row below is what a map
+    # actually reads, because an OCAP-backed map has no terrain row and the two
+    # kinds have to meet somewhere. See `tacmap.place_scope()`.
+    if place_json:
+        await database.set_tac_places(
+            str(guild.id), f't:{terrain_id}', place_json, label=stored_name,
+            source='upload', updated_by_name=member.display_name)
     note = (f'Stored {stored_name} — {len(archive.tiles)} tiles up to level '
             f'{archive.deepest}, {megabytes(archive.bytes)}, '
             f'{int(size)} m across.')

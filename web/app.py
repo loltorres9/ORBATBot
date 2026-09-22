@@ -939,7 +939,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         doc = tacmap_service.load(record)
         # The terrain's own town names, drawn under the plan. They belong to
         # the terrain, so a map on an OCAP server has none — the page says so.
-        places = await tacmap_service.places_for(doc)
+        places = await tacmap_service.places_for(context['guild'].id, doc)
         terrains = await database.get_guild_tac_terrains(str(context['guild'].id))
         # The directory is remembered per guild, so it is typed once and the
         # terrains are a dropdown from then on. `ocap_maps` is only filled by
@@ -1111,7 +1111,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         if record is None or record['guild_id'] != str(context['guild'].id):
             raise Forbidden('No such terrain on this server.')
         try:
-            note = await terrain_service.set_places(record, form.get('places'))
+            note = await terrain_service.set_places(
+                record, form.get('places'), context['member'].display_name)
         except ValueError as e:
             return await terrain_page(request, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/terrains", 'ok', note)
@@ -1143,6 +1144,23 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         return Response(content=bytes(image), media_type='image/png', headers={
             'Cache-Control': 'public, max-age=31536000, immutable',
         })
+
+    @app.post('/g/{guild_id}/maps/{map_id}/ocap-places', response_class=HTMLResponse)
+    async def map_ocap_places(request: Request, guild_id: str, map_id: int):
+        """Read the terrain's town names off the OCAP server the map sits on."""
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        doc = tacmap_service.load(context['record'])
+        try:
+            note = await tacmap_service.import_ocap_places(
+                context['guild'].id, doc, context['member'].display_name)
+        except ValueError as e:
+            return await map_editor(request, context, error=str(e), status=400,
+                                    panel='terrain')
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
 
     @app.post('/g/{guild_id}/maps/{map_id}/terrain')
     async def map_terrain(request: Request, guild_id: str, map_id: int):
@@ -1287,7 +1305,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                            "sent it to you for the current one.",
             }, status=404)
         doc = tacmap_service.load(record)
-        places = await tacmap_service.places_for(doc)
+        places = await tacmap_service.places_for(record['guild_id'], doc)
         return render(request, 'tacmap_view.html', {
             'record': record,
             'doc_json': tacmap_lib.json_payload(doc),
