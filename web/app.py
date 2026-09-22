@@ -937,6 +937,9 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                          ocap_maps: list = None, ocap_base: str = None):
         record = context['record']
         doc = tacmap_service.load(record)
+        # The terrain's own town names, drawn under the plan. They belong to
+        # the terrain, so a map on an OCAP server has none — the page says so.
+        places = await tacmap_service.places_for(doc)
         terrains = await database.get_guild_tac_terrains(str(context['guild'].id))
         # The directory is remembered per guild, so it is typed once and the
         # terrains are a dropdown from then on. `ocap_maps` is only filled by
@@ -949,7 +952,8 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             **context,
             'doc_json': tacmap_lib.json_payload(doc),
             'catalog_json': _map_catalog,
-            'svg': tacmap_lib.render(doc),
+            'svg': tacmap_lib.render(doc, places=places),
+            'places_json': tacmap_lib.json_payload(places),
             'summary': tacmap_lib.summarise(doc),
             'editable': context['may_draw'],
             'sqf': tacmap_lib.to_sqf(doc, prefix=tacmap_service.arma_prefix(record),
@@ -1054,12 +1058,17 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'terrains': [
                 {'record': row,
                  'size': terrain_service.megabytes(row['bytes']),
+                 'places': terrain_service.load_places(row),
                  'used_by': await database.tac_terrain_usage(row['id'])}
                 for row in terrains
             ],
             'may_upload': context['is_admin'],
             'zoom_choices': terrain_service.ZOOM_CHOICES,
             'default_zoom': terrain_service.DEFAULT_ZOOM,
+            # The script that copies a terrain's names out of a running
+            # mission — the general way in, since OCAP archives carry none.
+            'places_sqf': tacmap_lib.places_sqf(),
+            'place_groups': tacmap_lib.PLACE_GROUPS,
             'error': error,
         }, status=status)
 
@@ -1084,7 +1093,25 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             note = await terrain_service.upload(
                 context['guild'], context['member'], archive.file, archive.filename,
                 form.get('name'), form.get('world_size'), form.get('max_zoom'),
+                form.get('places'),
             )
+        except ValueError as e:
+            return await terrain_page(request, context, error=str(e), status=400)
+        return redirect(request, f"/g/{guild_id}/terrains", 'ok', note)
+
+    @app.post('/g/{guild_id}/terrains/{terrain_id}/places')
+    async def terrain_places(request: Request, guild_id: str, terrain_id: int):
+        """Replace a terrain's place names — the paste box on the list page."""
+        context = await guild_context(request, guild_id)
+        require_admin(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        record = await database.get_tac_terrain(terrain_id)
+        if record is None or record['guild_id'] != str(context['guild'].id):
+            raise Forbidden('No such terrain on this server.')
+        try:
+            note = await terrain_service.set_places(record, form.get('places'))
         except ValueError as e:
             return await terrain_page(request, context, error=str(e), status=400)
         return redirect(request, f"/g/{guild_id}/terrains", 'ok', note)
@@ -1260,11 +1287,13 @@ def create_app(bot, config: WebConfig) -> FastAPI:
                            "sent it to you for the current one.",
             }, status=404)
         doc = tacmap_service.load(record)
+        places = await tacmap_service.places_for(doc)
         return render(request, 'tacmap_view.html', {
             'record': record,
             'doc_json': tacmap_lib.json_payload(doc),
             'catalog_json': _map_catalog,
-            'svg': tacmap_lib.render(doc),
+            'places_json': tacmap_lib.json_payload(places),
+            'svg': tacmap_lib.render(doc, places=places),
             'summary': tacmap_lib.summarise(doc),
             'editable': record['share_mode'] == 'edit',
             'save_url': f'/m/{token}/save',

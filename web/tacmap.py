@@ -84,6 +84,25 @@ def load(record) -> dict:
     return tacmap.parse(record['doc']).doc
 
 
+async def places_for(doc: dict) -> list:
+    """The place names to draw under this map, or an empty list.
+
+    They live on the terrain rather than on the map, because every plan drawn
+    on Tanoa wants the same ones — so the map says which terrain it is on
+    (`tacmap.terrain_id()`, read off the background address) and the names come
+    from there. A map on an OCAP server has no row here to hang them off and
+    gets none; the editor says so rather than leaving it a mystery.
+    """
+    terrain_id = tacmap.terrain_id(doc)
+    if terrain_id is None:
+        return []
+    record = await database.get_tac_terrain(terrain_id)
+    if record is None:
+        return []
+    places, _ = tacmap.parse_places(record['places'])
+    return places
+
+
 async def save(record, raw_doc: str, member_name: str = None) -> list:
     """Store what the editor sent. Returns the notes worth telling the person."""
     checked = tacmap.parse(raw_doc)

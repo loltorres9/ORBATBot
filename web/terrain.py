@@ -13,6 +13,7 @@ the shape of the form and the messages a person gets back.
 """
 
 import asyncio
+import json
 
 from utils import database, tacmap, tiles
 
@@ -65,8 +66,85 @@ def _world_size(raw, archive):
     )
 
 
+def _places(pasted, archive):
+    """The terrain's place names, from the paste box or from the archive.
+
+    Both, in that order, because they answer the same question with different
+    reach: an archive in the Gruppe Adler format carries a `locations` list and
+    an OCAP one does not, so the paste box is the general way in and the
+    archive is the free win when it happens to have them.
+
+    Returns `(json_or_none, warnings)`. Nothing here is fatal — a terrain whose
+    names could not be read is still a terrain, and the alternative is refusing
+    an upload of thirty megabytes over a stray comma.
+    """
+    warnings = []
+    places, problems = tacmap.parse_places(pasted)
+    if pasted and problems and not places:
+        warnings.append('The place names were not stored: ' + problems[0])
+    else:
+        warnings.extend(problems)
+
+    if not places and isinstance(archive.map_json, dict):
+        places, problems = tacmap.parse_places(archive.map_json)
+        # An OCAP map.json simply has no locations list; saying so on every
+        # upload would be noise about a thing nobody asked for.
+        if places:
+            warnings.extend(problems)
+
+    if not places:
+        return None, warnings
+    counts = tacmap.place_counts(places)
+    warnings.append(
+        f'{len(places)} place names stored — '
+        + ', '.join(f'{counts[key]} {label.lower()}'
+                    for key, label in tacmap.PLACE_GROUPS if counts.get(key))
+        + '.'
+    )
+    return json.dumps(places, separators=(',', ':')), warnings
+
+
+async def set_places(record, pasted: str) -> str:
+    """Replace a terrain's place names with what was pasted in.
+
+    An empty box clears them, which is the only way back from a paste that was
+    the wrong terrain's.
+    """
+    if not (pasted or '').strip():
+        await database.set_tac_terrain_places(record['id'], None)
+        return f"Cleared the place names on {record['name']}."
+
+    places, problems = tacmap.parse_places(pasted)
+    if not places:
+        raise ValueError(problems[0] if problems else 'No place names in that.')
+
+    await database.set_tac_terrain_places(
+        record['id'], json.dumps(places, separators=(',', ':')))
+    counts = tacmap.place_counts(places)
+    note = (f"{len(places)} place names stored on {record['name']} — "
+            + ', '.join(f'{counts[key]} {label.lower()}'
+                        for key, label in tacmap.PLACE_GROUPS if counts.get(key))
+            + '.')
+    if problems:
+        note += ' ' + problems[0]
+    return note
+
+
+def load_places(record) -> list:
+    """A terrain row's place names, ready to render.
+
+    Parsed on the way out as well as in, the same as `tacmap.parse()` treats a
+    document: the column is text, and nothing downstream should have to trust
+    it.
+    """
+    if not record or not record['places']:
+        return []
+    places, _ = tacmap.parse_places(record['places'])
+    return places
+
+
 async def upload(guild, member, handle, filename: str, name: str,
-                 world_size: str, max_zoom: str) -> str:
+                 world_size: str, max_zoom: str, places: str = '') -> str:
     try:
         deepest = int(max_zoom)
     except (TypeError, ValueError):
@@ -83,10 +161,11 @@ async def upload(guild, member, handle, filename: str, name: str,
     )
     stored_name = _name(name, archive, (filename or '').rsplit('.', 1)[0])
     size = _world_size(world_size, archive)
+    place_json, place_notes = _places(places, archive)
 
     await database.create_tac_terrain(
         str(guild.id), stored_name, size, archive.deepest, archive.tiles,
-        str(member.id), member.display_name,
+        str(member.id), member.display_name, place_json,
     )
     note = (f'Stored {stored_name} — {len(archive.tiles)} tiles up to level '
             f'{archive.deepest}, {megabytes(archive.bytes)}, '
@@ -94,6 +173,8 @@ async def upload(guild, member, handle, filename: str, name: str,
     if archive.skipped_deeper:
         note += (f' {archive.skipped_deeper} tiles from deeper levels were left '
                  f'out, which is what choosing level {deepest} means.')
+    for line in place_notes:
+        note += ' ' + line
     return note
 
 

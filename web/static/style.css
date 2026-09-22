@@ -1019,3 +1019,13 @@ svg.tacmap.tm-drawing { cursor: crosshair; }
 }
 
 .helpsteps .cardbody, .helpnotes .cardbody { padding: 16px; }
+
+/* The terrain's own place names: the paste box on the terrain list, and the
+   group filter in the map editor. */
+.placebox { margin-top: 10px; width: 100%; }
+.placebox textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                     font-size: 13px; }
+.chip.warn { border-color: var(--warn); color: var(--warn); }
+#tmf-placebox { margin: 4px 0 10px; }
+#tmf-placegroups { display: grid; gap: 2px; margin: 6px 0; }
+#tmf-placegroups .field { margin: 0; }

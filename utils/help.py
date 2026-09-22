@@ -890,6 +890,44 @@ _MAPS: tuple[Topic, ...] = (
         related=('draw-a-plan',),
     ),
     Topic(
+        key='map-place-names',
+        title='Put the town names on the map',
+        group='maps',
+        audience=ADMIN,
+        where='Web — **Terrains**, then the map\u2019s background panel',
+        summary='A terrain arrives with roads and contours and no labels. This '
+                'is how it learns what its towns are called.',
+        steps=(
+            'Start a mission **on that terrain** and open the debug console as '
+            'a logged-in admin.',
+            'Go to **Terrains**, copy the script under *Where the place names '
+            'come from*, paste it into the console and press **LOCAL EXEC**.',
+            'The names are now on your clipboard. Paste them into that '
+            'terrain\u2019s **Place names** box and save.',
+            'Open a map drawn on it — the names are there, under the plan.',
+            'Too many? The editor\u2019s background panel has a switch per '
+            'group and a size slider.',
+        ),
+        notes=(
+            'The tiles genuinely have no labels in them: they come out of '
+            'Arma\u2019s own map export as pure topography, and the game draws '
+            'the names over that from its config afterwards. So this has to be '
+            'fetched once per terrain — nothing was lost on the way in.',
+            'The names belong to the **terrain**, not to one map. Do it once '
+            'and every plan drawn on that terrain has them.',
+            'An archive in the Gruppe Adler format carries a `locations` list '
+            'and is read on upload, so it needs none of this. An OCAP archive '
+            'has no names in it.',
+            'A map whose background points at an **OCAP server** has no terrain '
+            'stored here to hang names off. Upload the terrain instead, which '
+            'is the better answer anyway for anything behind a share link.',
+            'Place names are never exported to Arma — the game already draws '
+            'its own.',
+        ),
+        page='maps',
+        related=('map-background', 'draw-a-plan'),
+    ),
+    Topic(
         key='share-a-map',
         title='Share, copy or post a map',
         group='maps',

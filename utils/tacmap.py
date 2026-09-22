@@ -543,6 +543,11 @@ ARMA_TERRAINS = (
 DEFAULT_EXTENT = {'terrain': '', 'left': 0.0, 'bottom': 0.0,
                   'right': 30720.0, 'top': 30720.0}
 
+# How much of the terrain's own place names one map shows. `groups` empty means
+# all of them — a terrain whose names have just been imported should show them
+# rather than nothing. See the place-names section at the foot of this module.
+DEFAULT_PLACES = {'show': True, 'groups': [], 'scale': 1.0}
+
 # Which side a frame is, in Arma's terms: the marker-type prefix and the colour
 # used for everything that is not an icon.
 # Arma has four NATO marker prefixes and five marker colours we use, so the
@@ -599,6 +604,9 @@ def blank_doc(width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> dict:
                        'zoom': DEFAULT_TILE_ZOOM, 'max_zoom': MAX_TILE_ZOOM,
                        'name': ''},
         'grid': {'show': False, 'cols': 10, 'rows': 10},
+        # Not the names themselves — those belong to the terrain and are
+        # passed to the renderer. This is only how much of them to draw.
+        'places': dict(DEFAULT_PLACES),
         # Where the sheet's corners are in Arma's world, in metres. Only the
         # export reads it, and only the person exporting can know it — which
         # image of which terrain this is, and whether it is the whole map.
@@ -740,6 +748,17 @@ def parse(raw) -> ParseResult:
             'show': bool(grid.get('show')),
             'cols': int(_clamp(_number(grid.get('cols'), 10), 1, 100)),
             'rows': int(_clamp(_number(grid.get('rows'), 10), 1, 100)),
+        }
+
+    places = raw.get('places')
+    if isinstance(places, dict):
+        groups = places.get('groups')
+        known = {key for key, _ in PLACE_GROUPS}
+        doc['places'] = {
+            'show': bool(places.get('show', True)),
+            'groups': [key for key in groups if key in known]
+            if isinstance(groups, list) else [],
+            'scale': round(_clamp(_number(places.get('scale'), 1.0), 0.4, 3.0), 2),
         }
 
     arma = raw.get('arma')
@@ -1037,6 +1056,13 @@ def catalog() -> dict:
             'layers': MAX_LAYERS, 'layerName': MAX_LAYER_NAME,
         },
         'kindOrder': dict(KIND_ORDER),
+        # The place-name tables, so the browser draws a village the same size
+        # this module does rather than keeping its own copy of the ranks.
+        'placeKinds': {key: {'group': value['group'], 'rank': value['rank']}
+                       for key, value in PLACE_KINDS.items()},
+        'placeSizes': {str(rank): size for rank, size in PLACE_SIZE.items()},
+        'placeGroups': [{'key': key, 'label': label} for key, label in PLACE_GROUPS],
+        'defaultPlaceKind': DEFAULT_PLACE_KIND,
         'minLabel': MIN_LABEL,
         'defaultMarker': DEFAULT_MARKER,
         'echelonLift': ECHELON_LIFT,
@@ -1443,7 +1469,8 @@ def _grid_svg(doc: dict) -> str:
             f'{"".join(lines)}</g>')
 
 
-def render(doc: dict, *, standalone: bool = False, extra_class: str = '') -> str:
+def render(doc: dict, *, standalone: bool = False, extra_class: str = '',
+           places: list = None) -> str:
     """The whole map as one `<svg>` element.
 
     This is what the read-only page, the share link and the no-JavaScript
@@ -1453,12 +1480,14 @@ def render(doc: dict, *, standalone: bool = False, extra_class: str = '') -> str
     classes = ('tacmap ' + extra_class).strip()
     namespace = ' xmlns="http://www.w3.org/2000/svg"' if standalone else ''
     body = ''.join(item_svg(item) for item in ordered_items(doc))
+    names = places_svg(doc, places or [])
     # The sheet and the plan are separate groups so the editor can redraw either
     # on its own — changing the background must not touch what is drawn on it.
     return (
         f'<svg{namespace} viewBox="0 0 {doc["width"]} {doc["height"]}" '
         f'class={quoteattr(classes)} preserveAspectRatio="xMidYMid meet">'
-        f'{defs()}<g id="tm-back">{_background_svg(doc)}{_grid_svg(doc)}</g>'
+        f'{defs()}<g id="tm-back">{_background_svg(doc)}{_grid_svg(doc)}'
+        f'{names}</g>'
         f'<g class="tm-items">{body}</g></svg>'
     )
 
@@ -1886,3 +1915,310 @@ def to_sqf(doc: dict, *, prefix: str, title: str = '',
     if not items:
         lines.append('// Nothing is drawn on this map yet.')
     return '\n'.join(lines) + '\n'
+
+
+# ---------------------------------------------------------------------------
+# Place names
+# ---------------------------------------------------------------------------
+#
+# An Arma terrain knows what its towns are called; the tiles do not. OCAP's
+# renders come out of the game's own map export as pure topography, and the
+# game draws the names over that afterwards from `CfgWorlds >> Names` — so a
+# tile pyramid arrives with roads, buildings and contours and not one label on
+# it. Nothing here was being dropped: the names never came.
+#
+# They belong to the **terrain**, not to one map, because every plan drawn on
+# Tanoa wants the same ones. `tac_terrains.places` holds them and a map only
+# decides how much of them to show — which is what the groups below are for.
+# A terrain that knows six hundred places would otherwise bury the plan it is
+# supposed to be underneath.
+
+MAX_PLACES = 1500
+MAX_PLACE_NAME = 60
+
+# Arma's location types, grouped so the filter is five switches rather than
+# forty. `rank` drives the type size: a capital has to read at a glance and a
+# rock does not.
+PLACE_GROUPS = (
+    ('settlement', 'Towns and villages'),
+    ('terrain', 'Hills and landmarks'),
+    ('water', 'Water and coast'),
+    ('poi', 'Places of interest'),
+    ('other', 'Everything else'),
+)
+
+PLACE_KINDS = {
+    'namecitycapital': {'label': 'Capital', 'group': 'settlement', 'rank': 5},
+    'namecity': {'label': 'City', 'group': 'settlement', 'rank': 4},
+    'namevillage': {'label': 'Village', 'group': 'settlement', 'rank': 3},
+    'namelocal': {'label': 'Local', 'group': 'settlement', 'rank': 2},
+    'airport': {'label': 'Airfield', 'group': 'terrain', 'rank': 4},
+    'hill': {'label': 'Hill', 'group': 'terrain', 'rank': 2},
+    'mount': {'label': 'Mountain', 'group': 'terrain', 'rank': 3},
+    'rockarea': {'label': 'Rocks', 'group': 'terrain', 'rank': 1},
+    'viewpoint': {'label': 'Viewpoint', 'group': 'terrain', 'rank': 1},
+    'bordercrossing': {'label': 'Border crossing', 'group': 'terrain', 'rank': 2},
+    'namemarine': {'label': 'Sea', 'group': 'water', 'rank': 3},
+    'namecoastline': {'label': 'Coast', 'group': 'water', 'rank': 2},
+    'namecoast': {'label': 'Coast', 'group': 'water', 'rank': 2},
+    'ruin': {'label': 'Ruin', 'group': 'poi', 'rank': 1},
+    'historic': {'label': 'Historic', 'group': 'poi', 'rank': 1},
+    'hotel': {'label': 'Hotel', 'group': 'poi', 'rank': 1},
+    'culturalproperty': {'label': 'Cultural property', 'group': 'poi', 'rank': 1},
+    'civildefense': {'label': 'Civil defence', 'group': 'poi', 'rank': 1},
+    'dangerousforces': {'label': 'Dangerous forces', 'group': 'poi', 'rank': 1},
+    'strategic': {'label': 'Strategic', 'group': 'poi', 'rank': 2},
+    'strategicarea': {'label': 'Strategic area', 'group': 'poi', 'rank': 2},
+}
+
+DEFAULT_PLACE_KIND = 'namelocal'
+
+# Type size per rank, in sheet units. The sheet is DEFAULT_WIDTH wide, so these
+# are the same scale as MIN_LABEL and the symbol labels next to them.
+PLACE_SIZE = {1: 7.0, 2: 8.5, 3: 10.5, 4: 13.0, 5: 16.0}
+
+
+def place_kind(raw) -> str:
+    """One of `PLACE_KINDS`, from whatever the game or the archive called it."""
+    key = re.sub(r'[^a-z]', '', str(raw or '').lower())
+    return key if key in PLACE_KINDS else DEFAULT_PLACE_KIND
+
+
+def place_group(kind: str) -> str:
+    return PLACE_KINDS.get(kind, PLACE_KINDS[DEFAULT_PLACE_KIND])['group']
+
+
+def parse_places(raw) -> tuple:
+    """Read a place list, from either source, and say what was wrong with it.
+
+    Returns `(places, warnings)`. Two shapes are accepted because there are two
+    ways in and neither is ours to dictate:
+
+    * `{"name": "Air Station Mike-26", "pos": [4278.8, 3855.6, -217.8]}` — the
+      grad_meh / Gruppe Adler metadata an archive may carry, where a third
+      component is an elevation nobody here needs.
+    * `{"name": "Katkoula", "kind": "NameVillage", "x": 4278, "y": 3855}` —
+      what `places_sqf()` dumps out of a running mission.
+
+    Both are lists of objects; a bare `{"locations": [...]}` wrapper is
+    unwrapped, because that is the file an archive actually holds. Anything
+    nameless is dropped in silence — Arma's terrains are full of `FlatArea` and
+    `Invisible` helpers that exist to position things and have nothing to say.
+    """
+    warnings = []
+    # Nothing offered is not the same as something malformed: an upload that
+    # left the paste box empty has no place names and no complaint either.
+    if raw is None:
+        return [], warnings
+    if isinstance(raw, (str, bytes)):
+        text = raw.strip() if isinstance(raw, str) else raw.decode('utf-8', 'replace').strip()
+        if not text:
+            return [], warnings
+        try:
+            raw = json.loads(text)
+        except (ValueError, TypeError) as e:
+            return [], [f'That is not valid JSON ({e}).']
+
+    if isinstance(raw, dict):
+        # `map.json` itself, or the wrapper the dump script writes.
+        for key in ('locations', 'places', 'names'):
+            if isinstance(raw.get(key), list):
+                raw = raw[key]
+                break
+        else:
+            return [], ['That JSON has no "locations" list in it.']
+
+    if not isinstance(raw, list):
+        return [], ['The place list has to be a JSON array.']
+
+    places = []
+    nameless = 0
+    for entry in raw:
+        if len(places) >= MAX_PLACES:
+            warnings.append(
+                f'Only the first {MAX_PLACES} places were kept — that terrain '
+                f'lists {len(raw)}.'
+            )
+            break
+        if not isinstance(entry, dict):
+            continue
+        name = _text(entry.get('name'), MAX_PLACE_NAME)
+        if not name:
+            nameless += 1
+            continue
+
+        pos = entry.get('pos') or entry.get('position')
+        if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+            x, y = _number(pos[0]), _number(pos[1])
+        else:
+            x, y = _number(entry.get('x')), _number(entry.get('y'))
+        if x is None or y is None:
+            continue
+
+        places.append({
+            'name': name,
+            'kind': place_kind(entry.get('kind') or entry.get('type')),
+            'x': round(float(x), 1),
+            'y': round(float(y), 1),
+        })
+
+    if nameless:
+        warnings.append(
+            f'{nameless} unnamed location{" was" if nameless == 1 else "s were"} '
+            f'skipped — those are the terrain’s own positioning helpers.'
+        )
+    return places, warnings
+
+
+def place_counts(places: list) -> dict:
+    """How many places each group holds, for the filter to say so."""
+    counts = {key: 0 for key, _ in PLACE_GROUPS}
+    for place in places or ():
+        counts[place_group(place['kind'])] = counts.get(place_group(place['kind']), 0) + 1
+    return counts
+
+
+def from_world(doc: dict, world_x: float, world_y: float) -> tuple:
+    """Arma's world metres, as a point on the sheet — the inverse of `to_world`.
+
+    This is what puts a place where it belongs: the names arrive in world
+    coordinates, and the sheet may be a crop of the terrain rather than all of
+    it, so the map's own corners are the only thing that can place them. The
+    vertical axis flips back, for the same reason it flips going the other way.
+    """
+    arma = doc.get('arma') or DEFAULT_EXTENT
+    span_x = (arma['right'] - arma['left']) or 1.0
+    span_y = (arma['top'] - arma['bottom']) or 1.0
+    x = (world_x - arma['left']) / span_x * doc['width']
+    y = (arma['top'] - world_y) / span_y * doc['height']
+    return (x, y)
+
+
+def visible_places(doc: dict, places: list) -> list:
+    """The places this map shows, in drawing order — biggest last.
+
+    Biggest last because a capital's name matters more than a rock's, and where
+    two collide the one that survives the overlap should be the one people are
+    navigating by.
+    """
+    settings = doc.get('places') or DEFAULT_PLACES
+    if not settings.get('show') or not places:
+        return []
+
+    groups = settings.get('groups') or ()
+    out = []
+    for place in places:
+        kind = place.get('kind', DEFAULT_PLACE_KIND)
+        # An empty group list means all of them: a terrain whose names have
+        # just been imported should show them, not nothing.
+        if groups and place_group(kind) not in groups:
+            continue
+        x, y = from_world(doc, place['x'], place['y'])
+        # Off the sheet entirely — a crop of the terrain keeps only what it
+        # covers, and a name in the margin is a name over somebody's legend.
+        if not (0 <= x <= doc['width'] and 0 <= y <= doc['height']):
+            continue
+        out.append({**place, 'sheet_x': x, 'sheet_y': y,
+                    'rank': PLACE_KINDS.get(kind, PLACE_KINDS[DEFAULT_PLACE_KIND])['rank']})
+    out.sort(key=lambda place: place['rank'])
+    return out
+
+
+def places_svg(doc: dict, places: list) -> str:
+    """The place names as one `<g>`, drawn under the plan.
+
+    Under the plan deliberately: these are the terrain talking, and a symbol
+    somebody placed must never end up behind a village name. They are drawn the
+    way everything outside a frame is drawn here — dark over a pale outline —
+    because they sit on satellite imagery that is bright sand in one corner and
+    dark jungle in the other.
+    """
+    shown = visible_places(doc, places)
+    if not shown:
+        return ''
+
+    scale = _clamp(_number((doc.get('places') or {}).get('scale'), 1.0), 0.4, 3.0)
+    parts = []
+    for place in shown:
+        size = max(PLACE_SIZE.get(place['rank'], PLACE_SIZE[1]) * scale, MIN_LABEL * 0.6)
+        x = round(place['sheet_x'], 2)
+        y = round(place['sheet_y'], 2)
+        name = escape(place['name'])
+        # A capital is set wider as well as larger, which is what tells it from
+        # a village at a glance when both are on screen at once.
+        tracking = ' letter-spacing="1.2"' if place['rank'] >= 4 else ''
+        common = (f'x="{x}" y="{y}" text-anchor="middle" '
+                  f'font-size="{round(size, 2)}" font-family="inherit"{tracking}')
+        parts.append(
+            f'<text {common} stroke="#ffffff" stroke-width="{round(size / 4, 2)}" '
+            f'stroke-linejoin="round" fill="none" opacity="0.85">{name}</text>'
+            f'<text {common} fill="#1b2027">{name}</text>'
+        )
+    return f'<g class="tm-places" pointer-events="none">{"".join(parts)}</g>'
+
+
+def places_sqf() -> str:
+    """The script that copies a terrain's own place names out of a mission.
+
+    The mirror of `to_sqf()`, and the same door: vanilla Arma cannot send
+    anything out, so the clipboard is how data leaves it, exactly as the debug
+    console is how the plan gets in. It reads `CfgWorlds >> worldName >> Names`
+    rather than `nearestLocations`, because the config is the terrain's whole
+    list — including the types a radius search would miss — and it is what the
+    game itself draws the map labels from.
+
+    The name is stripped of quotes and backslashes on the way out so that what
+    lands on the clipboard is always valid JSON. Arma's place names do not
+    contain either, but the one that does must not cost the whole terrain.
+    """
+    return '\n'.join((
+        '// Copy this terrain\'s place names — run it in a mission on that terrain.',
+        '// Open the debug console as a logged-in admin, paste, press LOCAL EXEC.',
+        '// The names go to your clipboard as JSON; paste them into the',
+        '// "Place names" box on the terrain\'s page.',
+        'private _out = [];',
+        'private _names = configFile >> "CfgWorlds" >> worldName >> "Names";',
+        'for "_i" from 0 to (count _names - 1) do {',
+        '    private _entry = _names select _i;',
+        '    if (isClass _entry) then {',
+        '        private _name = getText (_entry >> "name");',
+        '        // SQF writes a literal quote as "" - one in a name',
+        '        // would otherwise make the clipboard invalid JSON.',
+        '        _name = _name splitString """" joinString "\'";',
+        '        private _pos = getArray (_entry >> "position");',
+        '        if (_name != "" && {count _pos >= 2}) then {',
+        '            _out pushBack format [',
+        '                "{""name"":""%1"",""kind"":""%2"",""x"":%3,""y"":%4}",',
+        '                _name, getText (_entry >> "type"),',
+        '                _pos select 0, _pos select 1',
+        '            ];',
+        '        };',
+        '    };',
+        '};',
+        'copyToClipboard format [',
+        '    "{""terrain"":""%1"",""locations"":[%2]}",',
+        '    worldName, _out joinString ","',
+        '];',
+        'hint format ["%1 place names copied to your clipboard.", count _out];',
+    ))
+
+
+# The address an uploaded terrain is served from — `/t/7`, the other half of
+# `database.tac_terrain_usage()`, which finds the maps by searching for exactly
+# this string in their documents. Keeping the pattern here means the two
+# directions of the same fact are written once each and next to their own code.
+_TERRAIN_URL = re.compile(r'^/t/(\d+)$')
+
+
+def terrain_id(doc: dict):
+    """The stored terrain this map is drawn on, or None.
+
+    None covers both a map on no background at all and one pointing at an OCAP
+    server, which is somebody else's origin and has no row here to hang place
+    names off.
+    """
+    background = doc.get('background') or {}
+    if background.get('kind') != 'tiles':
+        return None
+    match = _TERRAIN_URL.match((background.get('url') or '').strip())
+    return int(match.group(1)) if match else None

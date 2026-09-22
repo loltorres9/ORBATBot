@@ -164,7 +164,7 @@ Short how-tos for everything the bot does, one per thing you might want to do. T
 
 **Game roles** — [Pick your game roles](#pick-your-game-roles) · [Add and remove game roles](#add-and-remove-game-roles)
 
-**Tactical maps** — [Draw the plan](#draw-the-plan) · [Use layers](#use-layers) · [Put a real terrain behind the plan](#put-a-real-terrain-behind-the-plan) · [Share, copy or post a map](#share-copy-or-post-a-map) · [Get the plan into Arma 3](#get-the-plan-into-arma-3)
+**Tactical maps** — [Draw the plan](#draw-the-plan) · [Use layers](#use-layers) · [Put a real terrain behind the plan](#put-a-real-terrain-behind-the-plan) · [Put the town names on the map](#put-the-town-names-on-the-map) · [Share, copy or post a map](#share-copy-or-post-a-map) · [Get the plan into Arma 3](#get-the-plan-into-arma-3)
 
 **Reddit announcements** — [Watch a Reddit user or subreddit](#watch-a-reddit-user-or-subreddit) · [Catch a post up, or skip a backlog](#catch-a-post-up-or-skip-a-backlog) · [Follow someone whose profile hides their posts](#follow-someone-whose-profile-hides-their-posts)
 
@@ -683,6 +683,30 @@ Draw on the actual terrain instead of a blank sheet.
 > A terrain cannot be deleted while a map is drawn on it, and the refusal names the maps.
 
 See also: [Draw the plan](#draw-the-plan)
+
+#### Put the town names on the map
+
+**Who:** Admin · **Where:** Web — **Terrains**, then the map’s background panel
+
+A terrain arrives with roads and contours and no labels. This is how it learns what its towns are called.
+
+1. Start a mission **on that terrain** and open the debug console as a logged-in admin.
+2. Go to **Terrains**, copy the script under *Where the place names come from*, paste it into the console and press **LOCAL EXEC**.
+3. The names are now on your clipboard. Paste them into that terrain’s **Place names** box and save.
+4. Open a map drawn on it — the names are there, under the plan.
+5. Too many? The editor’s background panel has a switch per group and a size slider.
+
+> The tiles genuinely have no labels in them: they come out of Arma’s own map export as pure topography, and the game draws the names over that from its config afterwards. So this has to be fetched once per terrain — nothing was lost on the way in.
+>
+> The names belong to the **terrain**, not to one map. Do it once and every plan drawn on that terrain has them.
+>
+> An archive in the Gruppe Adler format carries a `locations` list and is read on upload, so it needs none of this. An OCAP archive has no names in it.
+>
+> A map whose background points at an **OCAP server** has no terrain stored here to hang names off. Upload the terrain instead, which is the better answer anyway for anything behind a share link.
+>
+> Place names are never exported to Arma — the game already draws its own.
+
+See also: [Put a real terrain behind the plan](#put-a-real-terrain-behind-the-plan) · [Draw the plan](#draw-the-plan)
 
 #### Share, copy or post a map
 
@@ -1768,6 +1792,37 @@ Alternative: **point at a running OCAP server**. Open **🛰️ Load a terrain f
 Or paste the URL of **any image** the browser can load — a terrain screenshot, a map export — under **Map settings**. It is stretched across the sheet, so pick the sheet shape (square, landscape, portrait) that matches it, and set the Arma corners yourself if you want the export.
 
 However the background got there, **Detail** under *Map settings* picks how deep into the tile pyramid to draw, an optional grid can be laid over the top, and the map works with no background at all: a plain dark sheet with a grid is enough for a schematic.
+
+### Town names
+
+A terrain arrives with **no labels on it**. That is not something the bot loses:
+OCAP's tiles come out of Arma's own map export as pure topography, and the game
+draws the names over that afterwards from `CfgWorlds`. So the names have to be
+fetched once per terrain, and then every map drawn on it has them.
+
+1. Start a mission **on that terrain**, open the debug console as a logged-in admin.
+2. On **Terrains**, copy the script under *Where the place names come from*, paste it in and press **LOCAL EXEC**. The names land on your clipboard.
+3. Paste them into that terrain's **Place names** box and save.
+
+They are drawn **under the plan**, so a symbol you place is never hidden behind a
+village name, and they scale by rank the way a paper map does — a capital larger
+and letter-spaced, a rock small. Nameless entries are dropped: Arma's terrains
+are full of `FlatArea` helpers that exist to position things and have nothing to
+say.
+
+Because you may well want all of them on one terrain and almost none on a
+briefing sheet, the editor's background panel carries a **switch per group** —
+towns and villages, hills and landmarks, water and coast, places of interest,
+everything else — plus a size slider. That setting belongs to the map; the names
+themselves belong to the terrain.
+
+An archive in the [Gruppe Adler](https://github.com/gruppe-adler/maps.gruppe-adler.de)
+format already carries a `locations` list and is read on upload, so it needs none
+of the above. An OCAP archive has no names in it. A map pointed at a **running
+OCAP server** has no terrain stored here to hang names off — upload the terrain
+instead, which is the better answer for anything behind a share link anyway.
+
+Place names are never exported to Arma: the game draws its own.
 
 ### Sharing it
 

@@ -39,12 +39,39 @@
         {% if item.used_by %}
           <span class="chip">{{ item.used_by|length }} map{{ '' if item.used_by|length == 1 else 's' }}</span>
         {% endif %}
+        {% if item.places %}
+          <span class="chip">{{ item.places|length }} place names</span>
+        {% else %}
+          <span class="chip warn">no place names</span>
+        {% endif %}
         {% if may_upload %}
           <form class="inlineform" method="post"
                 action="/g/{{ guild.id }}/terrains/{{ item.record.id }}/delete">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <button class="button danger" type="submit">Delete</button>
           </form>
+        {% endif %}
+        {% if may_upload %}
+          <details class="subpanel placebox">
+            <summary>Place names</summary>
+            <form class="form" method="post"
+                  action="/g/{{ guild.id }}/terrains/{{ item.record.id }}/places">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <label class="field">
+                <span>Paste the JSON from the script below</span>
+                <textarea name="places" rows="4"
+                          placeholder='{"locations":[{"name":"Kavala","kind":"NameCity","x":3500,"y":13300}]}'></textarea>
+                <span class="hint">
+                  Replaces whatever this terrain knows now. An empty box clears
+                  them, which is the way back from pasting the wrong
+                  terrain&rsquo;s.
+                </span>
+              </label>
+              <div class="actions">
+                <button class="button primary" type="submit">Save place names</button>
+              </div>
+            </form>
+          </details>
         {% endif %}
       </li>
     {% endfor %}
@@ -54,6 +81,24 @@
 {% endif %}
 
 {% if may_upload %}
+  <h2 style="margin-top:28px">Where the place names come from</h2>
+  <p class="hint">
+    A terrain arrives with roads, buildings and contours and <strong>no
+    labels</strong>: the tiles come out of Arma&rsquo;s own map export as pure
+    topography, and the game draws the names over that afterwards from its
+    config. OCAP&rsquo;s archives carry no names either, so they have to be
+    fetched from the game once per terrain.
+  </p>
+  <p class="hint">
+    Run this in a mission <strong>on that terrain</strong>: open the debug
+    console as a logged-in admin, paste it, and press <strong>LOCAL EXEC</strong>.
+    The names land on your clipboard; paste them into the terrain&rsquo;s
+    <strong>Place names</strong> box above, or into the upload form below.
+    An archive that already carries a <code>locations</code> list &mdash; the
+    Gruppe Adler format &mdash; is read on upload and needs none of this.
+  </p>
+  <pre class="sqfbox">{{ places_sqf }}</pre>
+
   <h2 style="margin-top:28px">Upload a terrain</h2>
   <p class="hint">
     A <strong>zip or 7z</strong> of the tile folder — the one holding the
@@ -91,6 +136,15 @@
         storage and four times as many requests when somebody opens the map.
         Level 4 is around 7 MB for a terrain and is plenty for planning;
         anything deeper in the archive is left out.</span>
+    </label>
+    <label class="field">
+      <span>Place names <span class="muted">— optional</span></span>
+      <textarea name="places" rows="3"
+                placeholder="Paste the clipboard JSON from the script above"></textarea>
+      <span class="hint">
+        Left empty, the archive&rsquo;s own <code>locations</code> list is used
+        if it has one. You can always paste them in afterwards.
+      </span>
     </label>
     <div class="actions">
       <button class="button primary" type="submit">Upload</button>

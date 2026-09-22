@@ -86,7 +86,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(283 cases), and every one of them covers a module that imports nothing beyond
+(323 cases), and every one of them covers a module that imports nothing beyond
 the standard library — which is the rule that decides what is testable here at
 all:
 
@@ -95,7 +95,7 @@ all:
 | `lab/tests` | `utils/orbat.py`'s parser and diff — the two places where a bug silently deletes somebody's slot |
 | `tests/test_reddit.py` | feed parsing, templating, and how a refusal is told apart from a broken feed |
 | `tests/test_redditfeed.py` | what `check_feed()` promises: a post is announced exactly once |
-| `tests/test_tacmap.py` | the document rules, the SVG and SQF escaping, every frame's geometry, and the tile layout |
+| `tests/test_tacmap.py` | the document rules, the SVG and SQF escaping, every frame's geometry, the tile layout, and the place-name parser and geometry |
 | `tests/test_tiles.py` | what an uploaded archive keeps and what it drops |
 | `tests/test_webconfig.py` | which origin a link gets — the page's own host, or the canonical one |
 | `tests/test_help.py` | that every slash command has a how-to — it reads the names out of `cogs/`, so forgetting to document a new command is a red test |
@@ -299,6 +299,7 @@ A terrain uploaded as a tile archive and served back by this bot — see
 | `world_size` | DOUBLE PRECISION | The terrain's edge in metres — what the Arma corners come from |
 | `max_zoom` | INTEGER | The deepest level actually stored |
 | `tile_count` / `bytes` | INTEGER / BIGINT | What the list page shows, so the cost of a terrain is visible |
+| `places` | TEXT | The terrain's own town names, as JSON — see [place names](#place-names-the-terrain-knows-its-own-towns-the-tiles-do-not). NULL until somebody pastes them in. One column rather than a table for the same reason `orbat_nets` is replaced wholesale: nothing hangs off a place name |
 | `created_by` / `created_by_name` | TEXT | |
 | `created_at` | TIMESTAMP | |
 
@@ -1252,6 +1253,7 @@ POST /g/{guild}/maps/{id}/ocap-list     read the OCAP directory, list its terrai
 POST /g/{guild}/maps/{id}/ocap          read an OCAP map folder: terrain + calibration
 POST /g/{guild}/maps/{id}/terrain       put the map on one of this guild's terrains
 GET  /g/{guild}/terrains                the uploaded terrains, POST to upload one
+POST /g/{guild}/terrains/{id}/places    replace its town names, wholesale
 POST /g/{guild}/terrains/{id}/delete    refused while a map is drawn on it
 GET  /t/{id}/{z}/{x}/{y}.png            one tile — no sign-in, cached for a year
 POST /g/{guild}/maps/{id}/delete
@@ -1954,6 +1956,51 @@ Three details are load-bearing:
   compared whole in `setTool()`, so every field belonging to more than one
   tool was silently hidden — which is what happened to the State picker's
   `data-for="unit point"`, invisible from the day it shipped.
+
+### Place names: the terrain knows its own towns, the tiles do not
+
+A tile pyramid arrives with roads, buildings and contours and **not one label**.
+Nothing here was dropping them: OCAP's renders come out of Arma's own map export
+as pure topography, and the game draws the names over that afterwards from
+`CfgWorlds >> worldName >> Names`. OCAP's `map.json` carries `worldName`,
+`worldSize`, `imageSize` and `multiplier` and no locations at all, so the names
+genuinely never arrived.
+
+They hang off **`tac_terrains.places`**, not off a map, because every plan drawn
+on Tanoa wants the same ones. A map only stores how much of them to show
+(`doc['places']`: `show`, `groups`, `scale`), and finds its terrain through
+`tacmap.terrain_id()`, which reads the id back out of the `/t/{id}` background
+address — the same string `database.tac_terrain_usage()` searches for going the
+other way, which is why the pattern lives next to its own code at both ends.
+
+Four things are deliberate:
+
+- **Two sources, because neither reaches everywhere.** `places_sqf()` is the
+  mirror of `to_sqf()` and the same door: vanilla Arma cannot send anything out,
+  so the clipboard is how data leaves it exactly as the debug console is how the
+  plan gets in. It reads the config rather than `nearestLocations`, which is the
+  terrain's whole list including the types a radius search misses. The other
+  source is an archive's own `locations` list — the Gruppe Adler format has one,
+  OCAP's does not — read on upload for free when it is there.
+- **SQF spells a literal quote `""` and has no backslash escape.** A `\"` in
+  that script is a syntax error costing the whole thing, which is what
+  `test_the_dump_script_uses_sqf_quote_escaping` pins. The script also strips
+  quotes out of a name so what lands on the clipboard is always valid JSON.
+- **Drawn under the plan, inside `#tm-back`.** These are the terrain talking; a
+  symbol somebody placed must never end up behind a village name.
+  `test_places_are_drawn_under_the_plan` is what keeps that true. Biggest name
+  last, so where two collide the one people navigate by survives the overlap.
+- **A group filter, because "all of them" is the honest default and a wall of
+  text on a briefing sheet.** Tanoa knows several hundred places. An empty
+  `groups` list means all — a terrain whose names were just imported should show
+  them rather than nothing — and the editor ticks every box rather than showing
+  them all off while all of them draw.
+
+Nameless entries are dropped on the way in: Arma's terrains are full of
+`FlatArea` and `Invisible` helpers that position things and have nothing to say.
+They are counted and reported, because silence there would read as data loss.
+
+Place names are **never exported to Arma** — the game already draws its own.
 
 ### The share link is the whole credential
 

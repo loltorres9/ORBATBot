@@ -1046,3 +1046,301 @@ def test_a_line_carries_no_arrow_unless_it_was_asked_for():
     assert '<polygon' not in tacmap.item_svg(item)
     pointed = _parse_one({'kind': 'line', 'points': [[1, 1], [2, 2]], 'arrow': True})
     assert '<polygon' in tacmap.item_svg(pointed)
+
+
+# ---------------------------------------------------------------------------
+# Place names
+# ---------------------------------------------------------------------------
+#
+# The terrain's own town names. They come in from two sources that are not ours
+# to dictate — an archive's `locations` list and the clipboard dump out of a
+# running mission — so the parser is the thing that has to be forgiving, and
+# the geometry is the thing that has to be exact: a name half a kilometre off
+# is worse than no name, because it reads as authoritative.
+
+
+def _placed(*places):
+    """A whole-terrain document, 1000 m square, with `places` to draw on it."""
+    doc = tacmap.blank_doc()
+    doc['arma'] = {'terrain': 'test', 'left': 0.0, 'bottom': 0.0,
+                   'right': 1000.0, 'top': 1000.0}
+    return doc, list(places)
+
+
+def test_the_grad_meh_shape_is_read():
+    """{"name": …, "pos": [x, y, elevation]} — what an archive may carry."""
+    places, warnings = tacmap.parse_places(
+        '[{"name": "Air Station Mike-26", "pos": [4278.85, 3855.6, -217.8]}]')
+    assert warnings == []
+    assert places == [{'name': 'Air Station Mike-26', 'kind': 'namelocal',
+                       'x': 4278.9, 'y': 3855.6}]
+
+
+def test_the_clipboard_shape_is_read():
+    """What places_sqf() writes: name, kind and a flat x/y."""
+    places, warnings = tacmap.parse_places(
+        '{"terrain": "altis", "locations": '
+        '[{"name": "Kavala", "kind": "NameCity", "x": 3500, "y": 13300}]}')
+    assert warnings == []
+    assert places[0]['kind'] == 'namecity'
+    assert (places[0]['x'], places[0]['y']) == (3500.0, 13300.0)
+
+
+def test_a_bare_map_json_is_unwrapped():
+    places, _ = tacmap.parse_places(
+        {'worldName': 'tanoa', 'locations': [{'name': 'Katkoula', 'pos': [1, 2]}]})
+    assert [place['name'] for place in places] == ['Katkoula']
+
+
+def test_unnamed_helpers_are_dropped_and_counted():
+    """Arma terrains are full of FlatArea/Invisible entries that position
+    things and have no name. They are not an error, but silence would look
+    like data loss."""
+    places, warnings = tacmap.parse_places(
+        '[{"name": "", "pos": [1, 2]}, {"name": "Real", "pos": [3, 4]}]')
+    assert [place['name'] for place in places] == ['Real']
+    assert 'skipped' in warnings[0]
+
+
+def test_one_skipped_helper_is_singular():
+    _, warnings = tacmap.parse_places('[{"name": "", "pos": [1, 2]}]')
+    assert '1 unnamed location was skipped' in warnings[0]
+
+
+def test_an_entry_with_no_position_is_dropped():
+    places, _ = tacmap.parse_places('[{"name": "Nowhere"}]')
+    assert places == []
+
+
+def test_broken_json_is_a_message_not_an_exception():
+    places, warnings = tacmap.parse_places('not json at all')
+    assert places == []
+    assert 'valid JSON' in warnings[0]
+
+
+def test_json_without_a_locations_list_says_so():
+    places, warnings = tacmap.parse_places('{"worldName": "altis"}')
+    assert places == []
+    assert 'locations' in warnings[0]
+
+
+def test_an_unknown_location_type_still_lands_somewhere():
+    """A modded terrain may use a type this table has never heard of. Losing
+    the name over that would be worse than filing it under the default."""
+    places, _ = tacmap.parse_places('[{"name": "X", "kind": "SomeModType", "x": 1, "y": 2}]')
+    assert places[0]['kind'] == tacmap.DEFAULT_PLACE_KIND
+
+
+def test_the_place_list_is_capped():
+    raw = [{'name': f'P{n}', 'x': 1, 'y': 2} for n in range(tacmap.MAX_PLACES + 50)]
+    places, warnings = tacmap.parse_places(raw)
+    assert len(places) == tacmap.MAX_PLACES
+    assert 'first' in warnings[0]
+
+
+def test_every_kind_belongs_to_a_real_group():
+    known = {key for key, _ in tacmap.PLACE_GROUPS}
+    for kind, spec in tacmap.PLACE_KINDS.items():
+        assert spec['group'] in known, kind
+        assert spec['rank'] in tacmap.PLACE_SIZE, kind
+
+
+# --- the geometry ---------------------------------------------------------
+
+def test_from_world_is_the_inverse_of_to_world():
+    doc, _ = _placed()
+    for point in ((0, 0), (100, 200), (640, 480)):
+        assert tacmap.from_world(doc, *tacmap.to_world(doc, *point)) == \
+            (float(point[0]), float(point[1]))
+
+
+def test_the_vertical_axis_flips():
+    """Arma's y grows north and the sheet's grows down. A place at the top of
+    the world belongs at the top of the sheet, which is y = 0."""
+    doc, _ = _placed()
+    _, y = tacmap.from_world(doc, 500, 1000)
+    assert y == 0
+    _, bottom = tacmap.from_world(doc, 500, 0)
+    assert bottom == doc['height']
+
+
+def test_a_place_outside_a_cropped_sheet_is_left_off():
+    doc, places = _placed({'name': 'Far', 'kind': 'namecity', 'x': 99999, 'y': 0})
+    assert tacmap.visible_places(doc, places) == []
+
+
+def test_a_place_inside_the_sheet_is_kept():
+    doc, places = _placed({'name': 'Middle', 'kind': 'namecity', 'x': 500, 'y': 500})
+    shown = tacmap.visible_places(doc, places)
+    assert len(shown) == 1
+    assert shown[0]['sheet_x'] == doc['width'] / 2
+
+
+# --- what is shown --------------------------------------------------------
+
+def test_no_group_filter_means_every_group():
+    doc, places = _placed({'name': 'A', 'kind': 'namecity', 'x': 500, 'y': 500},
+                          {'name': 'B', 'kind': 'hill', 'x': 500, 'y': 400})
+    assert len(tacmap.visible_places(doc, places)) == 2
+
+
+def test_a_group_filter_keeps_only_that_group():
+    doc, places = _placed({'name': 'A', 'kind': 'namecity', 'x': 500, 'y': 500},
+                          {'name': 'B', 'kind': 'hill', 'x': 500, 'y': 400})
+    doc['places'] = {'show': True, 'groups': ['settlement'], 'scale': 1.0}
+    assert [p['name'] for p in tacmap.visible_places(doc, places)] == ['A']
+
+
+def test_switching_them_off_shows_none():
+    doc, places = _placed({'name': 'A', 'kind': 'namecity', 'x': 500, 'y': 500})
+    doc['places'] = {'show': False, 'groups': [], 'scale': 1.0}
+    assert tacmap.visible_places(doc, places) == []
+
+
+def test_the_biggest_name_is_drawn_last():
+    """Where two collide, the one people navigate by should survive."""
+    doc, places = _placed({'name': 'Rock', 'kind': 'rockarea', 'x': 500, 'y': 500},
+                          {'name': 'Capital', 'kind': 'namecitycapital', 'x': 500, 'y': 500})
+    assert [p['name'] for p in tacmap.visible_places(doc, places)] == ['Rock', 'Capital']
+
+
+def test_place_counts_are_per_group():
+    counts = tacmap.place_counts([{'name': 'A', 'kind': 'namecity', 'x': 1, 'y': 1},
+                                  {'name': 'B', 'kind': 'hill', 'x': 1, 'y': 1}])
+    assert counts['settlement'] == 1 and counts['terrain'] == 1
+
+
+# --- rendering ------------------------------------------------------------
+
+def test_places_are_rendered_into_the_map():
+    doc, places = _placed({'name': 'Kavala', 'kind': 'namecity', 'x': 500, 'y': 500})
+    assert 'Kavala' in tacmap.render(doc, places=places)
+
+
+def test_a_map_with_no_places_renders_no_group():
+    doc, _ = _placed()
+    assert 'tm-places' not in tacmap.render(doc, places=[])
+
+
+def test_places_are_drawn_under_the_plan():
+    """A symbol somebody placed must never sit behind a village name."""
+    doc, places = _placed({'name': 'Kavala', 'kind': 'namecity', 'x': 500, 'y': 500})
+    doc['items'] = [_parse_one(unit(label='Alpha'))]
+    svg = tacmap.render(doc, places=places)
+    assert svg.index('tm-places') < svg.index('tm-items')
+
+
+def test_a_place_name_is_escaped():
+    """The names arrive from a file somebody pasted in."""
+    doc, places = _placed({'name': '<script>x</script>', 'kind': 'namecity',
+                           'x': 500, 'y': 500})
+    svg = tacmap.render(doc, places=places)
+    assert '<script>' not in svg
+    assert '&lt;script&gt;' in svg
+
+
+def test_a_bigger_rank_gets_bigger_type():
+    doc, places = _placed({'name': 'Cap', 'kind': 'namecitycapital', 'x': 500, 'y': 500})
+    big = tacmap.places_svg(doc, places)
+    doc2, small_places = _placed({'name': 'Cap', 'kind': 'rockarea', 'x': 500, 'y': 500})
+    small = tacmap.places_svg(doc2, small_places)
+    size = lambda svg: float(re.search(r'font-size="([\d.]+)"', svg).group(1))
+    assert size(big) > size(small)
+
+
+def test_the_scale_setting_changes_the_type_size():
+    doc, places = _placed({'name': 'Cap', 'kind': 'namecity', 'x': 500, 'y': 500})
+    plain = tacmap.places_svg(doc, places)
+    doc['places'] = {'show': True, 'groups': [], 'scale': 2.0}
+    doubled = tacmap.places_svg(doc, places)
+    size = lambda svg: float(re.search(r'font-size="([\d.]+)"', svg).group(1))
+    assert size(doubled) > size(plain)
+
+
+def test_every_name_is_drawn_twice_for_legibility():
+    """Pale halo under dark text, the same as everything else that sits on
+    terrain here — these land on bright sand and dark jungle alike."""
+    doc, places = _placed({'name': 'Kavala', 'kind': 'namecity', 'x': 500, 'y': 500})
+    assert tacmap.places_svg(doc, places).count('>Kavala<') == 2
+
+
+def test_places_settings_survive_a_parse():
+    doc = tacmap.parse({'places': {'show': False, 'groups': ['settlement'],
+                                   'scale': 1.5}}).doc
+    assert doc['places'] == {'show': False, 'groups': ['settlement'], 'scale': 1.5}
+
+
+def test_an_unknown_group_in_the_settings_is_dropped():
+    doc = tacmap.parse({'places': {'groups': ['settlement', 'nonsense']}}).doc
+    assert doc['places']['groups'] == ['settlement']
+
+
+def test_a_document_with_no_places_setting_shows_them():
+    """An older map, saved before this existed, should gain the names rather
+    than silently keep hiding them."""
+    assert tacmap.parse('{}').doc['places']['show'] is True
+
+
+# --- the dump script ------------------------------------------------------
+
+def test_the_dump_script_uses_sqf_quote_escaping():
+    """SQF spells a literal quote as "" and has no backslash escape. A \\" in
+    there is a syntax error that costs the whole script."""
+    script = tacmap.places_sqf()
+    assert '\\' not in script
+    assert 'splitString """" joinString' in script
+
+
+def test_the_dump_script_is_balanced():
+    script = tacmap.places_sqf()
+    assert script.count('{') == script.count('}')
+    assert script.count('[') == script.count(']')
+
+
+def test_the_dump_script_reads_the_terrain_config():
+    script = tacmap.places_sqf()
+    assert 'CfgWorlds' in script
+    assert 'copyToClipboard' in script
+
+
+def test_the_dump_script_emits_the_shape_the_parser_reads():
+    """The two halves have to agree, and nothing else checks that they do."""
+    script = tacmap.places_sqf()
+    for field in ('""name""', '""kind""', '""x""', '""y""', '""locations""'):
+        assert field in script, field
+
+
+def test_a_map_on_an_uploaded_terrain_names_it():
+    doc = tacmap.blank_doc()
+    doc['background'] = {**doc['background'], 'kind': 'tiles', 'url': '/t/7'}
+    assert tacmap.terrain_id(doc) == 7
+
+
+def test_a_map_on_an_ocap_server_has_no_stored_terrain():
+    doc = tacmap.blank_doc()
+    doc['background'] = {**doc['background'], 'kind': 'tiles',
+                         'url': 'https://ocap.example/maps/tanoa'}
+    assert tacmap.terrain_id(doc) is None
+
+
+def test_an_image_background_has_no_terrain():
+    doc = tacmap.blank_doc()
+    doc['background'] = {**doc['background'], 'kind': 'image', 'url': '/t/7'}
+    assert tacmap.terrain_id(doc) is None
+
+
+def test_a_terrain_url_with_anything_after_it_is_not_matched():
+    """`/t/7/../9` must not read as terrain 7."""
+    doc = tacmap.blank_doc()
+    doc['background'] = {**doc['background'], 'kind': 'tiles', 'url': '/t/7/0/0/0.png'}
+    assert tacmap.terrain_id(doc) is None
+
+
+def test_nothing_offered_is_not_a_malformed_list():
+    """An upload that left the paste box empty has no place names and no
+    complaint either — the form sends None, not an empty string."""
+    assert tacmap.parse_places(None) == ([], [])
+
+
+def test_an_empty_paste_box_is_silent_too():
+    assert tacmap.parse_places('   ') == ([], [])

@@ -30,6 +30,11 @@
   if (!svg || !docNode || !catalogNode) return;
 
   var catalog = JSON.parse(catalogNode.textContent);
+  // The terrain's own town names. They belong to the terrain rather than to
+  // this document, so they arrive separately and are never saved back — the
+  // document only carries how much of them to show.
+  var placesNode = document.getElementById('tmplaces');
+  var places = placesNode ? JSON.parse(placesNode.textContent) : [];
   var state = {
     doc: JSON.parse(docNode.textContent),
     tool: 'select',
@@ -368,6 +373,49 @@
       background.opacity + '" preserveAspectRatio="none"/>';
   }
 
+  // Arma's world metres as a point on the sheet — the mirror of
+  // tacmap.from_world(). The sheet's y grows down and Arma's grows north, so
+  // the vertical axis flips.
+  function fromWorld(wx, wy) {
+    var arma = state.doc.arma || {};
+    var spanX = (arma.right - arma.left) || 1;
+    var spanY = (arma.top - arma.bottom) || 1;
+    return [(wx - arma.left) / spanX * state.doc.width,
+            (arma.top - wy) / spanY * state.doc.height];
+  }
+
+  // The mirror of tacmap.places_svg(). Kept in step with it by hand, the same
+  // bargain itemSVG() makes: the shapes live in the defs, and what is written
+  // twice is the composition.
+  function placesSVG() {
+    var shows = state.doc.places || {};
+    if (!shows.show || !places.length) return '';
+    var groups = shows.groups || [];
+    var scale = Math.max(0.4, Math.min(Number(shows.scale) || 1, 3));
+    var shown = [];
+    places.forEach(function (place) {
+      var spec = catalog.placeKinds[place.kind] || catalog.placeKinds[catalog.defaultPlaceKind];
+      if (groups.length && groups.indexOf(spec.group) < 0) return;
+      var point = fromWorld(place.x, place.y);
+      if (point[0] < 0 || point[0] > state.doc.width) return;
+      if (point[1] < 0 || point[1] > state.doc.height) return;
+      shown.push({ name: place.name, rank: spec.rank, x: point[0], y: point[1] });
+    });
+    // Biggest last, so where two collide the one people navigate by survives.
+    shown.sort(function (a, b) { return a.rank - b.rank; });
+
+    return '<g class="tm-places" pointer-events="none">' + shown.map(function (place) {
+      var size = Math.max((catalog.placeSizes[place.rank] || 7) * scale, 5.4);
+      var common = 'x="' + round(place.x) + '" y="' + round(place.y) +
+        '" text-anchor="middle" font-size="' + round(size) +
+        '" font-family="inherit"' + (place.rank >= 4 ? ' letter-spacing="1.2"' : '');
+      return '<text ' + common + ' stroke="#ffffff" stroke-width="' +
+        round(size / 4) + '" stroke-linejoin="round" fill="none" opacity="0.85">' +
+        esc(place.name) + '</text>' +
+        '<text ' + common + ' fill="#1b2027">' + esc(place.name) + '</text>';
+    }).join('') + '</g>';
+  }
+
   function gridSVG() {
     var grid = state.doc.grid || {};
     if (!grid.show) return '';
@@ -438,7 +486,7 @@
       var item = state.doc.items[index];
       return '<g class="tm-item" data-i="' + index + '">' + itemSVG(item) + hitSVG(item) + '</g>';
     }).join('');
-    back.innerHTML = backgroundSVG() + gridSVG();
+    back.innerHTML = backgroundSVG() + gridSVG() + placesSVG();
     overlay.innerHTML = draftSVG();
     drawSelection();
   }
@@ -1131,6 +1179,10 @@
     bg: document.getElementById('tmf-bg'),
     opacity: document.getElementById('tmf-bgop'),
     grid: document.getElementById('tmf-grid'),
+    places: document.getElementById('tmf-places'),
+    placeScale: document.getElementById('tmf-placescale'),
+    // A container, listened to for the group checkboxes bubbling out of it.
+    placeGroups: document.getElementById('tmf-placegroups'),
     cols: document.getElementById('tmf-cols'),
     rows: document.getElementById('tmf-rows'),
     shape: document.getElementById('tmf-shape'),
@@ -1151,6 +1203,46 @@
   });
   settings.opacity.value = state.doc.background.opacity;
   settings.grid.checked = !!state.doc.grid.show;
+
+  // The place-name controls. A terrain with no names has nothing to switch, so
+  // the whole block says why instead of offering dead checkboxes.
+  if (!state.doc.places) state.doc.places = { show: true, groups: [], scale: 1 };
+  settings.places.checked = !!state.doc.places.show;
+  settings.placeScale.value = state.doc.places.scale || 1;
+  var placeBox = document.getElementById('tmf-placebox');
+  var placeNote = document.getElementById('tmf-placenote');
+  if (!places.length) {
+    settings.places.disabled = true;
+    placeBox.hidden = true;
+    // A map on an OCAP server has no terrain stored here to hang names off, so
+    // pointing at the Terrains page would be an instruction that leads nowhere.
+    var stored = state.doc.background.kind === 'tiles' &&
+      /^\/t\/\d+$/.test(state.doc.background.url || '');
+    placeNote.textContent = stored
+      ? 'This terrain has no place names yet — the Terrains page has the ' +
+        'script that copies them out of a mission.'
+      : 'Place names come from an uploaded terrain. This map is not on one.';
+    placeNote.hidden = false;
+  } else {
+    var counted = {};
+    places.forEach(function (place) {
+      var spec = catalog.placeKinds[place.kind] || catalog.placeKinds[catalog.defaultPlaceKind];
+      counted[spec.group] = (counted[spec.group] || 0) + 1;
+    });
+    // Ticking nothing means all of them, which is what an empty list means to
+    // the renderer on both sides — so the boxes start ticked rather than
+    // showing every group as off while every group is drawn.
+    var chosen = state.doc.places.groups || [];
+    settings.placeGroups.innerHTML = catalog.placeGroups.filter(function (group) {
+      return counted[group.key];
+    }).map(function (group) {
+      var on = !chosen.length || chosen.indexOf(group.key) >= 0;
+      return '<label class="field tmcheck"><input type="checkbox" data-placegroup="' +
+        group.key + '"' + (on ? ' checked' : '') + '> <span>' + esc(group.label) +
+        ' <span class="muted">' + counted[group.key] + '</span></span></label>';
+    }).join('');
+    placeNote.textContent = places.length + ' place names on this terrain.';
+  }
   settings.cols.value = state.doc.grid.cols;
   settings.rows.value = state.doc.grid.rows;
   settings.shape.value = state.doc.width + 'x' + state.doc.height;
@@ -1189,6 +1281,15 @@
       Number(settings.zoom.value) || 0, state.doc.background.max_zoom));
     state.doc.background.opacity = Number(settings.opacity.value);
     state.doc.grid.show = settings.grid.checked;
+    state.doc.places.show = settings.places.checked;
+    state.doc.places.scale = Number(settings.placeScale.value) || 1;
+    var boxes = Array.prototype.slice.call(
+      settings.placeGroups.querySelectorAll('[data-placegroup]'));
+    var picked = boxes.filter(function (box) { return box.checked; })
+      .map(function (box) { return box.dataset.placegroup; });
+    // All ticked is the same thing as none ticked, and the empty list is what
+    // survives a terrain gaining a new group of names later.
+    state.doc.places.groups = picked.length === boxes.length ? [] : picked;
     state.doc.grid.cols = Math.max(1, Number(settings.cols.value) || 10);
     state.doc.grid.rows = Math.max(1, Number(settings.rows.value) || 10);
     state.doc.arma.terrain = settings.terrain.value;
