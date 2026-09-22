@@ -155,6 +155,31 @@
             <button class="button" type="submit">Import place names</button>
           </div>
         </form>
+
+        <p class="hint">
+          <strong>Nothing found?</strong> Then that terrain was built the older
+          way and carries no location data anywhere — the names exist only in
+          the game. Run this in a mission <strong>on that terrain</strong>:
+          debug console as a logged-in admin, paste, <strong>LOCAL EXEC</strong>.
+          The names go to your clipboard; paste them below.
+          <strong>Once for the terrain</strong> — every map on it then has them.
+        </p>
+        <pre class="sqfbox">{{ places_sqf }}</pre>
+        <form class="form" method="post"
+              action="/g/{{ guild.id }}/maps/{{ record.id }}/places">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="field">
+            <span>Paste the clipboard JSON</span>
+            <textarea name="places" rows="4"
+                      placeholder='{"locations":[{"name":"Chamville","kind":"NameCity","x":4000,"y":4000}]}'></textarea>
+            <span class="hint">
+              Replaces whatever this terrain knows now; an empty box clears it.
+            </span>
+          </label>
+          <div class="actions">
+            <button class="button primary" type="submit">Save place names</button>
+          </div>
+        </form>
       </details>
     </div>
   </details>
