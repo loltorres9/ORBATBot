@@ -8,6 +8,8 @@ It also manages **self-assignable game roles** — permission-free tag roles for
 
 And it runs **standalone events** with sign-ups — trainings, movie nights, anything — where members answer Accepted / Tentative / Declined on a button, or whatever options the organiser defined, and get reminded before the start. No Google Sheet involved. See [Events](#events).
 
+**Looking for how to do one particular thing?** [How-tos](#how-tos) has a short recipe for each — and the bot serves the same text at **`/help`**, behind the **?** in the site header.
+
 Much of this can also be done from a **browser** instead of slash commands — events, the slot roster, slot approvals, game roles, embeds and the logs: an optional web interface with Discord login, running inside the same bot process. See [Web UI](#web-ui).
 
 ---
@@ -140,6 +142,808 @@ Watch a Reddit user or a subreddit and announce every new post in a Discord chan
 - **Commands sync automatically** on startup and when the bot joins a server; `/sync` is only for when something looks missing
 - **Role-based access control** — Unit Leaders get extra commands scoped to their own unit
 - **Optional [web interface](#web-ui)** — manage events, the ORBAT and slot approvals from the browser, signed in with Discord, running inside the same process
+- **A built-in help page** — every how-to in [How-tos](#how-tos) is also served at `/help`, with a **?** in the header and another beside each page's tabs that opens that page's own instructions
+
+---
+
+## How-tos
+
+<!-- help:start -->
+
+<!-- Generated from utils/help.py by scripts/gen_help.py.
+     Edit the topics there, not this section: the bot serves the same
+     text at /help and the two must not drift apart. -->
+
+Short how-tos for everything the bot does, one per thing you might want to do. The bot serves the same text at **`/help`** — the **?** in the site header, and next to each page’s heading.
+
+**Slots and operations** — [Request a slot](#request-a-slot) · [Change, cancel or leave](#change-cancel-or-leave) · [Approve or deny a request](#approve-or-deny-a-request) · [Put somebody on a slot directly](#put-somebody-on-a-slot-directly) · [Take somebody off a slot](#take-somebody-off-a-slot) · [Start an operation](#start-an-operation) · [Set the start time and reminder](#set-the-start-time-and-reminder) · [Post or re-post the ORBAT board](#post-or-re-post-the-orbat-board) · [Announce the operation](#announce-the-operation) · [Empty the approval queue](#empty-the-approval-queue) · [Check what the bot is reading](#check-what-the-bot-is-reading)
+
+**ORBATs and rosters** — [Build an ORBAT](#build-an-orbat) · [Edit an ORBAT without unseating anybody](#edit-an-orbat-without-unseating-anybody) · [Rename, copy or delete an ORBAT](#rename-copy-or-delete-an-orbat) · [Export an ORBAT to a Google Sheet](#export-an-orbat-to-a-google-sheet) · [Run the operation on an ORBAT](#run-the-operation-on-an-orbat) · [Run the operation on a Google Sheet](#run-the-operation-on-a-google-sheet)
+
+**Events** — [Create an event](#create-an-event) · [Sign up for an event](#sign-up-for-an-event) · [Repeat an event](#repeat-an-event) · [Custom sign-up options](#custom-sign-up-options) · [Ping roles on an event](#ping-roles-on-an-event) · [Edit, cancel or delete an event](#edit-cancel-or-delete-an-event)
+
+**Game roles** — [Pick your game roles](#pick-your-game-roles) · [Add and remove game roles](#add-and-remove-game-roles)
+
+**Tactical maps** — [Draw the plan](#draw-the-plan) · [Use layers](#use-layers) · [Put a real terrain behind the plan](#put-a-real-terrain-behind-the-plan) · [Share, copy or post a map](#share-copy-or-post-a-map) · [Get the plan into Arma 3](#get-the-plan-into-arma-3)
+
+**Reddit announcements** — [Watch a Reddit user or subreddit](#watch-a-reddit-user-or-subreddit) · [Catch a post up, or skip a backlog](#catch-a-post-up-or-skip-a-backlog) · [Follow someone whose profile hides their posts](#follow-someone-whose-profile-hides-their-posts)
+
+**Server and members** — [Log joins, leaves, kicks and bans](#log-joins-leaves-kicks-and-bans) · [Welcome new members](#welcome-new-members) · [Label your invite links](#label-your-invite-links) · [Track time in voice](#track-time-in-voice) · [Build a rich message](#build-a-rich-message) · [Delete messages in bulk](#delete-messages-in-bulk) · [Choose the channels and the timezone](#choose-the-channels-and-the-timezone) · [Sync, restart and the one-time migration](#sync-restart-and-the-one-time-migration)
+
+### Slots and operations
+
+_Asking for a slot, deciding who gets it, and running the evening._
+
+#### Request a slot
+
+**Who:** Everyone · **Where:** Discord — the ORBAT board, or `/request-slot`
+
+Ask for one of the slots on tonight’s board and wait for a Unit Leader to decide.
+
+1. Go to the **#orbat** channel and press **📋 Request a Slot** on the board, or run `/request-slot` anywhere.
+2. Pick the squad from the first menu, then the slot from the second.
+3. That is it — the request goes to the approvers, and you get a DM confirming it.
+4. Watch the board: your slot turns 🟡 while you wait, and 🔴 once you have it.
+
+> Somebody else may ask for the same slot. Both requests stand, the approver picks one, and the other person is told — so a 🟡 slot is worth asking for rather than avoiding.
+>
+> You can only hold one request at a time. Use `/change-slot` to move rather than requesting twice.
+
+See also: [Change, cancel or leave](#change-cancel-or-leave) · [Approve or deny a request](#approve-or-deny-a-request)
+
+#### Change, cancel or leave
+
+**Who:** Everyone · **Where:** Discord — `/change-slot`, `/cancel-request`, `/leave-operation`
+
+Move to a different slot, withdraw a request you have not had answered yet, or drop out of the operation.
+
+1. To swap: `/change-slot`. It gives up what you hold and opens the picker again.
+2. To withdraw a request nobody has answered: `/cancel-request`.
+3. To drop out entirely, approved or not: `/leave-operation`, then confirm.
+
+> `/change-slot` frees your old slot the moment you run it, so somebody else can take it while you are choosing. If you only want a different squad, that is the trade.
+>
+> All three release the slot on the board straight away, so nobody is planning around a seat you have left.
+
+See also: [Request a slot](#request-a-slot)
+
+#### Approve or deny a request
+
+**Who:** Unit Leader or Admin · **Where:** Discord — **#slot-approvals**, or the **Slot Approvals** tab
+
+Decide who gets the slot, in the channel or in the browser — both do exactly the same thing.
+
+1. In Discord: open **#slot-approvals** and press **✅ Approve** or **❌ Deny** on the request. Denying opens a box for an optional reason.
+2. In the browser: **🎖️ Operations → Slot Approvals**, where the same two buttons sit next to each request with a reason field.
+3. The member is DMed either way, the message leaves the queue, and a record goes to **#approval-archive**.
+
+> Approving a contested slot denies the other requests for it automatically and tells those members why.
+>
+> A Unit Leader may only decide requests from their own unit. The web page still lists the rest — it says *CNTO only* instead of the buttons, so the queue never lies about how many people are waiting.
+>
+> Old requests stay clickable after a new operation starts, and are always decided against the operation they were made for.
+
+See also: [Take somebody off a slot](#take-somebody-off-a-slot) · [Put somebody on a slot directly](#put-somebody-on-a-slot-directly)
+
+#### Put somebody on a slot directly
+
+**Who:** Unit Leader or Admin · **Where:** Discord — `/assign-slot`, or the **Slot Approvals** tab
+
+Book a member onto a slot without them asking and without an approval step.
+
+1. In Discord: `/assign-slot @member`, then pick the squad and the slot.
+2. In the browser: the **Assign somebody** panel at the bottom of **Slot Approvals**. Type a Discord ID, a mention or a name.
+3. The member is DMed that they now hold it.
+
+> This is stricter than approving: you need a unit of your own and the member must share it. Choosing who goes on the roster is not the same act as answering somebody who asked.
+>
+> Members are searched rather than listed, because the bot does not read your member list. More than one match is reported with IDs rather than guessed at.
+>
+> It is refused if the member already holds a slot — clear the old one first.
+
+See also: [Take somebody off a slot](#take-somebody-off-a-slot)
+
+#### Take somebody off a slot
+
+**Who:** Unit Leader or Admin · **Where:** Discord — `/clear-slot`, or **Release** / **Withdraw** on the web
+
+Give a booked slot back, or take an undecided request out of the queue.
+
+1. In Discord: `/clear-slot` and pick from the dropdown of who is currently on the operation.
+2. In the browser: **Release** on a booked row, **Withdraw** on a pending one — the same action under two names.
+3. Confirm. The member is DMed and told who removed them.
+
+> Neither can be undone, which is why both ask first.
+>
+> Clearing a pending request greys out its approval message, so nobody finds it later and presses Approve on a request that is gone.
+>
+> The archive record of an earlier approval is left alone. The archive says what was decided; this is a later decision, not a correction of that one.
+
+#### Start an operation
+
+**Who:** Admin · **Where:** Discord — `/setup-slots`, or the **Operation** tab
+
+Load a roster, set the start time, and put the board up.
+
+1. Decide where the roster comes from: an **ORBAT** you built here, or a **Google Sheet**.
+2. In Discord: `/setup-slots orbat:<name>` **or** `/setup-slots sheet_url:<link>` — one or the other, never both.
+3. Add `event_time` and `reminder_minutes` if you know them; both can be set later.
+4. In the browser: **🎖️ Operations → Operation → Start a different operation**, which is the same thing with a dropdown.
+5. The board is posted to **#orbat** automatically, with the request button on it.
+
+> Starting an operation archives the previous one. Its pending requests are left alone and stay decidable.
+>
+> Times are read in the server timezone — set that once with `/set-timezone`.
+>
+> If the bot cannot post in the ORBAT channel the operation is still created and you are told. Post the board yourself afterwards.
+
+See also: [Set the start time and reminder](#set-the-start-time-and-reminder) · [Post or re-post the ORBAT board](#post-or-re-post-the-orbat-board) · [Build an ORBAT](#build-an-orbat)
+
+#### Set the start time and reminder
+
+**Who:** Admin · **Where:** Discord — `/set-event-time`, or the **Operation** tab
+
+Move tonight’s start, and choose how long before it everybody is reminded.
+
+1. `/set-event-time time:25/06/2025 19:00 reminder_minutes:30`.
+2. Or the **Start time** field on the **Operation** page.
+3. The board updates itself, and the reminder is re-armed for the new time.
+
+> The reminder DMs every approved member and pings **#orbat**. It fires once — moving the time arms it again.
+>
+> The time renders as a Discord timestamp, so everyone sees it in their own local time whatever the server timezone is.
+
+See also: [Choose the channels and the timezone](#choose-the-channels-and-the-timezone)
+
+#### Post or re-post the ORBAT board
+
+**Who:** Admin · **Where:** Discord — `/post-orbat`, or the **Operation** tab
+
+Put a fresh board up when the old message has scrolled away or been deleted.
+
+1. `/post-orbat` posts it in the channel you run it in; `/post-orbat channel:#orbat` sends it elsewhere.
+2. Or press **Post the board** on the **Operation** page.
+3. The new message becomes the one the bot keeps up to date.
+
+> There is only ever one live board. Posting a new one means the old message stops updating — delete it, or it will mislead somebody.
+>
+> The board refreshes itself on every approval, denial and release, so you should rarely need this.
+
+#### Announce the operation
+
+**Who:** Admin · **Where:** Discord — `/post-event`, or the **Operation** tab
+
+Post an announcement embed pointing people at the board to sign up.
+
+1. `/post-event channel:#announcements`, optionally overriding the mission name and time.
+2. Or the **Post the announcement** panel on the **Operation** page.
+3. It names the operation, its start, and links **#orbat** for sign-ups.
+
+> This only announces. Sign-up still happens through the board — for an event with its own attendee list, use `/event-create` instead.
+
+See also: [Create an event](#create-an-event)
+
+#### Empty the approval queue
+
+**Who:** Admin · **Where:** Discord — `/clear-requests`, or the **Operation** tab
+
+Cancel every pending request for the operation at once.
+
+1. Run `/clear-requests`, or press it on the **Operation** page.
+2. Every pending request is cancelled and its approval message greyed out.
+
+> Nobody is DMed and nothing is archived. This empties a queue that was never going to be answered — it is not the same as turning people down, which is what Deny is for.
+>
+> Approved bookings are untouched.
+
+#### Check what the bot is reading
+
+**Who:** Admin · **Where:** Discord — `/current-operation`, `/debug-slots`
+
+Find out which operation is live and what the bot sees on its roster, when a slot is missing.
+
+1. `/current-operation` names the operation and says whether it runs on an ORBAT or a sheet.
+2. `/debug-slots` prints the raw slots as the bot reads them; `/debug-slots squad:<name>` narrows it.
+3. On the web the same output is on the **Operation** page, under **Read the raw roster**, rendered in place.
+
+> Each slot is keyed `db:412` on an ORBAT or `sheet:r12c4` on a sheet. A slot missing here is missing in the roster, not in the board.
+>
+> On a sheet, a slot the bot cannot see usually means the cell does not start with `1.` or `1-`, or its `<Insert Name>` marker is gone.
+
+### ORBATs and rosters
+
+_Where the slots themselves come from — built here, or in a sheet._
+
+#### Build an ORBAT
+
+**Who:** Admin · **Where:** Web — **🎖️ Operations → ORBATs**
+
+Write the roster as indented text and let the bot turn it into squads and slots.
+
+1. Go to **ORBATs**, give the new one a name, and press **Create**.
+2. Write the roster in the big text field: squad names at the left margin, slots indented under them.
+3. Put a squad’s options after a `|`, separated by commas: `left` or `right` for the column, `unit:TFP`, `radio:343 CHN:3`, and `nocount` for a bench that should not count against the numbers.
+4. Fill in the **Nets** field underneath for the shared channels, one per line as `Platoon Net | 152 CHN : 1`.
+5. Press **Preview** to see the board, then **Save**.
+
+> A line starting with `#` is a comment. A leading `1.` or `2)` on a slot is stripped, so lines pasted out of a sheet land clean.
+>
+> Leave the column out entirely and the squads are split down the middle for you. One explicit `left` or `right` turns that guessing off for the whole ORBAT.
+>
+> Discord will not render an unlimited board. The editor warns you before you save when the ORBAT outgrows 25 fields or the character limits — eight squads plus a net list is the practical ceiling.
+
+See also: [Edit an ORBAT without unseating anybody](#edit-an-orbat-without-unseating-anybody) · [Run the operation on an ORBAT](#run-the-operation-on-an-orbat)
+
+#### Edit an ORBAT without unseating anybody
+
+**Who:** Admin · **Where:** Web — **🎖️ Operations → ORBATs → the ORBAT**
+
+Change the roster while it is in use, and see who an edit would affect before it happens.
+
+1. Open the ORBAT and change the text.
+2. Press **Preview**. The diff lists what would be added, removed and renamed.
+3. Press **Save**. An edit that would remove or rename a slot *somebody holds* stops at a confirmation page naming them.
+4. Read that page, then confirm or go back and fix the text.
+
+> Reordering lines is free — slots are matched by name first, so moving a squad changes nothing.
+>
+> Renaming keeps the booking. The person stays on the slot under its new name, which is why a rename asks: right for a typo, wrong if you meant to replace the role.
+>
+> Cutting three `Rifleman` lines to two keeps the first two, so a booked one is not the casualty.
+>
+> A red banner at the top means this ORBAT is backing the operation running right now, and an edit changes tonight’s board.
+
+See also: [Build an ORBAT](#build-an-orbat)
+
+#### Rename, copy or delete an ORBAT
+
+**Who:** Admin · **Where:** Web — **🎖️ Operations → ORBATs**
+
+Keep a library of rosters: give one a clearer name, copy it as the basis for the next one, or throw it away.
+
+1. **Rename**: open the ORBAT and use the **Name and description** form under the editor. The description is only ever shown in the list, to tell two similar rosters apart.
+2. **Duplicate**: press **Duplicate** on the ORBAT. You get a copy of the squads, slots and nets — and none of the bookings.
+3. **Delete**: press **Delete** and confirm.
+
+> Duplicating is the way to build next week’s roster from this week’s without touching the one an operation is running on.
+>
+> An ORBAT backing the **active** operation cannot be deleted — the delete would take tonight’s whole board with it. Finish or replace the operation first.
+>
+> Deleting an ORBAT that ran an *old* operation is allowed, and releases those bookings in the same move rather than leaving records pointing at slots that no longer exist.
+
+#### Export an ORBAT to a Google Sheet
+
+**Who:** Admin · **Where:** Web — **🎖️ Operations → ORBATs → the ORBAT**
+
+Write the roster into a spreadsheet, for people who want it there as well.
+
+1. Open the ORBAT and find the **Export to a sheet** panel.
+2. Paste the URL of the spreadsheet to write into.
+3. Press **Export**. A **new tab** is added holding the roster.
+
+> It never touches an existing tab. A title collision gets a `(2)` suffix rather than overwriting anything, so an export can never damage the sheet another operation is running on.
+>
+> It is one-way. Nothing is recorded about the export, and the bot reads only the *first* tab — so an exported tab is not picked up on its own.
+>
+> Needs `GOOGLE_CREDENTIALS` configured, and the service account invited to the spreadsheet as an editor.
+
+See also: [Run the operation on a Google Sheet](#run-the-operation-on-a-google-sheet)
+
+#### Run the operation on an ORBAT
+
+**Who:** Admin · **Where:** Discord — `/setup-slots orbat:<name>`
+
+Use a roster held here instead of a spreadsheet — the default choice, and the simpler one.
+
+1. Build the ORBAT first (see **Build an ORBAT**).
+2. Run `/setup-slots orbat:<name>` — the name autocompletes — or pick it from the dropdown on the **Operation** page.
+3. Everything else behaves identically: requests, approvals, the board, assigning and clearing.
+
+> No Google account, no credentials and no network call is involved, so nothing about the evening depends on a third party being up.
+>
+> The approved request *is* the booking. There is no second copy to fall out of step with the board.
+>
+> The board additionally shows each squad’s unit and radio channel and the shared nets, which a sheet has nowhere to put.
+
+See also: [Run the operation on a Google Sheet](#run-the-operation-on-a-google-sheet) · [Start an operation](#start-an-operation)
+
+#### Run the operation on a Google Sheet
+
+**Who:** Admin · **Where:** Discord — `/setup-slots sheet_url:<link>`
+
+Use an ORBAT-style spreadsheet as the roster, the way it worked before ORBATs existed.
+
+1. Share the spreadsheet with the service account in `GOOGLE_CREDENTIALS` as an **Editor**.
+2. Lay the first tab out ORBAT-style: a squad name, then slot cells starting `1.` or `1-`, each with `[] <Insert Name>` beside it.
+3. Run `/setup-slots sheet_url:<link>`.
+4. Approving writes the member’s name and unit tag into the cell; clearing restores `[] <Insert Name>`.
+
+> Only the **first tab** is read, and the operation is named after the spreadsheet unless you pass `name:`.
+>
+> A sheet with no `<Insert Name>` markers has no free slots as far as the bot is concerned, whatever its columns are called.
+>
+> Inserting a row moves every cell below it. Run `/sync` afterwards to repair pending requests that now point at the wrong row.
+>
+> If the sheet write fails on approval the request is rolled back, so the sheet and the board never disagree.
+
+See also: [Run the operation on an ORBAT](#run-the-operation-on-an-orbat) · [Export an ORBAT to a Google Sheet](#export-an-orbat-to-a-google-sheet)
+
+### Events
+
+_Standalone sign-ups: trainings, movie nights, campaign sessions._
+
+#### Create an event
+
+**Who:** Unit Leader or Admin · **Where:** Discord — `/event-create`, or the **📅 Events** tab
+
+Post a training, a movie night or anything else with its own sign-up buttons and attendee list.
+
+1. In Discord: `/event-create title:<name> start_time:25/06/2025 19:00`.
+2. Add what you need: `description`, `duration`, `location`, `channel`, `mention`, `reminder`, `image_url`.
+3. In the browser: **📅 Events → New event**, which is the same fields as a form.
+4. The message goes up with the sign-up buttons on it and a live attendee list.
+
+> A start time in the past is refused.
+>
+> `duration` is what lets the event close itself out afterwards — without it the message keeps its buttons indefinitely.
+>
+> Events are entirely separate from operations and ORBAT slots. Nothing here touches a roster.
+
+See also: [Sign up for an event](#sign-up-for-an-event) · [Repeat an event](#repeat-an-event) · [Custom sign-up options](#custom-sign-up-options)
+
+#### Sign up for an event
+
+**Who:** Everyone · **Where:** Discord — the event message, or the **📅 Events** tab
+
+Answer on the buttons; the attendee list updates for everyone immediately.
+
+1. Press **✅ Accepted**, **❓ Tentative** or **❌ Declined** on the event message — or whatever options that event defines.
+2. Changing your mind: press a different button.
+3. Press the button you already chose to **withdraw** entirely.
+4. `/event-list` shows what is coming up with counts and jump links.
+
+> Withdrawing is not the same as declining. Declining says you are not coming; withdrawing takes you off the list altogether.
+>
+> Start times render as Discord timestamps, so you see them in your own local time.
+
+#### Repeat an event
+
+**Who:** Unit Leader or Admin · **Where:** Discord — `repeat:` on `/event-create` or `/event-edit`
+
+Make it a series: the next occurrence posts itself when this one finishes.
+
+1. Pass `repeat:` when creating, or add it later with `/event-edit event:<name> repeat:weekly`.
+2. Pick a pattern: daily, weekly, every 2 weeks, monthly by date, monthly by weekday (*last Saturday* or *2nd Saturday*), or weekly except the last of the month.
+3. Bound it with `repeat_until:` if the series should stop on a date.
+4. Use `repeat_delay:` to hold the next post back a number of hours after this one ends, instead of posting it the moment it closes.
+5. Stop a series with `/event-edit event:<name> repeat:none`.
+
+> The weekday patterns take both the weekday and the position from the **first** occurrence. A series created on Saturday the 13th means *2nd Saturday* under *monthly by weekday*.
+>
+> Only one occurrence is live at a time — there is no pre-generated calendar, and sign-ups deliberately do not carry over.
+>
+> Dates are measured from the first occurrence, so a series on the 31st gives 28 Feb → 31 Mar rather than drifting to the 28th for good.
+>
+> A bot that was offline for ten weeks posts **one** occurrence in the future, not one per missed week.
+
+See also: [Edit, cancel or delete an event](#edit-cancel-or-delete-an-event)
+
+#### Custom sign-up options
+
+**Who:** Unit Leader or Admin · **Where:** Discord — `responses:` on `/event-create` or `/event-edit`
+
+Replace Accepted / Tentative / Declined with your own buttons.
+
+1. Pass `responses:` with the options separated by `|`, for example `🚁 Pilot | 🔫 Infantry | -❌ Can’t`.
+2. A leading `-` marks an option as *not coming*: those people are left out of reminders and cancellation DMs.
+3. A leading emoji is put on the button.
+
+> Between 2 and 10 options, labels under 40 characters, and at least one that is not a decline.
+>
+> Changing the options on a live event drops the sign-ups whose answer no longer exists, and tells you how many. Everyone else keeps theirs.
+>
+> A repeating event copies its options to each new occurrence.
+
+#### Ping roles on an event
+
+**Who:** Unit Leader or Admin · **Where:** Discord — `mention:` on `/event-create` or `/event-edit`
+
+Notify one or more roles when the event goes up and again on the reminder.
+
+1. Pass `mention:@Infantry @Armour` — type the `@` and let Discord turn it into a role token.
+2. Role names in a comma-separated list work too, if the tokens are awkward to type.
+3. On the web, the roles are checkboxes on the event form.
+4. Clear them again with `/event-edit event:<name> mention:none`.
+
+> Up to ten roles. Anything that cannot be resolved is reported rather than dropped quietly.
+>
+> A role that is not **mentionable** needs the bot to have *Mention All Roles*, or the ping notifies nobody. You are warned when that is the case.
+
+#### Edit, cancel or delete an event
+
+**Who:** Organiser or Admin · **Where:** Discord — `/event-edit`, `/event-cancel`, `/event-delete`
+
+Change the details, call it off while keeping the record, or remove it for good.
+
+1. **Edit**: `/event-edit event:<name>` and pass only the fields that change. The rest keep their values.
+2. **Cancel**: `/event-cancel event:<name> reason:<why>`. The message turns red and loses its buttons, and everyone attending is DMed.
+3. **Delete**: `/event-delete event:<name>`, then confirm. The event and its message are gone.
+4. All three are on the event’s page in the browser as well.
+
+> Moving the start time re-arms the reminder, so it fires again for the new time.
+>
+> Cancel tells people; delete does not. If anybody has signed up, cancel is almost always what you want — the confirmation page says so.
+>
+> On a repeating event, cancelling one occurrence still posts the next one. `stop_series:True` ends the series instead.
+>
+> Moving an event to a different channel is not possible — the sign-up history belongs to the message. Cancel and recreate.
+
+### Game roles
+
+_Tag roles members give themselves, so you can ping everyone who plays a game._
+
+#### Pick your game roles
+
+**Who:** Everyone · **Where:** Discord — the panel button or `/game-roles`, or the **🎮 Game roles** tab
+
+Give yourself the tag for the games you play, so people can ping everyone who plays them.
+
+1. Press **🎮 Choose your game roles** on the panel, or run `/game-roles`.
+2. The roles you already have are ticked. Tick what you want, untick what you don’t, and submit.
+3. Or press **➖ Remove a role** for a list of only the ones you currently hold.
+4. In the browser it is the **🎮 Game roles** tab — same list, same result.
+
+> These roles grant no permissions at all. They exist to be mentioned.
+>
+> `/game-role-list` shows every game role on the server without changing yours.
+>
+> Unticking everything is a valid answer and removes all of them.
+
+#### Add and remove game roles
+
+**Who:** Admin · **Where:** Discord — `/game-role-add`, `/game-role-remove`, `/game-role-panel`
+
+Decide which games are on the list, and put the self-assign panel in a channel.
+
+1. `/game-role-add name:Minecraft emoji:⛏️ description:Survival server` creates a permission-free role and lists it.
+2. A Discord role with that **exact name** already exists? It is reused, not duplicated — running the command again just updates the emoji and description.
+3. `/game-role-remove role:<role>` takes it off the list. Add `delete_role:True` to delete the Discord role as well.
+4. `/game-role-panel channel:#roles` posts the panel with the self-assign button.
+5. The same three live on the **🎮 Game roles** tab for admins.
+
+> Up to 25 roles — as many as a Discord menu can show.
+>
+> A pre-existing role is refused if it grants **any** permission, is `@everyone`, is managed by an integration, or sits above the bot in the role list.
+>
+> Unit roles and `Unit Leader` can never be made self-assignable, so nobody can tick their way into approval rights.
+>
+> There is one panel per server and it updates itself whenever the list changes.
+
+### Tactical maps
+
+_Drawing the plan on the terrain, sharing it, and getting it into the mission._
+
+#### Draw the plan
+
+**Who:** Unit Leader or Admin · **Where:** Web — **🎖️ Operations → Maps**
+
+Put unit symbols, movement lines and objectives on the terrain.
+
+1. Go to **Maps**, name the new map, and press **Create**.
+2. Pick a symbol from the palette and click the sheet to place it.
+3. Select a symbol to open the inspector: side, what it is, size, mobility, parent unit, whether it is only planned, and its label.
+4. **Drag** with the Line or Area tool to draw — or hold **Ctrl** and drag from any tool, which is the gesture Arma’s own map uses.
+5. Press **Save**. Everyone looking at the map sees the saved version.
+
+> The frame says whose it is: rectangle friendly, diamond hostile, square neutral, quatrefoil unknown. Open at the bottom means it is in the air; **dashed** means it is planned rather than there.
+>
+> Lines get an arrow head only when you ask for one — most lines on a plan are boundaries and phase lines, which point nowhere.
+>
+> Lines and areas take a colour of their own; symbols do not, because their colour is what says which side they are.
+>
+> Two people drawing at once will overwrite each other’s save. Agree who has the pen.
+
+See also: [Use layers](#use-layers) · [Put a real terrain behind the plan](#put-a-real-terrain-behind-the-plan) · [Share, copy or post a map](#share-copy-or-post-a-map)
+
+#### Use layers
+
+**Who:** Unit Leader or Admin · **Where:** Web — the layer panel on a map
+
+Keep phase 1, phase 2 and the enemy picture apart, and show them one at a time.
+
+1. Add a layer in the layer panel and name it.
+2. Whatever you place next lands on the layer that is selected.
+3. Use each layer’s switch to show and hide it while briefing.
+
+> Hiding a layer is not deleting it. The items stay in the document and in every save.
+>
+> The switches work for whoever is looking, including somebody who only has a share link — toggling changes their view and nothing else.
+>
+> Deleting a layer moves its items to the first layer rather than taking them with it.
+>
+> A hidden layer is left out of the Arma export: markers you have switched off are not part of the plan being handed over.
+
+#### Put a real terrain behind the plan
+
+**Who:** Admin · **Where:** Web — **Terrains**, or the map editor’s background panels
+
+Draw on the actual terrain instead of a blank sheet.
+
+1. **Best: upload it.** Go to **Terrains** (linked from the Maps page) and upload the same tile archive you prepare for OCAP — a zip or 7z with the numbered folders `0/ 1/ 2/ …` in it.
+2. Then open a map and use **🗻 Put it on a terrain** to pick it.
+3. **Or point at a running OCAP server**: in the editor, press **List the terrains**, pick one, and import it.
+4. Either way the terrain’s Arma coordinates come along, which is what makes the export land in the right place.
+
+> Prefer the upload for anything shared outside the unit. A share link is for people who do not sign in here, and expecting them to reach your OCAP instance as well is how a link ends up showing an empty sheet.
+>
+> If the archive has no `map.json`, you are asked for the world size in metres. Without it the tiles would draw but the Arma export would be nonsense.
+>
+> Levels deeper than a planning sheet needs are dropped, and the reply says how many — the terrain is meant to be smaller than the file.
+>
+> A terrain cannot be deleted while a map is drawn on it, and the refusal names the maps.
+
+See also: [Draw the plan](#draw-the-plan)
+
+#### Share, copy or post a map
+
+**Who:** Unit Leader or Admin · **Where:** Web — the map’s **Share** and **Post** panels
+
+Give people a link that needs no login, copy a plan to start the next one, or announce it in a channel.
+
+1. **Share**: open the **Share** panel and pick **view** or **edit**. You get a `/m/…` link that works without signing in.
+2. **Post**: pick a channel and press **Post**. The bot sends an embed with the link and the counts.
+3. **Duplicate**: press **Duplicate** for a copy of the plan — the share link deliberately does not come with it.
+4. **Rename**: the **Name and description** form on the map page.
+5. Turn sharing off again by setting it to **off**, or press **New link** to replace the token.
+
+> The link *is* the credential. Anybody who has it can open the map, and with **edit** can draw on it. **New link** is the only way to un-share a map that has travelled further than intended.
+>
+> Changing view↔edit keeps the same token, so tightening the rights does not break every copy of the link already out there.
+>
+> A map posted in Discord keeps the link it was posted with. Post it again if the site’s address changes.
+>
+> It posts a link rather than a picture, which is what keeps it current while the plan is still being drawn.
+
+#### Get the plan into Arma 3
+
+**Who:** Unit Leader or Admin · **Where:** Web — the map’s **Arma** panel
+
+Paste the plan into a running mission as markers, with no mod on either side.
+
+1. Make sure the map sits on a terrain, or that its Arma corners are filled in — the export needs to know where the sheet is in the world.
+2. Open the **Arma** panel and copy one of the two scripts.
+3. In the mission, open the **debug console** as a logged-in admin and paste it.
+4. Press **LOCAL EXEC**. `createMarker` is global, so one machine running it draws the plan for everybody.
+
+> Two scripts, side by side. The first draws markers that stay put. The second draws markers players can drag and delete in game — handy, and the same click that fixes a misplaced objective also deletes it, with nothing asking first.
+>
+> Both are **LOCAL EXEC**. GLOBAL EXEC is wasted on the first and actively wrong on the second, where the marker names carry the client that made them.
+>
+> Running it again **replaces** the markers from the last run rather than laying a second set over them. Two maps can never delete each other’s.
+>
+> Symbol sizes and mobility have no counterpart in Arma, so they are written into the marker text: `1-1 Alpha / A Coy (planned Plt twd)`.
+>
+> Dashed is lost — Arma has no dashed marker. The debug console has to be enabled in the mission’s `description.ext`.
+
+### Reddit announcements
+
+_Watching a user or a subreddit and announcing new posts._
+
+#### Watch a Reddit user or subreddit
+
+**Who:** Admin · **Where:** Web — **📣 Reddit**
+
+Announce every new post in a channel, in your own words.
+
+1. Go to **📣 Reddit → Add a watch**.
+2. Pick **user** or **subreddit** and type the name without the `u/` or `r/`.
+3. Choose the channel, write the announcement text, and tick the roles and list the people to ping.
+4. Press **Preview** to see the newest post rendered with your text — it posts nothing.
+5. Save. The first check notes what is already on the feed and announces none of it.
+
+> `{title}`, `{url}`, `{author}` and `{subreddit}` are filled in. Everything else is literal.
+>
+> Checked every five minutes. **Check now** runs that check early and does announce.
+>
+> No Reddit account, API registration or secret is needed — it reads the public feed.
+>
+> The bot will not ask anybody to upvote anything, and there is no wording for it. Organised voting is what gets accounts banned, and the post score is deliberately never read or shown.
+>
+> Pointing a watch at a different source resets what it has seen, so the new feed is seeded rather than announced from scratch.
+
+See also: [Catch a post up, or skip a backlog](#catch-a-post-up-or-skip-a-backlog)
+
+#### Catch a post up, or skip a backlog
+
+**Who:** Admin · **Where:** Web — **📣 Reddit → the watch → Recent posts**
+
+Post something the watch missed, or clear a queue you do not want announced.
+
+1. Open the watch and go to **Recent posts**. It reads the feed and says which posts have already been announced.
+2. Press **Announce** on one to post it by hand.
+3. To skip instead: tick the posts you do not want and press **Mark ticked as announced**, or **Mark all** for the whole list.
+
+> Marking posts nothing. It just takes them out of the queue so the next check does not work through them three at a time.
+>
+> This is the way past a flood — an account that un-hid its posts, or a subreddit that suddenly woke up.
+>
+> Marking needs no working connection to Reddit, which matters: a backlog most needs clearing exactly when Reddit is refusing us.
+
+#### Follow someone whose profile hides their posts
+
+**Who:** Admin · **Where:** Web — **Only these authors** on a subreddit watch
+
+Watch the subreddit instead, and keep only what that account wrote.
+
+1. Reddit lets an account hide its posts from its own profile, which is what a **user** watch reads. If a user watch stays empty, that is usually why.
+2. Make a **subreddit** watch on the subreddit they post in.
+3. Put their account name in **Only these authors** — several, comma-separated, if you like.
+
+> The filter is applied before anything else looks at the posts, so the other authors’ posts never take up the watch’s memory.
+>
+> A very busy subreddit can push a post out of its own feed between two checks. Nothing can be done about that from here.
+>
+> Widening the filter later makes old posts look new. Use **Recent posts → Mark all** afterwards.
+
+### Server and members
+
+_The log, the welcome, voice time, embeds and the housekeeping._
+
+#### Log joins, leaves, kicks and bans
+
+**Who:** Admin · **Where:** Web — **📋 Member log**
+
+Announce who came and went in a channel your staff watches.
+
+1. Go to **📋 Member log**, pick the channel, tick the events you want, and save.
+2. Joins show the account’s age, the member count and which invite link was used.
+3. Leaves show how long they were around and which roles they had.
+4. Kicks are told apart from voluntary leaves, and name the moderator and reason. Bans and unbans do the same.
+
+> Joins and leaves need Discord’s privileged **Server Members Intent**. Tick it in the Developer Portal **first**, then set `MEMBER_EVENTS=1` and redeploy — asking for the intent before it is granted stops the bot from starting at all.
+>
+> Bans and unbans need no intent and work without that.
+>
+> Without **View Audit Log** every kick reads as a plain leave and bans have no moderator. Without **Manage Server** the invite list cannot be read. The page tells you which are missing.
+
+See also: [Welcome new members](#welcome-new-members) · [Label your invite links](#label-your-invite-links)
+
+#### Welcome new members
+
+**Who:** Admin · **Where:** Web — **📋 Member log → Welcome message**
+
+Greet somebody who joins, in a public channel, by DM, or both.
+
+1. Go to **📋 Member log** and scroll to **Welcome message**.
+2. Pick the channel the greeting is posted in — or leave it on *Nowhere* if you only want the DM.
+3. Tick **Also send it as a DM** to send the same text to the member directly.
+4. Write the text. Leave it empty to use the default.
+5. Save. The next person through the door gets it.
+
+> Four placeholders: `{member}` pings them, `{name}` is their name as plain text, `{server}` is the server name and `{member_count}` is how many members there now are. Anything else is literal, so a stray `{` is harmless.
+>
+> This is **separate from the join log**. It has its own channel, it does not need the log to be switched on, and it does not care about the *Announce joins* tick — the log is written for staff, the welcome for the member.
+>
+> It does use the same join event, so it needs the same **Server Members Intent** as the join log.
+>
+> A member with DMs closed simply does not get the DM. Nothing fails, and the channel message still goes out.
+
+See also: [Log joins, leaves, kicks and bans](#log-joins-leaves-kicks-and-bans)
+
+#### Label your invite links
+
+**Who:** Admin · **Where:** Web — **📋 Member log → Invite links**
+
+Say where each link was published, so a join names the source instead of a code.
+
+1. Go to **📋 Member log** and find the invite list at the bottom, with each link’s use count.
+2. Type what that link is for next to it — *Steam*, *Website*, *Reddit*.
+3. Save. Joins then read `rnPAfscGbE · Steam` rather than the code alone.
+
+> Needs **Manage Server**, or the invite list cannot be read at all.
+>
+> Labels for links that have since expired are kept and stay editable, because old join messages still refer to them.
+>
+> A join through a single-use link can still be attributed: Discord deletes the link immediately, and the bot works out which one went missing.
+>
+> Two people joining in the same second cannot be told apart, and a member added by another bot has no invite at all. Those say so rather than guessing.
+
+See also: [Log joins, leaves, kicks and bans](#log-joins-leaves-kicks-and-bans)
+
+#### Track time in voice
+
+**Who:** Admin · **Where:** Web — **🔊 Voice time**
+
+Record how long members spend in voice, and show a leaderboard.
+
+1. Go to **🔊 Voice time**. It is **off** until an admin switches it on, and nothing is recorded before that.
+2. Tick **Enabled** and save. Everybody can then see the leaderboard for 24 hours, 7, 30 or 90 days, or all time.
+3. Optionally pick a channel to announce finished visits in, with a minimum length so quick drop-ins do not fill it.
+4. For a self-updating board, tick **Keep a daily top-10 message up to date**, pick a channel, a period and an hour.
+5. **Post the top 10 once** sends a one-off message instead.
+
+> By default time only counts while **at least two people** share a channel, and the AFK channel is skipped — so what you measure is time spent together, not time connected. Both rules can be switched off, and channels can be excluded.
+>
+> The daily board **edits the same message** once a day, so you can pin it. It never posts twice in a day, and catches up if the bot was down at the chosen hour.
+>
+> Members are named, not mentioned. A leaderboard that pings ten people every day would be worse than useless.
+>
+> A normal restart loses nothing; a hard crash costs at most five minutes, and time is never rounded up.
+>
+> No privileged intent and no extra permission — it works the moment you switch it on.
+
+#### Build a rich message
+
+**Who:** Admin · **Where:** Web — **📝 Embeds**
+
+Compose the server-info and rules posts you would otherwise write by hand, and edit them in place afterwards.
+
+1. Go to **📝 Embeds → New embed** and give it a name, which is only used to find it again.
+2. Fill in title, description, colour, up to ten fields, author line, thumbnail, image, footer — and the plain text above the embed, which is the only part where a mention pings.
+3. Save it as a draft and check the preview.
+4. Press **Send** and pick a channel.
+5. To change it later: edit and save. The **posted message is updated in place**, so a pinned post stays pinned.
+
+> Discord’s limits are checked when you **save**, not when you send — an over-long title is refused on the form rather than becoming an embed that can never be posted.
+>
+> Sending again posts a **new** message and stops tracking the old one. That is how you move an embed to another channel.
+>
+> If the message was deleted in Discord, the embed quietly becomes a draft again rather than failing forever.
+>
+> Image and icon fields must be full `https://` URLs.
+
+#### Delete messages in bulk
+
+**Who:** Manage Messages · **Where:** Discord — `/purge`
+
+Clear the last *N* messages in a channel, everything since a point in time, or both.
+
+1. `/purge amount:50` — the newest 50 messages.
+2. `/purge since:2h` — everything from the last two hours. `30m`, `7d` and `1w` work too, as does a date like `25/06/2025`.
+3. `/purge amount:100 since:7d` — at most 100, and nothing older than a week.
+4. A preview says what would go. Confirm to delete.
+
+> It deletes in the channel you run it in, and only for people with **Manage Messages** there.
+>
+> The confirmation holds the exact messages it counted, so anything posted while you read it is left alone.
+>
+> Discord will not bulk-delete anything older than 14 days. Those go one at a time, roughly one a second, capped at 200 per run — the reply says how many were left, and running it again continues where it stopped.
+>
+> Pinned messages are deleted like any other, but the confirmation says how many are in the set.
+
+#### Choose the channels and the timezone
+
+**Who:** Admin · **Where:** Web — **🎖️ Operations → Settings**, or `/set-timezone`
+
+Point the bot at the channels you actually use, and tell it what time you mean.
+
+1. Go to **🎖️ Operations → Settings**.
+2. Pick the channel for the **board**, the **approval queue** and the **archive**. *Default* means the bot uses `#orbat`, `#slot-approvals` and `#approval-archive`, creating them if they are missing.
+3. Set the **timezone** to an IANA name like `Europe/Berlin`, or run `/set-timezone`.
+
+> The timezone is how every time you *type* is read — operations, events and `/purge` alike. Times the bot *shows* are Discord timestamps and localise themselves per viewer.
+>
+> The empty option is called *Default* rather than left blank on purpose: nothing chosen and "chosen, and it happens to be #orbat" behave differently the day somebody renames a channel.
+>
+> A chosen channel that has since been deleted is called out rather than quietly falling back.
+
+#### Sync, restart and the one-time migration
+
+**Who:** Admin · **Where:** Discord — `/sync`, `/restart`, `/archive-old-approvals`
+
+The three commands that are about the bot rather than about an operation.
+
+1. `/sync` re-registers the slash commands with Discord and refreshes the board. Use it when a command looks missing.
+2. `/restart` restarts the bot. Nothing is lost — everything lives in the database and every button is re-registered on start.
+3. `/archive-old-approvals` is a **one-time** migration that moves approval messages decided before the archive existed into `#approval-archive`.
+
+> Commands sync automatically on start and when the bot joins a server, so `/sync` is for when something looks wrong rather than routine.
+>
+> On a sheet-backed operation `/sync` also repairs pending requests whose rows moved because somebody inserted a row. On an ORBAT there is nothing to repair.
+>
+> `/archive-old-approvals` scans up to 500 messages and is not meant to be run twice.
+
+<!-- help:end -->
 
 ---
 
@@ -977,6 +1781,8 @@ The link looks like `https://your-domain/m/xxxxxxxx`, works without a Discord lo
 
 If the site answers on more than one name, the link always carries the **first** one in `WEB_BASE_URL` — even if you made it while browsing the other. That is deliberate: a share link is copied to somebody who was never on the site, so it has to be the name you want people to see. The same goes for the link the bot posts into a channel. A map **already announced** in Discord keeps the link its message was posted with; post it again to refresh that.
 
+**Copying a plan.** **Duplicate** gives you the whole plan again under a new name — every symbol, line and layer, on the same terrain. The share link deliberately does *not* come with it, so a copy made to try something out is not reachable by everyone who already has the original's link. **Rename** is the **Name and description** form on the same page.
+
 ### Posting it in a channel
 
 **Post in a channel** sends an embed with the map's name, what is on it and a link. It posts a link rather than a picture on purpose: the plan usually keeps changing after the briefing is announced, and a link is always current where an image is not. If the map has a share link, that is what gets posted; otherwise the link only opens for people who can sign in here.
@@ -1031,6 +1837,7 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | Page | What you get |
 |---|---|
 | Sign-in | **Continue with Discord** — OAuth2, `identify` scope only |
+| Help | Every how-to, searchable — reachable signed out, at `/help` |
 | Server picker | Every server you and the bot are both in (skipped when there is only one) |
 | Events | Upcoming events with live sign-up counts, plus recently finished and cancelled ones |
 | Event | Full details, the attendee list per response, and RSVP buttons for yourself |
@@ -1042,11 +1849,11 @@ It is **off until you configure it**. With `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_
 | · Slot Approvals | Approve, deny or withdraw the pending requests, release a booked slot, or put somebody on one outright |
 | · ORBATs | Build and edit the slot roster |
 | · Maps | Draw the tactical plan, share it with a link, post it in a channel |
-| · Terrains | Upload the tile archives the maps are drawn on, and see what each one costs |
+| · Terrains | Upload the tile archives the maps are drawn on, and see what each one costs (linked from Maps) |
 | · Settings | Which channels the bot posts into, and the server timezone |
 | Game roles | Tick the games you play; admins add and remove roles and post the self-assign panel |
 | Embeds | Build rich messages, post them, and edit the posted message in place |
-| Member log | Announce joins, leaves, kicks, bans and unbans in a channel |
+| Member log | Announce joins, leaves, kicks, bans and unbans in a channel, and welcome new members in a channel or by DM |
 | Reddit | Watch a Reddit user or subreddit and announce new posts, with your own text and pings |
 | Voice time | Leaderboard of time spent in voice channels; admins configure what counts |
 
@@ -1100,6 +1907,17 @@ The site is called **TFP BOT**. Set `WEB_BRAND` to rename it — that string is 
 
 For the logo, commit an image to **`web/static/logo.png`** (`.webp`, `.svg`, `.jpg` also work). It is picked up on the next start and appears next to the name in the header, large on the sign-in page, as the browser-tab icon, and — when `WEB_BASE_URL` is set — as the preview image when the site's link is pasted into Discord or Slack. Square images look best; anything else is fitted rather than squashed. With no such file, the name shows on its own and the tab falls back to a 🛡️ emoji — nothing breaks.
 
+### The help pages
+
+Every how-to in [How-tos](#how-tos) is also a page on the site, at **`/help`**. There are two ways in:
+
+- the round **?** in the site header, which opens the index — searchable, and grouped the same way as this README;
+- a **?** at the end of the tab row on every page, which opens *that page's* how-to directly. On **📋 Member log** it lands on *Log joins, leaves, kicks and bans*, on **🔊 Voice time** on *Track time in voice*, and so on.
+
+Both work **signed out**, which is the point of putting them outside the server pages: somebody who cannot get past the sign-in screen is exactly the person who needs to read one.
+
+**There is only one copy of this text.** The topics live in `utils/help.py`, the site renders them, and `python scripts/gen_help.py` writes the same thing into this README between its `help:start` and `help:end` markers — so the two cannot drift apart. `tests/test_help.py` goes further and reads the command names straight out of `cogs/`: adding a slash command without writing a how-to for it makes the test suite fail. Run `python scripts/gen_help.py --check` to find out whether the README has fallen behind.
+
 ### How it is wired
 
 The site runs **inside the bot process**, on the same event loop. That is why a page can post a message, register a persistent button and read a member's roles directly — there is no second service, no polling and no queue table, and one Railway service still runs everything.
@@ -1137,6 +1955,18 @@ Three prerequisites, and the page tells you which are missing:
 **Label your invite links** at the bottom of the same page: the invite list is shown with its use counts, and next to each one a free-text field — *Steam*, *Website*, *Reddit*, whatever you use it for. A join through that link then reads `rnPAfscGbE · Steam` instead of just the code, so nobody has to look it up in a spreadsheet. Labels for links that have since expired are kept and stay editable, because old joins still refer to them.
 
 Invite attribution works by comparing each invite's use counter before and after a join. Two people joining in the same second can't be told apart that way, and a member added by another bot has no invite at all — those simply show no link.
+
+#### Welcome messages
+
+The same page also **greets the member**, which is a different job from the log above and is configured separately. The log is written for staff in whatever channel they watch; the welcome is written for the person who just arrived.
+
+- **Pick a channel** for the greeting — a public one, usually — or leave it on *Nowhere* if you only want the DM.
+- **Tick *Also send it as a DM*** to send the member the same text directly. Both, either or neither is fine.
+- **Write the text**, or leave it empty for the default.
+
+Four placeholders are filled in: `{member}` pings them, `{name}` is their name as plain text, `{server}` is the server name, and `{member_count}` is how many members there now are. Everything else is literal, so a stray `{` in your wording is harmless.
+
+Neither destination depends on the join log being switched on, or on *Announce joins* being ticked — but the welcome does use the same join event, so it needs the same **Server Members Intent** as the join log. A member with DMs closed simply doesn't get the DM; nothing fails, and the channel message still goes out.
 
 ### Voice time
 
@@ -1230,6 +2060,8 @@ An ORBAT is a **template**: the same one is meant to back as many operation nigh
 **Which ORBAT is live** is marked in the list with a red 🔴 chip naming the operation running on it — only one can carry it, because a server has one active operation at a time. Opening that ORBAT in the editor says the same thing at the top, since an edit there changes tonight's board, and the **Start an operation** dropdown on the Operation tab marks it too.
 
 **Deleting one is refused while an operation is running on it** — say so with `/setup-slots` for the next operation first. Once it is no longer the live one, deleting takes its squads and slots with it and everybody booked into it comes off the roster, the same as deleting their slot in the editor would.
+
+**Renaming and copying.** The **Name and description** form under the editor renames an ORBAT; the description is only ever shown in the list, to tell two similar rosters apart. **Duplicate** gives you a copy of the squads, slots and nets — and none of the bookings, which is the point: it is how you build next week's roster from this week's without touching the one tonight's operation is running on.
 
 You write the roster as indented text — squad at the left margin, its slots indented under it:
 

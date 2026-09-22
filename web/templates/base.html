@@ -29,6 +29,10 @@
       {% if logo_url %}<img class="brandlogo" src="{{ logo_url }}" alt="" width="32" height="32">{% endif %}
       <span>{{ brand }}</span>
     </a>
+    <div class="topbarend">
+      <a class="helpbtn" href="/help" title="Help — how do I…?">
+        ?<span class="visually-hidden"> Help</span>
+      </a>
     {% if session %}
       <div class="user">
         <img class="avatar" src="{{ avatar }}" alt="" width="28" height="28">
@@ -39,6 +43,7 @@
         </form>
       </div>
     {% endif %}
+    </div>
   </header>
 
   <main>

@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}{{ topic.title }} · Help · {{ brand }}{% endblock %}
+{% block ogtitle %}{{ topic.title }}{% endblock %}
+
+{% block content %}
+<nav class="crumbs">
+  <a href="/help">Help</a> ›
+  <a href="/help#{{ topic.group }}">{{ shelf.title if shelf else topic.group }}</a>
+</nav>
+
+<div class="pagehead">
+  <div>
+    <h1>{{ topic.title }}</h1>
+    <p class="muted">{{ topic.summary }}</p>
+  </div>
+</div>
+
+<p class="helpmeta">
+  <span class="chip">{{ topic.audience }}</span>
+  {% if topic.where %}<span class="muted">{{ topic.where | inline_md }}</span>{% endif %}
+</p>
+
+<div class="card helpsteps">
+  <div class="cardbody">
+    <h2>How to do it</h2>
+    <ol>
+      {% for step in topic.steps %}<li>{{ step | inline_md }}</li>{% endfor %}
+    </ol>
+  </div>
+</div>
+
+{% if topic.notes %}
+  <div class="card helpnotes">
+    <div class="cardbody">
+      <h2>Worth knowing</h2>
+      <ul>
+        {% for note in topic.notes %}<li>{{ note | inline_md }}</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+{% endif %}
+
+{% if related %}
+  <h2>See also</h2>
+  <div class="helpgrid">
+    {% for topic in related %}{% include '_help_card.html' %}{% endfor %}
+  </div>
+{% endif %}
+
+<p class="pad"><a class="linkish" href="/help">← All how-tos</a></p>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Help · {{ brand }}{% endblock %}
+{% block ogtitle %}{{ brand }} — Help{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>Help</h1>
+    <p class="muted">
+      Short how-tos for everything the bot does — one per thing you might want
+      to do. The same text is in the README.
+    </p>
+  </div>
+</div>
+
+<form class="helpsearch" method="get" action="/help">
+  <label class="visually-hidden" for="helpq">Search the how-tos</label>
+  <input id="helpq" type="search" name="q" value="{{ query or '' }}"
+         placeholder="Search — “welcome”, “share a map”, “/purge”…">
+  <button class="button" type="submit">Search</button>
+  {% if query %}<a class="linkish" href="/help">Clear</a>{% endif %}
+</form>
+
+{% if query %}
+  {% if results %}
+    <p class="muted">{{ results|length }} how-to{{ '' if results|length == 1 else 's' }}
+      matching <strong>{{ query }}</strong>.</p>
+    <div class="helpgrid">
+      {% for topic in results %}{% include '_help_card.html' %}{% endfor %}
+    </div>
+  {% else %}
+    <div class="empty">
+      Nothing matches <strong>{{ query }}</strong>.
+      <a href="/help">Back to all {{ total }} how-tos</a>.
+    </div>
+  {% endif %}
+{% else %}
+  {% for shelf in catalog %}
+    <section class="helpshelf" id="{{ shelf.group.key }}">
+      <h2>{{ shelf.group.title }}</h2>
+      <p class="muted">{{ shelf.group.blurb }}</p>
+      <div class="helpgrid">
+        {% for topic in shelf.topics %}{% include '_help_card.html' %}{% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+{% endif %}
+{% endblock %}
