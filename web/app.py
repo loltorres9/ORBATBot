@@ -13,6 +13,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from cogs.events import _RECURRENCE_LABELS, _recurrence_text
 from cogs.memberlog import DEFAULT_WELCOME_TEMPLATE, WELCOME_PLACEHOLDERS
@@ -20,6 +21,7 @@ from cogs.redditfeed import POLL_MINUTES
 from cogs.voicelog import refresh_leaderboard_board as refresh_board
 from utils import database
 from utils import embeds as embedlib
+from utils import help as help_lib
 from utils import reddit as reddit_lib
 from utils import tacmap as tacmap_lib
 from web import (
@@ -68,6 +70,12 @@ def _logo_url() -> str:
     return ''
 
 
+def _help_for(page: str) -> str:
+    """The how-to URL for one web page, or '' when there is none."""
+    topics = help_lib.for_page(page)
+    return f"/help/{topics[0].key}" if topics else ''
+
+
 def create_app(bot, config: WebConfig) -> FastAPI:
     app = FastAPI(title='ORBAT', docs_url=None, redoc_url=None, openapi_url=None)
     app.mount('/static', StaticFiles(directory=_HERE / 'static'), name='static')
@@ -88,7 +96,15 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         recurrence_labels=_RECURRENCE_LABELS,
         reminder_choices=service.REMINDER_CHOICES,
         repeat_choices=service.REPEAT_CHOICES,
+        # The `?` beside a page heading. A page names itself with the key
+        # `web/nav.py` gave it and gets the URL of its how-to, or '' when it
+        # has none — which `tests/test_help.py` is there to prevent.
+        help_for=_help_for,
     )
+    # The little Markdown the how-tos are written in. It escapes first, so the
+    # result is safe to mark safe — see `utils/help.inline_html`.
+    templates.env.filters['inline_md'] = lambda text: Markup(
+        help_lib.inline_html(text or ''))
 
     # -- request plumbing ---------------------------------------------------
 
@@ -1743,6 +1759,39 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         auth.check_csrf(session, (await request.form()).get('csrf'))
         forget_member(guild_id, session['id'])
         return redirect(request, f"/g/{guild_id}", 'ok', 'Permissions re-read from Discord.')
+
+    # -- help ---------------------------------------------------------------
+    #
+    # Deliberately outside the guild: the how-tos are the same on every server,
+    # they name tabs rather than linking at them, and somebody who cannot get
+    # past the sign-in page is exactly the person who needs to read one. There
+    # is no `web/help.py` to go with these two routes because there would be
+    # nothing in it — `utils/help.py` holds the content and there are no
+    # permissions to check and no form to translate.
+
+    @app.get('/help', response_class=HTMLResponse)
+    async def help_index(request: Request, q: str = ''):
+        query = (q or '').strip()[:100]
+        return render(request, 'help.html', {
+            'catalog': help_lib.catalog(),
+            'query': query,
+            'results': help_lib.search(query) if query else [],
+            'total': len(help_lib.TOPICS),
+        })
+
+    @app.get('/help/{key}', response_class=HTMLResponse)
+    async def help_topic(request: Request, key: str):
+        topic = help_lib.topic(key)
+        if topic is None:
+            return render(request, 'error.html', {
+                'title': 'No such how-to',
+                'message': "That help page doesn't exist. Try the index.",
+            }, status=404)
+        return render(request, 'help_topic.html', {
+            'topic': topic,
+            'shelf': help_lib.group(topic.group),
+            'related': help_lib.related(topic),
+        })
 
     @app.get('/healthz', response_class=PlainTextResponse)
     async def healthz():

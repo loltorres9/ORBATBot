@@ -47,6 +47,7 @@ utils/
   reddit.py             # One Reddit feed, read and rendered — no Discord, no database
   tacmap.py             # One tactical map: the symbols, the document, the SVG
   tiles.py              # A terrain's tile pyramid, read out of an uploaded archive
+  help.py               # Every feature as a how-to — the site's wiki and the README's
 web/                    # Optional browser UI — Discord OAuth2 login, events, roster, approvals, maps
   config.py             # Env-driven config; the feature is off until it is complete
   server.py             # uvicorn driven from inside the bot's event loop
@@ -63,12 +64,16 @@ web/                    # Optional browser UI — Discord OAuth2 login, events, 
   tacmap.py             # Tactical maps, share links and posting, on top of utils/tacmap.py
   terrain.py            # Uploaded terrains, on top of utils/tiles.py
   nav.py                # The two-level tab bar, built once rather than per template
+  # There is no web/help.py: utils/help.py holds the content, and the two
+  # routes have no permissions to check and no form to translate.
   voice.py              # Voice leaderboard shaping, the settings form and posting
   invites.py            # Invite labels — where each link was published
   helpers.py            # Guild-timezone formatting and datetime-local parsing
   templates/ static/    # Jinja2 templates, one stylesheet, one script (the map editor)
 lab/                    # Standalone ORBAT-editor playground — no Discord, no Postgres
-tests/                  # pytest — reddit, tacmap, tiles, web/config.py, check_feed()
+scripts/
+  gen_help.py           # utils/help.py → the README's help:start/help:end section
+tests/                  # pytest — reddit, tacmap, tiles, web/config.py, check_feed(), help
 requirements.txt
 Dockerfile
 docker-compose.yml      # Bot + PostgreSQL 16
@@ -81,7 +86,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(250 cases), and every one of them covers a module that imports nothing beyond
+(283 cases), and every one of them covers a module that imports nothing beyond
 the standard library — which is the rule that decides what is testable here at
 all:
 
@@ -93,6 +98,7 @@ all:
 | `tests/test_tacmap.py` | the document rules, the SVG and SQF escaping, every frame's geometry, and the tile layout |
 | `tests/test_tiles.py` | what an uploaded archive keeps and what it drops |
 | `tests/test_webconfig.py` | which origin a link gets — the page's own host, or the canonical one |
+| `tests/test_help.py` | that every slash command has a how-to — it reads the names out of `cogs/`, so forgetting to document a new command is a red test |
 
 The date logic in `cogs/events.py` (`_next_occurrence()`, `_weekday_day()`,
 `_add_months()`, `_nth_occurrence()`) is pure and Discord-free, so it is the
@@ -1224,6 +1230,7 @@ POST /g/{guild}/operation/slots         /debug-slots — rendered in place
 GET  /g/{guild}/orbats                  admin — ORBAT list, POST to create
 GET  /g/{guild}/orbats/{id}             the roster editor
 POST /g/{guild}/orbats/{id}             action=preview | save | confirm
+POST /g/{guild}/orbats/{id}/rename      name and description
 POST /g/{guild}/orbats/{id}/duplicate   copy the structure, not the bookings
 POST /g/{guild}/orbats/{id}/export      admin — write it into a new sheet tab
 POST /g/{guild}/orbats/{id}/delete      cascades to squads and slots
@@ -1265,6 +1272,8 @@ POST /g/{guild}/voice                   admin — save the voice settings
 POST /g/{guild}/voice/post              admin — post the top 10 into a channel
 POST /g/{guild}/logs/invites            admin — label the invite links
 POST /g/{guild}/refresh                 drop the cached member
+GET  /help                              every how-to, searchable — no sign-in
+GET  /help/{key}                        one how-to
 GET  /healthz                           'ok' once the bot is ready
 ```
 
@@ -1400,6 +1409,49 @@ Three things about it are deliberate:
 - **It is built in Python.** The shape of the bar — which groups exist, who sees
   what, where each lands — is precisely what goes wrong when it is spread across
   template conditionals in nine files.
+
+### The help pages (`utils/help.py`)
+
+Forty-one how-tos — one per thing somebody might want to do — served at `/help`
+and written into the README by `scripts/gen_help.py`. The module is data plus a
+renderer; there is no `web/help.py`, because the two routes have no permissions
+to check and no form to translate, which is all such a module has ever been for
+here.
+
+**One copy, two surfaces.** That is the same bargain `approve_slot_request()`
+makes behind a button and a web page, applied to the documentation: the README
+section between `<!-- help:start -->` and `<!-- help:end -->` is generated, and
+`python scripts/gen_help.py --check` fails when it has fallen behind. Editing
+that section by hand is the one thing not to do — the next run overwrites it.
+
+Four things about it are deliberate:
+
+- **`tests/test_help.py` reads `cogs/` with a regex.** Every slash command the
+  cogs register must be covered by a topic, and every command a topic claims
+  must exist. So a command added without a how-to is a failing test rather than
+  something noticed a year later, and a renamed one cannot leave the docs
+  telling people to run something that is gone. A companion test asserts the
+  regex matches more than twenty commands, because a coverage test that
+  silently matches nothing passes for the wrong reason.
+- **Every key in `web/nav.py` must have a topic too**, which is what makes the
+  `?` at the end of the tab row safe to render unconditionally. A page names
+  itself with the key the nav already gave it and gets its own how-to; it
+  cannot forget to, and it cannot point at a page that does not exist.
+- **The help is not permission-filtered.** Audience is a label on the topic
+  rather than a check, and the pages are reachable **signed out** — a wiki that
+  hides half of itself is how people conclude a feature does not exist, and
+  somebody stuck at the sign-in screen is exactly who needs to read one.
+- **`inline_html()` escapes first and marks up second.** The topics are written
+  in this file rather than typed by anybody, so it is not a sanitiser — but a
+  future how-to about `<Insert Name>` markers must render the `<` rather than
+  eat the rest of the sentence, and the result is marked safe on the way out.
+  `test_every_topic_renders_without_stray_markup` catches an unbalanced `**`
+  or backtick across all forty-one, which is the kind of thing nobody spots by
+  reading.
+
+`utils/help.py` imports nothing but the standard library, like `utils/orbat.py`,
+`utils/tacmap.py` and `utils/reddit.py`. Keep it that way — it is the only
+reason any of the above is testable.
 
 ### The Operation page (`web/operations.py`)
 

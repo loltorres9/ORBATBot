@@ -8,6 +8,12 @@
     <a class="tab {{ 'active' if group.key == group_key else '' }}"
        href="{{ group.href }}">{{ group.label }}</a>
   {% endfor %}
+  {# The contextual `?`. It lives here rather than in each page's own heading
+     because the nav is the one template that already knows which page this is,
+     so a new page gets its help link by naming itself — and cannot forget to. #}
+  {% set helphref = help_for(active) %}
+  <a class="tab helptab" href="{{ helphref or '/help' }}"
+     title="How do I use this page?">?<span class="visually-hidden"> Help</span></a>
 </nav>
 {% if siblings|length > 1 %}
   <nav class="subtabs">

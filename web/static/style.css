@@ -922,3 +922,100 @@ svg.tacmap.tm-drawing { cursor: crosshair; }
 /* A one-line form inside a panel — the channel picker beside its button. */
 .form.inline { display: flex; align-items: flex-end; gap: 10px; margin: 12px 0; }
 .form.inline .field { margin: 0; }
+
+/* --- Help ---------------------------------------------------------------
+   The how-tos, served from utils/help.py. Two entry points: the round `?` in
+   the header, which goes to the index, and the `?` at the end of the tab row,
+   which goes to the current page's own how-to. */
+
+.topbarend { display: flex; align-items: center; gap: 16px; }
+
+.helpbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-weight: 700;
+  text-decoration: none;
+  flex: none;
+}
+
+.helpbtn:hover { color: var(--text); border-color: var(--accent); }
+
+/* Pushed to the far end of the tab row, so it reads as "about this page"
+   rather than as one more tab. */
+.tab.helptab {
+  margin-left: auto;
+  font-weight: 700;
+  padding: 8px 12px;
+}
+
+.tab.helptab:hover { color: var(--text); }
+
+.helpsearch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 8px;
+  flex-wrap: wrap;
+}
+
+.helpsearch input {
+  flex: 1 1 260px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.helpshelf { margin-top: 30px; }
+.helpshelf h2 { margin-bottom: 4px; }
+.helpshelf .muted { margin-top: 0; }
+
+.helpgrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  margin-top: 14px;
+}
+
+.helpcard {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-decoration: none;
+}
+
+.helpcard:hover { border-color: var(--accent); }
+.helpcardtitle { font-weight: 600; }
+.helpcard .chip { justify-self: start; font-size: 12px; color: var(--muted); }
+.helpcardsummary { color: var(--muted); font-size: 14px; }
+
+.helpmeta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.helpsteps, .helpnotes { margin-top: 16px; }
+.helpsteps h2, .helpnotes h2 { margin: 0 0 10px; font-size: 17px; }
+.helpsteps ol, .helpnotes ul { margin: 0; padding-left: 22px; }
+.helpsteps li, .helpnotes li { margin-bottom: 8px; }
+.helpsteps li:last-child, .helpnotes li:last-child { margin-bottom: 0; }
+.helpnotes li { color: var(--muted); }
+
+.helpsteps code, .helpnotes code, .helpmeta code {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 0.92em;
+}
+
+.helpsteps .cardbody, .helpnotes .cardbody { padding: 16px; }
