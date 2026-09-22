@@ -694,11 +694,11 @@ A terrain arrives with roads and contours and no labels. This is how it learns w
 2. **On a terrain uploaded here:** the archive’s own `locations` files are read on upload, if it has them.
 3. Either way it is once per **terrain** — every map drawn on it gains the names.
 4. Too many? The editor’s background panel has a switch per group and a size slider.
-5. **If it finds nothing**, that terrain was built the older way and carries no location data anywhere. The same panel then has a script and a paste box: run it in a mission on that terrain, press LOCAL EXEC, paste the clipboard in. **Once for the terrain** — not once per map, not once per operation.
+5. **If it finds nothing**, it is that one terrain that carries no location data — other terrains on the same server can still import fine. The same panel then has a script and a paste box: run it in a mission on that terrain, press LOCAL EXEC, paste the clipboard in. **Once for the terrain** — not once per map, not once per operation.
 
 > The names are in the OCAP data, just not in `map.json`. OCAP builds a terrain from a **grad_meh** export, which writes them beside the tiles as `geojson/locations/<type>.geojson.gz` — one file per Arma location type, and the file name is the type.
 >
-> An OCAP built the **older** way — Arma’s map export through gdal2tiles — carries no vector data at all, so there is nothing to find on it however hard the import looks. A failure names **every address it tried**, so you can tell that apart from a broken feature.
+> Whether they are there is decided **per terrain**, not per server. A terrain built the older way — Arma’s map export through gdal2tiles — carries no vector data at all, so there is nothing to find for it however hard the import looks, while the terrain next to it on the same OCAP imports in one press. A failure names **every address it tried**, so you can tell that apart from a broken feature.
 >
 > The tiles genuinely have no labels in them: they come out of Arma’s own map export as pure topography, and the game draws the names over that from its config afterwards.
 >
@@ -1808,11 +1808,13 @@ from OCAP** → **Import place names**. It reads the server the map points at.
 **On a terrain uploaded here:** the archive's own `locations` files are read on
 upload if it has them.
 
-**An OCAP built the older way has nothing to find.** The `.emf` → gdal2tiles
-route in OCAP's own tile guide produces raster tiles and no vector data at all,
-so no amount of probing will turn up locations on it — that is a property of how
-the terrain was built, not of the import. A failure therefore names **every
-address it tried**, so you can tell that apart from a broken feature.
+**It is decided per terrain, not per server.** The `.emf` → gdal2tiles route in
+OCAP's own tile guide produces raster tiles and no vector data at all, so no
+amount of probing will turn up locations for a terrain built that way — while
+the terrain beside it on the same OCAP, imported from a grad_meh export, gives
+up its names in one press. That is a property of how each terrain was built, not
+of the server and not of the import. A failure therefore names the terrain and
+**every address it tried**, so you can tell it apart from a broken feature.
 
 **When there is nothing to import**, the same panel carries a script and a paste
 box. Run the script in a mission on that terrain — debug console, LOCAL EXEC —

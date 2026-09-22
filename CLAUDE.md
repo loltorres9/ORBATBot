@@ -1990,12 +1990,15 @@ Arma location type, `Point` geometry already in Arma's CRS, the name in
 `properties.name`. The file names are lowercase location types, exactly what
 `PLACE_KINDS` is keyed on, so **the file a place came from is its kind**.
 
-Both were too general. OCAP's **older** route — the one in its own tile guide,
-`.emf` out of Arma through gdal2tiles — produces raster tiles and no vector data
-whatever, and that is what a lot of deployed instances are serving. On such a
-server there is nothing to find however hard the import looks, which is why the
-refusal says so in those words rather than implying somebody misconfigured
-something.
+Both were too general, and in the same way: **the answer is per terrain, not per
+server.** OCAP's **older** route — the one in its own tile guide, `.emf` out of
+Arma through gdal2tiles — produces raster tiles and no vector data whatever, and
+one OCAP serves terrains imported both ways side by side. So a guild can have one
+map importing its names in a single press and another, on the same server, with
+nothing to find however hard the import looks. That is why `import_ocap_places()`
+names the **terrain** in its refusal and says the neighbours may still work:
+"no place names on that server" reads as a broken feature and sends somebody off
+to check a server that is behaving perfectly.
 
 **Three remote sources were tried and all three are closed**, which is worth
 recording so nobody spends another round on it. A unit's own OCAP on the older

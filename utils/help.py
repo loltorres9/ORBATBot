@@ -907,22 +907,25 @@ _MAPS: tuple[Topic, ...] = (
             'gains the names.',
             'Too many? The editor\u2019s background panel has a switch per '
             'group and a size slider.',
-            '**If it finds nothing**, that terrain was built the older way '
-            'and carries no location data anywhere. The same panel then has a '
-            'script and a paste box: run it in a mission on that terrain, '
-            'press LOCAL EXEC, paste the clipboard in. **Once for the '
-            'terrain** \u2014 not once per map, not once per operation.',
+            '**If it finds nothing**, it is that one terrain that carries no '
+            'location data \u2014 other terrains on the same server can still '
+            'import fine. The same panel then has a script and a paste box: '
+            'run it in a mission on that terrain, press LOCAL EXEC, paste the '
+            'clipboard in. **Once for the terrain** \u2014 not once per map, '
+            'not once per operation.',
         ),
         notes=(
             'The names are in the OCAP data, just not in `map.json`. OCAP '
             'builds a terrain from a **grad_meh** export, which writes them '
             'beside the tiles as `geojson/locations/<type>.geojson.gz` — one '
             'file per Arma location type, and the file name is the type.',
-            'An OCAP built the **older** way \u2014 Arma\u2019s map export '
-            'through gdal2tiles \u2014 carries no vector data at all, so there '
-            'is nothing to find on it however hard the import looks. A failure '
-            'names **every address it tried**, so you can tell that apart from '
-            'a broken feature.',
+            'Whether they are there is decided **per terrain**, not per '
+            'server. A terrain built the older way \u2014 Arma\u2019s map '
+            'export through gdal2tiles \u2014 carries no vector data at all, '
+            'so there is nothing to find for it however hard the import '
+            'looks, while the terrain next to it on the same OCAP imports in '
+            'one press. A failure names **every address it tried**, so you '
+            'can tell that apart from a broken feature.',
             'The tiles genuinely have no labels in them: they come out of '
             'Arma\u2019s own map export as pure topography, and the game draws '
             'the names over that from its config afterwards.',

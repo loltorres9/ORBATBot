@@ -220,9 +220,15 @@ async def import_ocap_places(guild_id, doc: dict, member_name: str = None) -> st
     What a given server serves is the one thing that cannot be known from here,
     so it **probes and says what it found**: the candidate folders in
     `tacmap.GEOJSON_DIRS`, each listed if the server lists directories and
-    otherwise asked for `PROBE_KINDS` by name. A server that carries none of it
+    otherwise asked for `PROBE_KINDS` by name. A terrain that carries none of it
     gets a message naming every address tried, which is the difference between
-    "this feature is broken" and "your OCAP does not publish that export".
+    "this feature is broken" and "this terrain was imported without locations".
+
+    **It is a per-terrain answer, not a per-server one**, and the refusal says
+    so. One OCAP happily serves a vanilla terrain's locations beside a mod
+    terrain that has none, because what decides it is how each was imported --
+    which is exactly what was got wrong here first, sending somebody off to
+    check their server over one terrain's missing data.
     """
     base = (doc.get('background') or {}).get('url', '').strip().rstrip('/')
     scope = tacmap.place_scope(doc)
@@ -280,13 +286,20 @@ async def import_ocap_places(guild_id, doc: dict, member_name: str = None) -> st
                 tried.append(f'{root}/ (listed, no usable locations)')
 
     if not groups:
+        # Terrain by terrain, not server by server. The same OCAP can serve
+        # one terrain imported from a grad_meh export, locations and all,
+        # beside a mod terrain whose tiles came out of Arma's own map
+        # export through gdal2tiles, which carries no location data whatever.
+        # Saying "this server has none" while the map next door has them reads
+        # as a bug here, and sends somebody looking in the wrong place.
         raise ValueError(
-            'No place names on that server. Tried: ' + '; '.join(tried) +
-            '. That terrain was built the older way — Arma\u2019s map export '
-            'through gdal2tiles — which carries no location data at all, so '
-            'there is nothing there to find. Use the script and the box just '
-            'below this button: once for this terrain, and every map on it has '
-            'them.'
+            f'No place names for {scope} on that OCAP. Tried: '
+            + '; '.join(tried)
+            + '. Other terrains on the same server can still have them \u2014 '
+            'OCAP only carries locations where the terrain was imported from a '
+            'grad_meh export that included them, and a mod terrain often was '
+            'not. Use the script and the box just below this button: once for '
+            'this terrain, and every map on it has them.'
         )
 
     places, capped = tacmap.merge_places(groups)
