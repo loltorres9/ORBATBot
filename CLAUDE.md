@@ -1265,6 +1265,7 @@ GET  /g/{guild}/maps/{id}/arma.sqf      the markers as a script for a live missi
 POST /g/{guild}/maps/{id}/ocap-list     read the OCAP directory, list its terrains
 POST /g/{guild}/maps/{id}/ocap          read an OCAP map folder: terrain + calibration
 POST /g/{guild}/maps/{id}/ocap-places  read the terrain's town names off OCAP
+POST /g/{guild}/maps/{id}/places       paste this terrain's town names in
 POST /g/{guild}/maps/{id}/terrain       put the map on one of this guild's terrains
 GET  /g/{guild}/terrains                the uploaded terrains, POST to upload one
 POST /g/{guild}/terrains/{id}/places    replace its town names, wholesale
@@ -1996,15 +1997,26 @@ server there is nothing to find however hard the import looks, which is why the
 refusal says so in those words rather than implying somebody misconfigured
 something.
 
-`maps.gruppe-adler.de` is the second source for exactly that case: it publishes
-a grad_meh export per world, and its `meta.json` carries the same `locations`
-list, which `parse_places()` already reads. It is tried **after** the unit's own
-OCAP, because that one is certainly about their terrain while a public dataset
-holds whichever worlds somebody bothered to export. Its entries carry no type,
-so they are filed as `GRAD_MEH_KIND`; the service documents them as settlements.
-The repository behind it was archived in 2023, so treat it as something that may
-stop answering — which, from here, is indistinguishable from "does not have that
-terrain", and both are reported as not there.
+**Three remote sources were tried and all three are closed**, which is worth
+recording so nobody spends another round on it. A unit's own OCAP on the older
+layout: 404, by construction. `maps.gruppe-adler.de`, added as a public
+grad_meh mirror: unreachable, its repository archived in 2023. OCAP's own
+`pmtiles.ocap2.com`, which its client falls back to: alive, but answers
+*Archive not found* for a mod terrain. The gruppe-adler probe was **removed
+again** rather than left in — a dead host costs a request on every failed
+import and puts a confusing line in the message somebody is reading to work out
+what went wrong. The PMTiles CDN was never added: its data is vector tiles,
+protobuf-encoded MVT with coordinates already converted to degrees, which is
+hundreds of lines to read and only pays off for a terrain that CDN carries.
+
+**So the fallback is the script, and the script needs somewhere to paste.**
+That was the real bug in all of this: the paste box hung off a `tac_terrains`
+row, and a map on an OCAP server has none — so the refusal pointed at the
+Terrains page, where there was no entry for that terrain to paste into. The one
+remaining path was unreachable for exactly the deployment that needed it.
+`web/tacmap.set_places()` takes the scope from the map instead, and the box and
+the script sit in the same panel as the import button, so the whole loop is on
+one screen.
 
 They hang off a **terrain**, not a map, because every plan drawn on Tanoa wants
 the same ones — and a terrain here is one of two things: a row we store (`/t/7`)
@@ -2027,12 +2039,13 @@ Four things are deliberate:
   gets a message **naming every address tried**. That is the difference between
   "this feature is broken" and "your OCAP only serves tiles", and it is the only
   honest thing to build when the answer depends on somebody else's deployment.
-- **`places_sqf()` is the last resort, not the front door.** It is the mirror of
-  `to_sqf()` and the same door — vanilla Arma cannot send anything out, so the
-  clipboard is how data leaves it — and it exists for a terrain whose export
-  never carried the locations. Leading with it was the mistake the first cut
-  made: asking somebody to start a mission per terrain is how a tool stops being
-  worth using.
+- **`places_sqf()` is the last resort, and for an older OCAP it is the only
+  resort.** It is the mirror of `to_sqf()` and the same door — vanilla Arma
+  cannot send anything out, so the clipboard is how data leaves it. Leading with
+  it was the first cut's mistake; treating it as avoidable for every deployment
+  was the second. It is once per terrain, and both the README and the panel say
+  so, because "once per terrain" was read as "every time" and that reading is
+  what made it sound unacceptable.
 - **SQF spells a literal quote `""` and has no backslash escape.** A `\"` in
   that script is a syntax error costing the whole thing, which is what
   `test_the_dump_script_uses_sqf_quote_escaping` pins. The script also strips

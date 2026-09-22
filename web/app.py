@@ -954,6 +954,7 @@ def create_app(bot, config: WebConfig) -> FastAPI:
             'catalog_json': _map_catalog,
             'svg': tacmap_lib.render(doc, places=places),
             'places_json': tacmap_lib.json_payload(places),
+            'places_sqf': tacmap_lib.places_sqf(),
             'summary': tacmap_lib.summarise(doc),
             'editable': context['may_draw'],
             'sqf': tacmap_lib.to_sqf(doc, prefix=tacmap_service.arma_prefix(record),
@@ -1157,6 +1158,30 @@ def create_app(bot, config: WebConfig) -> FastAPI:
         try:
             note = await tacmap_service.import_ocap_places(
                 context['guild'].id, doc, context['member'].display_name)
+        except ValueError as e:
+            return await map_editor(request, context, error=str(e), status=400,
+                                    panel='terrain')
+        return redirect(request, f"/g/{guild_id}/maps/{map_id}", 'ok', note)
+
+    @app.post('/g/{guild_id}/maps/{map_id}/places', response_class=HTMLResponse)
+    async def map_places(request: Request, guild_id: str, map_id: int):
+        """Paste in this terrain's place names.
+
+        On the map rather than only on the Terrains page, because a map backed
+        by an OCAP server has no terrain row there to paste into — which made
+        the one remaining path unreachable for exactly the deployments that
+        needed it.
+        """
+        context = await map_context(request, guild_id, map_id)
+        require_draw(context)
+        form = await request.form()
+        auth.check_csrf(context['session'], form.get('csrf'))
+
+        doc = tacmap_service.load(context['record'])
+        try:
+            note = await tacmap_service.set_places(
+                context['guild'].id, doc, form.get('places'),
+                context['member'].display_name)
         except ValueError as e:
             return await map_editor(request, context, error=str(e), status=400,
                                     panel='terrain')

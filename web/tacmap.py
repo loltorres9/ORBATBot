@@ -196,51 +196,6 @@ MAX_PLACES_BYTES = 4 * 1024 * 1024
 # button press into a hundred requests.
 MAX_PLACE_FILES = 30
 
-# The other place a terrain's locations already exist, extracted by somebody
-# else. Gruppe Adler publish a grad_meh export per world as a WMTS, and its
-# `meta.json` carries the same `locations` list — so a unit whose OCAP only
-# serves tiles (the older .emf → gdal2tiles layout, which carries no vector
-# data at all) can still get its names without starting the game.
-#
-# Two things to know before relying on it: the repository behind the service
-# was archived in 2023, so it may simply stop answering, and it covers the
-# terrains somebody bothered to export — not necessarily a mod terrain of
-# yours. Both failures look the same from here and are reported as "not
-# there", which is why this is a fallback rather than the first thing tried:
-# the unit's own OCAP is the source that is certainly about their terrain.
-GRAD_MEH_HOST = 'https://maps.gruppe-adler.de'
-
-# Its entries carry a name and a position and no type. The service documents
-# them as nameCityCapital, nameCity and nameVillage — settlements — so they are
-# filed as villages rather than under the catch-all, which would draw the whole
-# terrain one size too small.
-GRAD_MEH_KIND = 'namevillage'
-
-
-async def _grad_meh_places(session, world: str):
-    """That world's locations from the public grad_meh export, or None.
-
-    Returns `(places, note)` on a hit and `(None, why)` on a miss, because a
-    miss is something the person needs told: it is the difference between "your
-    terrain is not in that dataset" and "the feature is broken".
-    """
-    if not world or world.startswith('t:'):
-        return None, None
-    url = f'{GRAD_MEH_HOST}/{world}/meta.json'
-    status, body = await _get(session, url, MAX_PLACES_BYTES)
-    if status != 200 or not body:
-        return None, f'{url} ({status or "unreachable"})'
-
-    places, problems = tacmap.parse_places(body)
-    if not places:
-        return None, f'{url} (no usable locations{": " + problems[0] if problems else ""})'
-    # parse_places keeps a kind when the entry has one and otherwise defaults;
-    # this source has none, so the settlement kind is applied here.
-    for place in places:
-        if place['kind'] == tacmap.DEFAULT_PLACE_KIND:
-            place['kind'] = GRAD_MEH_KIND
-    return places, f'Read from {url}.'
-
 
 async def _get(session, url: str, limit: int):
     """One GET, as (status, body). A failure is a status of 0 and the reason."""
@@ -284,7 +239,6 @@ async def import_ocap_places(guild_id, doc: dict, member_name: str = None) -> st
     tried = []
     groups = []
     notes = []
-    source = 'ocap'
     timeout = aiohttp.ClientTimeout(total=OCAP_TIMEOUT * 3)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for folder in tacmap.GEOJSON_DIRS:
@@ -325,26 +279,14 @@ async def import_ocap_places(guild_id, doc: dict, member_name: str = None) -> st
             if listed:
                 tried.append(f'{root}/ (listed, no usable locations)')
 
-        # The unit's own OCAP is the source that is certainly about their
-        # terrain, so it is exhausted first. Only then is it worth asking
-        # somebody else's copy.
-        if not groups:
-            found, note = await _grad_meh_places(session, scope)
-            if found:
-                groups.append(found)
-                notes.insert(0, note)
-                source = 'gradmeh'
-            elif note:
-                tried.append(note)
-
     if not groups:
         raise ValueError(
-            'No place names for this terrain. Tried: ' + '; '.join(tried) +
-            '. Your OCAP serves tiles only — that is the older layout, built '
-            'from Arma\u2019s map export, which carries no location data at '
-            'all — and this terrain is not in the public grad_meh export '
-            'either. The Terrains page has a script that copies the names out '
-            'of a mission; it is once for this terrain, not once per map.'
+            'No place names on that server. Tried: ' + '; '.join(tried) +
+            '. That terrain was built the older way — Arma\u2019s map export '
+            'through gdal2tiles — which carries no location data at all, so '
+            'there is nothing there to find. Use the script and the box just '
+            'below this button: once for this terrain, and every map on it has '
+            'them.'
         )
 
     places, capped = tacmap.merge_places(groups)
@@ -352,13 +294,52 @@ async def import_ocap_places(guild_id, doc: dict, member_name: str = None) -> st
     await database.set_tac_places(
         str(guild_id), scope, json.dumps(places, separators=(',', ':')),
         label=(doc.get('arma') or {}).get('terrain') or scope,
-        source=source, updated_by_name=member_name,
+        source='ocap', updated_by_name=member_name,
     )
     summary = ', '.join(f'{counts[key]} {label.lower()}'
                         for key, label in tacmap.PLACE_GROUPS if counts.get(key))
     noun = 'place name' if len(places) == 1 else 'place names'
     return (f'{len(places)} {noun} imported — {summary}. '
             + ' '.join(notes[:3] + capped))
+
+
+async def set_places(guild_id, doc: dict, pasted: str,
+                     member_name: str = None) -> str:
+    """Store place names pasted in for whatever terrain this map is on.
+
+    This exists because the Terrains page could not serve the case it was being
+    pointed at. Its paste box hangs off an uploaded terrain row, and a map on an
+    OCAP server has none — so the one remaining way to get names onto such a
+    map, the debug-console script, had nowhere to be pasted. The refusal even
+    named that page. Here the box sits on the map, and the scope comes from the
+    map itself, so it works for both kinds.
+    """
+    scope = tacmap.place_scope(doc)
+    if not scope:
+        raise ValueError('Put this map on a terrain first.')
+
+    label = (doc.get('arma') or {}).get('terrain') or scope
+    if not (pasted or '').strip():
+        await database.set_tac_places(str(guild_id), scope, None)
+        return f'Cleared the place names for {label}.'
+
+    places, problems = tacmap.parse_places(pasted)
+    if not places:
+        raise ValueError(problems[0] if problems else 'No place names in that.')
+
+    await database.set_tac_places(
+        str(guild_id), scope, json.dumps(places, separators=(',', ':')),
+        label=label, source='paste', updated_by_name=member_name,
+    )
+    counts = tacmap.place_counts(places)
+    noun = 'place name' if len(places) == 1 else 'place names'
+    note = (f'{len(places)} {noun} stored for {label} — '
+            + ', '.join(f'{counts[key]} {name.lower()}'
+                        for key, name in tacmap.PLACE_GROUPS if counts.get(key))
+            + '. Every map on this terrain has them now.')
+    if problems:
+        note += ' ' + problems[0]
+    return note
 
 
 async def import_ocap(record, raw_url: str, member_name: str = None) -> str:

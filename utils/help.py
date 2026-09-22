@@ -900,17 +900,18 @@ _MAPS: tuple[Topic, ...] = (
         steps=(
             '**On an OCAP terrain:** open the map, go to *Terrain and '
             'background* \u2192 **Place names from OCAP**, and press **Import '
-            'place names**. It reads the server the map points at, then the '
-            'public grad_meh export as a fallback.',
+            'place names**. It reads the server the map points at.',
             '**On a terrain uploaded here:** the archive\u2019s own '
             '`locations` files are read on upload, if it has them.',
             'Either way it is once per **terrain** — every map drawn on it '
             'gains the names.',
             'Too many? The editor\u2019s background panel has a switch per '
             'group and a size slider.',
-            '**Only if neither has it:** the Terrains page has a script that '
-            'copies the names out of a running mission. That is **once for the '
-            'terrain**, not once per map and not once per operation.',
+            '**If it finds nothing**, that terrain was built the older way '
+            'and carries no location data anywhere. The same panel then has a '
+            'script and a paste box: run it in a mission on that terrain, '
+            'press LOCAL EXEC, paste the clipboard in. **Once for the '
+            'terrain** \u2014 not once per map, not once per operation.',
         ),
         notes=(
             'The names are in the OCAP data, just not in `map.json`. OCAP '
@@ -919,10 +920,9 @@ _MAPS: tuple[Topic, ...] = (
             'file per Arma location type, and the file name is the type.',
             'An OCAP built the **older** way \u2014 Arma\u2019s map export '
             'through gdal2tiles \u2014 carries no vector data at all, so there '
-            'is nothing to find on it however hard the import looks. That is '
-            'why it also tries `maps.gruppe-adler.de`, which publishes a '
-            'grad_meh export per world, and why a failure names **every '
-            'address it tried** rather than just saying no.',
+            'is nothing to find on it however hard the import looks. A failure '
+            'names **every address it tried**, so you can tell that apart from '
+            'a broken feature.',
             'The tiles genuinely have no labels in them: they come out of '
             'Arma\u2019s own map export as pure topography, and the game draws '
             'the names over that from its config afterwards.',
