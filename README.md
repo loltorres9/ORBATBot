@@ -690,15 +690,15 @@ See also: [Draw the plan](#draw-the-plan)
 
 A terrain arrives with roads and contours and no labels. This is how it learns what its towns are called.
 
-1. **On an OCAP terrain:** open the map, go to *Terrain and background* → **Place names from OCAP**, and press **Import place names**. It reads them off the same server the map already points at.
+1. **On an OCAP terrain:** open the map, go to *Terrain and background* → **Place names from OCAP**, and press **Import place names**. It reads the server the map points at, then the public grad_meh export as a fallback.
 2. **On a terrain uploaded here:** the archive’s own `locations` files are read on upload, if it has them.
 3. Either way it is once per **terrain** — every map drawn on it gains the names.
 4. Too many? The editor’s background panel has a switch per group and a size slider.
-5. **Only if neither works:** the Terrains page has a script that copies the names out of a running mission, for a terrain whose export never carried them.
+5. **Only if neither has it:** the Terrains page has a script that copies the names out of a running mission. That is **once for the terrain**, not once per map and not once per operation.
 
 > The names are in the OCAP data, just not in `map.json`. OCAP builds a terrain from a **grad_meh** export, which writes them beside the tiles as `geojson/locations/<type>.geojson.gz` — one file per Arma location type, and the file name is the type.
 >
-> Whether a given server publishes that export is the one thing the import cannot know in advance, so a server that carries none answers with **every address it tried**. That is the difference between a broken feature and an OCAP that only serves tiles.
+> An OCAP built the **older** way — Arma’s map export through gdal2tiles — carries no vector data at all, so there is nothing to find on it however hard the import looks. That is why it also tries `maps.gruppe-adler.de`, which publishes a grad_meh export per world, and why a failure names **every address it tried** rather than just saying no.
 >
 > The tiles genuinely have no labels in them: they come out of Arma’s own map export as pure topography, and the game draws the names over that from its config afterwards.
 >
@@ -1795,23 +1795,32 @@ However the background got there, **Detail** under *Map settings* picks how deep
 
 A terrain arrives with **no labels on it** — the tiles come out of Arma's own map
 export as pure topography, and the game draws the names over that afterwards.
-But the names *are* in the OCAP data: OCAP builds a terrain from a
-[grad_meh](https://github.com/gruppe-adler/grad_meh) export, which writes them
-beside the tiles as `geojson/locations/<type>.geojson.gz`, one file per Arma
-location type. So this is a read, not a trip into the game.
+Where they can be read from depends on how the terrain was built. OCAP's
+**current** maptool builds one from a [grad_meh](https://github.com/gruppe-adler/grad_meh)
+export, which writes the locations beside the tiles as
+`geojson/locations/<type>.geojson.gz`, one file per Arma location type — so on
+such a server this is a read, not a trip into the game. Its **older** route is
+raster tiles only and carries none.
 
 **On an OCAP terrain:** open the map → *Terrain and background* → **Place names
-from OCAP** → **Import place names**. It reads them off the server the map
-already points at.
+from OCAP** → **Import place names**. It reads the server the map points at
+first, since that one is certainly about your terrain, and then falls back to
+[maps.gruppe-adler.de](https://maps.gruppe-adler.de), which publishes a grad_meh
+export per world.
 
 **On a terrain uploaded here:** the archive's own `locations` files are read on
 upload if it has them.
 
-Whether a given server publishes that export is the one thing the import cannot
-know in advance, so a server carrying none answers with **every address it
-tried** — which is the difference between a broken feature and an OCAP that only
-serves tiles. For that case only, the Terrains page carries a script that copies
-the names out of a running mission onto your clipboard.
+**An OCAP built the older way has nothing to find.** The `.emf` → gdal2tiles
+route in OCAP's own tile guide produces raster tiles and no vector data at all,
+so no amount of probing will turn up locations on it — that is a property of how
+the terrain was built, not of the import. A failure therefore names **every
+address it tried**, so you can tell that apart from a broken feature.
+
+If neither source has your terrain — likely for a mod terrain nobody exported —
+the Terrains page carries a script that copies the names out of a running
+mission onto your clipboard. That is **once for the terrain**: not once per map,
+not once per operation, and every plan drawn on it afterwards has them.
 
 Names belong to the **terrain**, not to one map, so this is once per terrain and
 every plan drawn on it gains them — including maps on an OCAP server, which have
