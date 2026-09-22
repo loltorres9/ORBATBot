@@ -1516,3 +1516,19 @@ def test_only_location_files_are_worth_fetching():
 def test_every_known_kind_is_recognised_as_a_location_file():
     for kind in tacmap.PLACE_KINDS:
         assert tacmap.is_location_file(f'{kind}.geojson.gz'), kind
+
+
+def test_a_grad_meh_meta_json_is_read_as_places():
+    """The public grad_meh export's meta.json is the fallback source when a
+    unit's OCAP serves tiles only. Its locations carry a name and a position
+    and no type."""
+    meta = json.dumps({
+        'worldName': 'tem_cham', 'worldSize': 8192,
+        'gridOffsetX': 0, 'gridOffsetY': 0,
+        'locations': [{'name': 'Chamville', 'pos': [4000.5, 4000.25, 12.0]},
+                      {'name': 'Port Cham', 'pos': [1200, 6400, 3.0]}],
+    })
+    places, warnings = tacmap.parse_places(meta)
+    assert [p['name'] for p in places] == ['Chamville', 'Port Cham']
+    assert places[0]['x'] == 4000.5
+    assert warnings == []

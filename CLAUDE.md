@@ -86,7 +86,7 @@ CLAUDE.md               # This file
 ```
 
 There is no CI or linter config. The tests are `python -m pytest tests lab/tests`
-(342 cases), and every one of them covers a module that imports nothing beyond
+(345 cases), and every one of them covers a module that imports nothing beyond
 the standard library — which is the rule that decides what is testable here at
 all:
 
@@ -1977,17 +1977,34 @@ A tile pyramid arrives with roads, buildings and contours and **not one label**:
 the renders come out of Arma's own map export as pure topography, and the game
 draws the names over that afterwards from `CfgWorlds >> worldName >> Names`.
 
-**The names are in the OCAP data, though — just not in `map.json`.** That was
-got wrong once, on the strength of `map.json` carrying only `worldName`,
-`worldSize`, `imageSize` and `multiplier`, and it is worth knowing why the first
-answer was wrong: OCAP's maptool builds a terrain from a **grad_meh** export
-(`internal/maptool/vector.go` walks `geojson/**/*.geojson.gz`), and grad_meh
+**Whether they can be read off OCAP depends on how that terrain was built, and
+both answers have been got wrong here in turn.** First it was "OCAP has no
+locations at all", on the strength of `map.json` carrying only `worldName`,
+`worldSize`, `imageSize` and `multiplier`. Then it was "OCAP has them", on the
+strength of the **current** maptool building a terrain from a **grad_meh**
+export (`internal/maptool/vector.go` walks `geojson/**/*.geojson.gz`), which
 writes the locations beside the tiles as
 `geojson/locations/<locationtype>.geojson.gz` — one gzipped GeoJSON file per
 Arma location type, `Point` geometry already in Arma's CRS, the name in
-`properties.name`. The file names are lowercase location types, which is exactly
-what `PLACE_KINDS` is keyed on, so **the file a place came from is its kind** and
-nothing is guessed.
+`properties.name`. The file names are lowercase location types, exactly what
+`PLACE_KINDS` is keyed on, so **the file a place came from is its kind**.
+
+Both were too general. OCAP's **older** route — the one in its own tile guide,
+`.emf` out of Arma through gdal2tiles — produces raster tiles and no vector data
+whatever, and that is what a lot of deployed instances are serving. On such a
+server there is nothing to find however hard the import looks, which is why the
+refusal says so in those words rather than implying somebody misconfigured
+something.
+
+`maps.gruppe-adler.de` is the second source for exactly that case: it publishes
+a grad_meh export per world, and its `meta.json` carries the same `locations`
+list, which `parse_places()` already reads. It is tried **after** the unit's own
+OCAP, because that one is certainly about their terrain while a public dataset
+holds whichever worlds somebody bothered to export. Its entries carry no type,
+so they are filed as `GRAD_MEH_KIND`; the service documents them as settlements.
+The repository behind it was archived in 2023, so treat it as something that may
+stop answering — which, from here, is indistinguishable from "does not have that
+terrain", and both are reported as not there.
 
 They hang off a **terrain**, not a map, because every plan drawn on Tanoa wants
 the same ones — and a terrain here is one of two things: a row we store (`/t/7`)
@@ -2010,7 +2027,7 @@ Four things are deliberate:
   gets a message **naming every address tried**. That is the difference between
   "this feature is broken" and "your OCAP only serves tiles", and it is the only
   honest thing to build when the answer depends on somebody else's deployment.
-- **`places_sqf()` is the fallback, not the front door.** It is the mirror of
+- **`places_sqf()` is the last resort, not the front door.** It is the mirror of
   `to_sqf()` and the same door — vanilla Arma cannot send anything out, so the
   clipboard is how data leaves it — and it exists for a terrain whose export
   never carried the locations. Leading with it was the mistake the first cut
