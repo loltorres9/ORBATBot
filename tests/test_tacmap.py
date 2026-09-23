@@ -528,6 +528,75 @@ def test_the_catalog_offers_exactly_what_can_be_drawn():
     assert next(e for e in catalog['symbols'] if e['key'] == 'inf')['hasIcon']
 
 
+def test_a_new_item_starts_at_the_smallest_size():
+    """The editor reads the starting size out of the catalog, and it is MIN_SIZE.
+
+    Every plan drawn here came out too big and was shrunk item by item, which
+    is the wrong way round: growing the two symbols that need to stand out is
+    one drag, shrinking twenty is twenty. `web/static/tacmap.js` places a new
+    unit, marker, label, line and area at `catalog.defaultSize`, so this is the
+    one number that decides it.
+    """
+    catalog = tacmap.catalog()
+    assert catalog['defaultSize'] == tacmap.MIN_SIZE
+    assert catalog['defaultSize'] == catalog['limits']['minSize']
+    # The slider has to be able to show it: its first stop is the minimum.
+    assert tacmap.MIN_SIZE < tacmap.MAX_SIZE
+
+
+def test_the_smallest_size_survives_a_round_trip():
+    """A document saved at the default size comes back at it, not clamped or
+    rounded away — `parse()` rounds to two places, so MIN_SIZE has to be a
+    value that survives that."""
+    doc = tacmap.parse(_doc(items=[unit(size=tacmap.DEFAULT_SIZE)])).doc
+    assert doc['items'][0]['size'] == tacmap.DEFAULT_SIZE
+
+
+def test_a_stored_item_with_no_size_still_draws_at_one():
+    """The new-item default is not `parse()`'s fallback. Making them the same
+    would silently shrink every item in an already-drawn map that happens to
+    carry no size."""
+    doc = tacmap.parse(_doc(items=[{'kind': 'unit', 'x': 100, 'y': 100}])).doc
+    assert doc['items'][0]['size'] == 1.0
+
+
+def test_a_line_at_the_smallest_size_is_still_a_line():
+    """Width, dashes and arrow head stop shrinking at MIN_LINE_SIZE.
+
+    4 x DEFAULT_SIZE is 0.6 units on a 1000-unit sheet — under a device pixel,
+    so a line drawn at the new default would have been invisible. This is the
+    same floor `label_size()` puts under a name, for the same reason.
+    """
+    assert tacmap.line_size(tacmap.DEFAULT_SIZE) == tacmap.MIN_LINE_SIZE
+    assert tacmap.line_size(2.0) == 2.0        # above the floor, untouched
+
+    doc = tacmap.parse(_doc(items=[{
+        'kind': 'line', 'size': tacmap.DEFAULT_SIZE, 'style': 'dashed',
+        'points': [[10, 10], [200, 200]],
+    }])).doc
+    svg = tacmap.render(doc)
+    width = float(re.search(r'stroke-width="([\d.]+)"[^>]*stroke-dasharray', svg).group(1))
+    assert width == round(4 * tacmap.MIN_LINE_SIZE, 2)
+
+
+def test_the_floor_does_not_grow_a_line_anybody_drew():
+    """A line already saved above the floor draws exactly as it always did."""
+    doc = tacmap.parse(_doc(items=[{
+        'kind': 'line', 'size': 1.0, 'points': [[10, 10], [200, 200]],
+    }])).doc
+    assert 'stroke-width="4.0"' in tacmap.render(doc)
+
+
+def test_the_editor_is_told_both_floors():
+    """`web/static/tacmap.js` mirrors line_size() and sizes its pointer targets
+    from these, so they travel in the catalog rather than being written twice."""
+    catalog = tacmap.catalog()
+    assert catalog['minLineSize'] == tacmap.MIN_LINE_SIZE
+    assert catalog['minHit'] == tacmap.MIN_HIT
+    # A target smaller than the smallest symbol would defeat the point.
+    assert tacmap.MIN_HIT > tacmap.UNIT_BOX * tacmap.DEFAULT_SIZE
+
+
 def test_a_label_is_escaped_into_the_drawing():
     doc = tacmap.parse(_doc(items=[unit(label='Ammo <b>&</b>')])).doc
     svg = tacmap.render(doc)

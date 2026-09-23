@@ -57,6 +57,14 @@ MAX_LAYER_NAME = 40
 DEFAULT_LAYER = {'id': 'plan', 'name': 'Plan', 'visible': True}
 MIN_SIZE = 0.15
 MAX_SIZE = 4.0
+# What a freshly placed symbol, marker, line, area or label starts at. The
+# smallest the slider goes, on purpose: every plan drawn here came out too big
+# and was shrunk by hand, item by item, which is the wrong way round. Growing
+# the two that need to stand out is one drag; shrinking twenty is twenty.
+# This is the *new item* default and deliberately not `parse()`'s fallback,
+# which stays at 1.0 so a stored item that somehow carries no size keeps
+# drawing the size it always did.
+DEFAULT_SIZE = MIN_SIZE
 
 # The box a size-1 symbol occupies, in document units. Small on purpose: a
 # platoon plan puts twenty of these on one sheet, and a symbol that reads as
@@ -67,6 +75,19 @@ POINT_BOX = 26
 # However small a symbol is dragged, its name has to stay readable — the label
 # is what the plan is for.
 MIN_LABEL = 9
+
+# The same argument for a line: one shrunk to nothing is not a line. So its own
+# geometry — width, dashes and arrow head — stops shrinking here, whatever size
+# the item carries. Without this a line at DEFAULT_SIZE draws 0.6 units wide on
+# a 1000-unit sheet, which is under a device pixel and reads as nothing at all.
+MIN_LINE_SIZE = 0.4
+
+# The smallest pointer target, across its full width, in document units. A
+# marker and a line already carry an invisible fat copy of themselves to be
+# grabbed by, and both were sized from the item — so at the small end the thing
+# you can see became a thing you cannot click. Only the browser draws these;
+# the number lives here with the rest of the geometry.
+MIN_HIT = 14
 
 KINDS = ('unit', 'point', 'line', 'area', 'text')
 
@@ -1065,6 +1086,9 @@ def catalog() -> dict:
         'placeGroups': [{'key': key, 'label': label} for key, label in PLACE_GROUPS],
         'defaultPlaceKind': DEFAULT_PLACE_KIND,
         'minLabel': MIN_LABEL,
+        'minLineSize': MIN_LINE_SIZE,
+        'minHit': MIN_HIT,
+        'defaultSize': DEFAULT_SIZE,
         'defaultMarker': DEFAULT_MARKER,
         'echelonLift': ECHELON_LIFT,
         'mobilityDrop': MOBILITY_DROP,
@@ -1127,6 +1151,17 @@ def defs() -> str:
         parts.append(f'<g id="tmm-{key}">{marker["icon"]}</g>')
     parts.append('</defs>')
     return ''.join(parts)
+
+
+def line_size(size: float) -> float:
+    """The size a line draws its own geometry at — never below MIN_LINE_SIZE.
+
+    The mirror of `label_size()`, and for the same reason: an item may be made
+    as small as the slider goes, but what says *this is a line* has to survive
+    it. Width, dash pattern and arrow head all read this, so they stay in
+    proportion to each other rather than each growing its own floor.
+    """
+    return max(size, MIN_LINE_SIZE)
 
 
 def label_size(size: float) -> float:
@@ -1372,8 +1407,9 @@ def arrow_head(points: list, size: float) -> list:
 def _shape_svg(item: dict) -> str:
     colour = item_colour(item)
     path = ' '.join(f'{round(x, 2)},{round(y, 2)}' for x, y in item['points'])
-    width = round(4 * item['size'], 2)
-    dash = f' stroke-dasharray="{round(14 * item["size"], 1)} {round(9 * item["size"], 1)}"' \
+    drawn = line_size(item['size'])
+    width = round(4 * drawn, 2)
+    dash = f' stroke-dasharray="{round(14 * drawn, 1)} {round(9 * drawn, 1)}"' \
         if item['style'] == 'dashed' else ''
     if item['kind'] == 'area':
         shape = (
@@ -1390,7 +1426,7 @@ def _shape_svg(item: dict) -> str:
         f'stroke-linejoin="round"/>'
     ]
     if item.get('arrow'):
-        head = arrow_head(item['points'], item['size'])
+        head = arrow_head(item['points'], drawn)
         if head:
             corners = ' '.join(f'{x},{y}' for x, y in head)
             parts.append(f'<polygon points="{corners}" fill="{colour}"/>')
