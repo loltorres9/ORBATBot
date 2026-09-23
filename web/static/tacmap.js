@@ -119,6 +119,13 @@
     return Math.round(Math.max(catalog.minLabel, 14 * size) * 10) / 10;
   }
 
+  // The mirror of tacmap.line_size(): a line may be drawn as small as the
+  // slider goes, but what says "this is a line" has to survive it. Width,
+  // dashes and arrow head all read this, so they stay in proportion.
+  function lineSize(size) {
+    return Math.max(size, catalog.minLineSize);
+  }
+
   function label(text, x, y, size, fill) {
     if (!text) return '';
     var font = labelSize(size);
@@ -274,9 +281,10 @@
     var points = item.points.map(function (point) {
       return round(point[0]) + ',' + round(point[1]);
     }).join(' ');
-    var width = round(4 * item.size);
+    var drawn = lineSize(item.size);
+    var width = round(4 * drawn);
     var dash = item.style === 'dashed'
-      ? ' stroke-dasharray="' + round(14 * item.size) + ' ' + round(9 * item.size) + '"' : '';
+      ? ' stroke-dasharray="' + round(14 * drawn) + ' ' + round(9 * drawn) + '"' : '';
     if (item.kind === 'area') {
       var centre = item.points.reduce(function (sum, point) {
         return [sum[0] + point[0] / item.points.length, sum[1] + point[1] / item.points.length];
@@ -290,7 +298,7 @@
       '" stroke-width="' + width + '"' + dash +
       ' stroke-linecap="round" stroke-linejoin="round"/>'];
     if (item.arrow) {
-      var head = arrowHead(item.points, item.size);
+      var head = arrowHead(item.points, drawn);
       if (head) {
         parts.push('<polygon points="' + head.map(function (corner) {
           return corner[0] + ',' + corner[1];
@@ -318,9 +326,15 @@
     // invisible fat copy of itself for the pointer to land on. A task marker
     // needs one too: it is line art with no fill, so without this a click in
     // the middle of an X or a circle lands on the terrain behind it.
-    if (item.kind === 'point') {
+    // Both targets have a floor, because both used to be sized from the item
+    // alone: at the small end the thing you could see became a thing you
+    // could not click. A unit is a filled frame and needs no help at size 1,
+    // but at the bottom of the slider it is six units across, so it gets the
+    // same disc — never smaller than what it already had.
+    if (item.kind === 'point' || item.kind === 'unit') {
+      var box = item.kind === 'unit' ? catalog.unitBox * 0.5 : catalog.pointBox * 0.8;
       return '<circle cx="' + round(item.x) + '" cy="' + round(item.y) + '" r="' +
-        round(catalog.pointBox * item.size * 0.8) +
+        round(Math.max(box * item.size, catalog.minHit / 2)) +
         '" fill="#000" fill-opacity="0"/>';
     }
     if (item.kind !== 'line' && item.kind !== 'area') return '';
@@ -328,7 +342,8 @@
       return round(point[0]) + ',' + round(point[1]);
     }).join(' ');
     return '<polyline points="' + points + '" fill="none" stroke="#000"' +
-      ' stroke-opacity="0" stroke-width="' + round(20 * item.size) + '"/>';
+      ' stroke-opacity="0" stroke-width="' +
+      round(Math.max(20 * item.size, catalog.minHit)) + '"/>';
   }
 
   function emptySheet() {
@@ -691,7 +706,7 @@
 
   function newItem(kind, point) {
     var item = { kind: kind, side: state.side, layer: state.layer, label: '',
-                 note: '', size: 1 };
+                 note: '', size: catalog.defaultSize };
     if (kind === 'unit') {
       item.x = round(point.x);
       item.y = round(point.y);
@@ -838,7 +853,8 @@
     if (draft.points.length < (draft.kind === 'area' ? 3 : 2)) return;
     add({
       kind: draft.kind, side: state.side, layer: state.layer, label: '', note: '',
-      size: 1, color: state.color, points: draft.points, style: state.style,
+      size: catalog.defaultSize, color: state.color, points: draft.points,
+      style: state.style,
       // Never automatically: an arrow says "this way", and most lines on a
       // plan are boundaries and phase lines that say no such thing. The
       // inspector puts one on the lines that mean it.

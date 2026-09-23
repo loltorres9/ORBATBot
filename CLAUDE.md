@@ -1917,6 +1917,28 @@ floors the type at `MIN_LABEL` however small the symbol gets** — a symbol
 shrunk to nothing is still a symbol, but its name shrunk to nothing is a
 smudge, and the name is what the plan is read for.
 
+**`DEFAULT_SIZE` is `MIN_SIZE`: a new item starts at the bottom of the
+slider.** It began at 1.0 and every plan drawn here came out too big and was
+shrunk by hand, item by item, which is the wrong way round — growing the two
+symbols that have to stand out is one drag, shrinking twenty is twenty. It is
+the *new item* default and deliberately **not** `parse()`'s fallback, which
+stays at 1.0: an already-drawn map holding an item with no size must keep
+drawing it the size it always did.
+
+Two floors exist because of that default, and both are the `MIN_LABEL`
+argument applied again:
+
+- **`line_size()` floors a line's own geometry at `MIN_LINE_SIZE`** — width,
+  dash pattern and arrow head together, so they stay in proportion instead of
+  each growing a floor of its own. `4 × DEFAULT_SIZE` is 0.6 units on a
+  1000-unit sheet, under a device pixel, so without this a line drawn at the
+  new default was invisible.
+- **`MIN_HIT` floors the pointer targets**, which `hitSVG()` in `tacmap.js`
+  drew from the item's size alone — so at the small end the thing you could
+  see became a thing you could not click. A unit now carries the same
+  invisible disc a marker and a line already had; at size 1 that disc is
+  inscribed in the frame, so nothing about a normal symbol changes.
+
 **A line or an area may carry a colour of its own** (`item['color']`, plain
 `#rrggbb` or empty), and `LINE_COLOURS` is the palette the editor offers —
 red, orange, yellow, green, blue, cyan, pink, purple, white, black, picked to
@@ -1990,12 +2012,15 @@ Arma location type, `Point` geometry already in Arma's CRS, the name in
 `properties.name`. The file names are lowercase location types, exactly what
 `PLACE_KINDS` is keyed on, so **the file a place came from is its kind**.
 
-Both were too general. OCAP's **older** route — the one in its own tile guide,
-`.emf` out of Arma through gdal2tiles — produces raster tiles and no vector data
-whatever, and that is what a lot of deployed instances are serving. On such a
-server there is nothing to find however hard the import looks, which is why the
-refusal says so in those words rather than implying somebody misconfigured
-something.
+Both were too general, and in the same way: **the answer is per terrain, not per
+server.** OCAP's **older** route — the one in its own tile guide, `.emf` out of
+Arma through gdal2tiles — produces raster tiles and no vector data whatever, and
+one OCAP serves terrains imported both ways side by side. So a guild can have one
+map importing its names in a single press and another, on the same server, with
+nothing to find however hard the import looks. That is why `import_ocap_places()`
+names the **terrain** in its refusal and says the neighbours may still work:
+"no place names on that server" reads as a broken feature and sends somebody off
+to check a server that is behaving perfectly.
 
 **Three remote sources were tried and all three are closed**, which is worth
 recording so nobody spends another round on it. A unit's own OCAP on the older
