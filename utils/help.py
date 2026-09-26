@@ -821,8 +821,12 @@ _MAPS: tuple[Topic, ...] = (
             'in the air; **dashed** means it is planned rather than there.',
             'Lines get an arrow head only when you ask for one — most lines on '
             'a plan are boundaries and phase lines, which point nowhere.',
-            'Lines and areas take a colour of their own; symbols do not, '
-            'because their colour is what says which side they are.',
+            'Lines, areas and markers are black until you colour them, and '
+            'take whatever you pick from the swatches. Symbols do not: their '
+            'colour is what says which side they are.',
+            'Whatever colour you pick is the colour it comes out in Arma, on '
+            'the nearest marker colour the game ships. Cyan and purple are '
+            'the two Arma has no match for.',
             'Two people drawing at once will overwrite each other’s save. '
             'Agree who has the pen.',
         ),

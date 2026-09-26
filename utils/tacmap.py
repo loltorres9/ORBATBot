@@ -119,6 +119,21 @@ AFFILIATIONS = {
 }
 DEFAULT_SIDE = 'friend'
 
+# What a line, an area or a task marker is drawn in when nobody picked a
+# colour. It is the palette's own black, and deliberately **not** the side's
+# fill: the side says whose a *unit* is, while a phase line, a boundary or an
+# objective belongs to the plan rather than to anybody on it. Inheriting the
+# side made every control measure on a friendly plan the same pale blue, which
+# is a map with one colour and therefore no colour — the reference everybody
+# plans from draws these black.
+DEFAULT_INK = '#1b1f24'
+
+# Line art sits on satellite imagery that is bright sand in one corner and
+# dark jungle in the other, so everything outside a unit frame is drawn twice:
+# the ink over a backing pass in whichever direction the ink is not.
+_INK_LIGHT = '#f2f4f6'
+_INK_DARK = '#11161c'
+
 # What dimension an object is in. APP-6 says it with the frame itself: "A
 # closed frame is used to denote the Land and Sea Surface Dimensions, a frame
 # open at the bottom to denote the Air and Space Dimensions and a frame open at
@@ -459,7 +474,7 @@ DEFAULT_MARKER = 'dot'
 
 LINE_STYLES = ('solid', 'dashed')
 
-# What a line or an area can be painted, beyond its side's own colour.
+# What a line, an area or a task marker can be painted, beyond `DEFAULT_INK`.
 #
 # A symbol may not take one of these — whose a unit is has to stay readable
 # from its colour — but a line is a route, a boundary, a phase line or a fire
@@ -581,6 +596,63 @@ ARMA_SIDES = {
     'civ': ('u', 'ColorCIV'),
     'unknown': ('u', 'ColorUNKNOWN'),
 }
+
+# Arma's own stock marker colours, so a line drawn red here arrives red there.
+# `setMarkerColor` takes a class name out of `CfgMarkerColors` and nothing
+# else — there is no hex form and a mission run from the debug console cannot
+# define its own class — so a colour somebody picked has to land on the
+# nearest thing the game already ships.
+#
+# The RGB here is only ever used to measure that distance, never written into
+# the script, which is what makes it safe to be approximate: our palette is
+# far enough apart that a few points either way cannot change which name
+# wins. `test_every_palette_colour_maps_to_its_own_name` is what pins that.
+#
+# The five side colours are deliberately **not** in this table. They say whose
+# a thing is, and a line somebody painted orange should not come out as
+# ColorEAST because that happened to be the closest red.
+ARMA_COLOURS = {
+    'ColorBlack':  (0x1b, 0x1f, 0x24),
+    'ColorGrey':   (0x80, 0x80, 0x80),
+    'ColorRed':    (0xe0, 0x20, 0x20),
+    'ColorBrown':  (0x80, 0x40, 0x00),
+    'ColorOrange': (0xf0, 0x80, 0x20),
+    'ColorYellow': (0xf0, 0xd0, 0x20),
+    'ColorKhaki':  (0x99, 0x99, 0x55),
+    'ColorGreen':  (0x20, 0xb0, 0x40),
+    'ColorBlue':   (0x30, 0x70, 0xe0),
+    'ColorPink':   (0xe0, 0x60, 0xb8),
+    'ColorWhite':  (0xf5, 0xf5, 0xf5),
+}
+
+
+def _rgb(colour: str):
+    """`#rrggbb` as three numbers, or None when it is not one."""
+    text = (colour or '').strip().lstrip('#')
+    if len(text) != 6:
+        return None
+    try:
+        return tuple(int(text[at:at + 2], 16) for at in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def arma_colour(item: dict) -> str:
+    """The `CfgMarkerColors` name this item is drawn in.
+
+    A colour somebody picked wins, mapped onto the nearest stock one; with
+    none, the side's colour, which is what every marker used to get.
+    """
+    if item['kind'] == 'unit':
+        return ARMA_SIDES.get(item['side'], ARMA_SIDES['unknown'])[1]
+    wanted = _rgb(item_colour(item))
+    if wanted is None:
+        return ARMA_SIDES.get(item['side'], ARMA_SIDES['unknown'])[1]
+    return min(
+        ARMA_COLOURS,
+        key=lambda name: sum(
+            (a - b) ** 2 for a, b in zip(ARMA_COLOURS[name], wanted)),
+    )
 
 # Our symbols against the NATO markers vanilla Arma 3 ships. Every icon the
 # game has is in the palette now, so this is a straight mapping; only the four
@@ -894,10 +966,11 @@ def _parse_item(raw, doc: dict, result: ParseResult, index: int):
         status = raw.get('status')
         item['status'] = status if status in STATUSES else DEFAULT_STATUS
 
-    if kind in ('line', 'area', 'text'):
+    if kind in ('line', 'area', 'text', 'point'):
         # The side says whose a symbol is and must keep saying it, but a line
         # is a route or a boundary — those are told apart by colour on every
-        # paper map there has ever been.
+        # paper map there has ever been. A task marker is the same kind of
+        # thing: an objective is the plan's, not one side's.
         item['color'] = _colour(raw.get('color'))
 
     if kind in ('line', 'area'):
@@ -1067,6 +1140,9 @@ def catalog() -> dict:
         'lineStyles': list(LINE_STYLES),
         'lineColours': [{'value': value, 'label': label}
                         for value, label in LINE_COLOURS],
+        'defaultInk': DEFAULT_INK,
+        'inkLight': _INK_LIGHT,
+        'inkDark': _INK_DARK,
         'unitBox': UNIT_BOX,
         'pointBox': POINT_BOX,
         'backdropZoom': BACKDROP_ZOOM,
@@ -1189,8 +1265,31 @@ def _label_svg(text: str, x: float, y: float, size: float, anchor: str = 'middle
 
 
 def item_colour(item: dict) -> str:
-    """What an item is drawn in: its own colour, or its side's."""
-    return item.get('color') or AFFILIATIONS[item['side']]['fill']
+    """What an item is drawn in.
+
+    A unit takes its side's colour, because that is how APP-6 says whose it
+    is and the frame carries no other clue. Everything else — a line, an
+    area, a task marker, a label — takes the colour somebody picked for it,
+    and `DEFAULT_INK` when they picked none.
+    """
+    if item['kind'] == 'unit':
+        return AFFILIATIONS[item['side']]['fill']
+    if item['kind'] == 'text':
+        # A free label is chrome rather than a control measure: white over a
+        # dark halo, which is what `_label_svg` has always drawn and what
+        # holds up over both ends of a terrain without picking a side.
+        return item.get('color') or _LABEL_FILL
+    return item.get('color') or DEFAULT_INK
+
+
+def ink_backing(colour: str) -> str:
+    """The pass drawn under `colour` so it holds up over any terrain."""
+    rgb = _rgb(colour)
+    if rgb is None:
+        return _INK_LIGHT
+    # Rec. 601 luma, which is close enough to decide light from dark.
+    luma = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255
+    return _INK_DARK if luma > 0.5 else _INK_LIGHT
 
 
 def item_svg(item: dict) -> str:
@@ -1323,14 +1422,17 @@ def _chrome_text(text: str, x: float, y: float, size: float, colours: dict,
 
 
 def _point_svg(item: dict) -> str:
-    """One task marker — Arma's `mil_*` shape, in the side's colour.
+    """One task marker — Arma's `mil_*` shape, in its own colour.
 
     Unlike a unit symbol this is line art rather than a filled block, which is
-    how the game tells a task from a unit, and it is drawn twice: once thick in
-    the side's dark edge and once on top in its colour, so the shape holds its
-    own over a satellite image without an SVG filter.
+    how the game tells a task from a unit, and it is drawn twice: once thick
+    in a backing colour and once on top in the ink, so the shape holds its own
+    over a satellite image without an SVG filter. The ink is the marker's own
+    rather than its side's — an objective belongs to the plan, not to one side
+    of it.
     """
-    colours = AFFILIATIONS[item['side']]
+    ink = item_colour(item)
+    backing = ink_backing(ink)
     marker = MARKERS.get(item.get('marker'), MARKERS[DEFAULT_MARKER])
     scale = POINT_BOX * item['size'] / 100 * 1.55
     transform = (f"translate({round(item['x'], 2)},{round(item['y'], 2)}) "
@@ -1342,10 +1444,10 @@ def _point_svg(item: dict) -> str:
     shape = (
         f'<g transform="{transform}">'
         f'<use href="#tmm-{marker_key(item)}" fill="none" '
-        f'stroke="{colours["edge"]}" color="{colours["edge"]}" stroke-width="15" '
+        f'stroke="{backing}" color="{backing}" stroke-width="15" '
         f'stroke-linecap="round" stroke-linejoin="round"{dash}/>'
         f'<use href="#tmm-{marker_key(item)}" fill="none" '
-        f'stroke="{colours["fill"]}" color="{colours["fill"]}" stroke-width="7" '
+        f'stroke="{ink}" color="{ink}" stroke-width="7" '
         f'stroke-linecap="round" stroke-linejoin="round"{dash}/>'
         f'</g>'
     )
@@ -1406,13 +1508,21 @@ def arrow_head(points: list, size: float) -> list:
 
 def _shape_svg(item: dict) -> str:
     colour = item_colour(item)
+    backing = ink_backing(colour)
     path = ' '.join(f'{round(x, 2)},{round(y, 2)}' for x, y in item['points'])
     drawn = line_size(item['size'])
     width = round(4 * drawn, 2)
+    # The backing is drawn wider and always solid. Wider so it shows either
+    # side of the ink; solid because a dashed backing under a dashed line
+    # leaves the gaps unbacked, which is exactly where a dark line over dark
+    # terrain disappears.
+    back_width = round(width + 2.6 * drawn, 2)
     dash = f' stroke-dasharray="{round(14 * drawn, 1)} {round(9 * drawn, 1)}"' \
         if item['style'] == 'dashed' else ''
     if item['kind'] == 'area':
         shape = (
+            f'<polygon points="{path}" fill="none" stroke="{backing}" '
+            f'stroke-width="{back_width}" stroke-linejoin="round"/>'
             f'<polygon points="{path}" fill="{colour}" fill-opacity="0.22" '
             f'stroke="{colour}" stroke-width="{width}"{dash} '
             f'stroke-linejoin="round"/>'
@@ -1421,6 +1531,9 @@ def _shape_svg(item: dict) -> str:
         return shape + _label_svg(item['label'], centre[0], centre[1], item['size'])
 
     parts = [
+        f'<polyline points="{path}" fill="none" stroke="{backing}" '
+        f'stroke-width="{back_width}" stroke-linecap="round" '
+        f'stroke-linejoin="round"/>',
         f'<polyline points="{path}" fill="none" stroke="{colour}" '
         f'stroke-width="{width}"{dash} stroke-linecap="round" '
         f'stroke-linejoin="round"/>'
@@ -1900,7 +2013,7 @@ def to_sqf(doc: dict, *, prefix: str, title: str = '',
         return f'_own + "{number}{drawn[0]:03d}" + _c'
 
     for index, item in enumerate(items, start=1):
-        colour = ARMA_SIDES.get(item['side'], ARMA_SIDES['unknown'])[1]
+        colour = arma_colour(item)
         name = marker_name(index)
         text = _marker_text(item)
 

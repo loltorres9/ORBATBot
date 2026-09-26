@@ -1939,17 +1939,70 @@ argument applied again:
   invisible disc a marker and a line already had; at size 1 that disc is
   inscribed in the frame, so nothing about a normal symbol changes.
 
-**A line or an area may carry a colour of its own** (`item['color']`, plain
-`#rrggbb` or empty), and `LINE_COLOURS` is the palette the editor offers —
-red, orange, yellow, green, blue, cyan, pink, purple, white, black, picked to
-hold up over terrain that is bright sand in one corner and dark jungle in the
-other. A symbol may not take one: whose a unit is has to stay readable from
-its colour, while a line is a route or a boundary or a phase line, and those
-have been told apart by colour on every paper map there has ever been. The
+### Colour says whose a *unit* is, and nothing else
+
+`item_colour()` is the one rule, and it used to read
+`item['color'] or AFFILIATIONS[side]['fill']` for everything. That made a
+friendly plan come out in one flat pale blue: every phase line, every
+boundary and every objective inherited the side, so the colour on the sheet
+carried no information at all. The reference everybody plans from draws
+control measures black and keeps colour for the symbols.
+
+So the rule is now per kind:
+
+| | drawn in |
+|---|---|
+| `unit` | its side's `fill` — the frame has no other way to say whose it is, and a symbol still may not take a colour of its own |
+| `line`, `area`, `point` | the colour somebody picked, else `DEFAULT_INK` |
+| `text` | the colour somebody picked, else white — a free label is chrome, not a control measure |
+
+**A task marker carries its own colour now too.** `parse()` only kept
+`color` for a line, an area and a label, so a point had no way to be
+anything but its side's — which is why the swatch row and the inspector's
+colour field both reach `point` as well.
+
+`LINE_COLOURS` is the palette the editor offers — red, orange, yellow,
+green, blue, cyan, pink, purple, white, black, picked to hold up over
+terrain that is bright sand in one corner and dark jungle in the other. The
 free colour field is still there beside the swatches for anything else.
-`arrow_head()` therefore computes the head as a polygon rather than using an
-SVG `marker` — a marker cannot take the colour of the line it sits on, so a
+`arrow_head()` computes the head as a polygon rather than using an SVG
+`marker` — a marker cannot take the colour of the line it sits on, so a
 recoloured line would have kept its side's arrow.
+
+**Everything that is not a unit frame is drawn twice**, `ink_backing()`
+under `item_colour()`, because the ink is now usually dark and the bare
+sheet is dark too. The backing is **wider and always solid**: a dashed
+backing under a dashed line leaves the gaps unbacked, which is precisely
+where a dark line over dark terrain vanishes. Points already did this with
+the side's `edge`/`fill` pair; lines and areas did not, and black default
+ink is what made that visible — the first cut of this change rendered three
+phase lines that were nearly invisible on the default sheet, which is why
+it was looked at in a browser rather than trusted.
+
+### The same colour in Arma
+
+`arma_colour()` is what the export reads, and it used to read the side
+alone — so a line painted red here arrived as `ColorWEST` blue there.
+It now maps `item_colour()` onto the nearest name in `ARMA_COLOURS`.
+
+`setMarkerColor` takes a class out of `CfgMarkerColors` and nothing else —
+there is no hex form, and a plan pasted into the debug console cannot
+define its own class — so a picked colour has to land on something the game
+already ships. Three things about that table:
+
+- **The RGB in it is only ever used to measure distance**, never written
+  into the script, which is what makes it safe to be approximate: the
+  palette is far enough apart that a few points either way cannot change
+  which name wins.
+- **The five side colours are deliberately not in the pool.** `ColorEAST`
+  is a dark red and `ColorCIV` a purple, so without holding them out an
+  orange line could arrive in the mission claiming a side.
+- **A unit still exports its side**, whatever else is set — the `b_`/`o_`
+  marker prefix and `ColorWEST`/`ColorEAST` have to keep agreeing.
+
+Arma has no cyan and no purple among its plain colours, so those two are
+the only palette entries that do not survive the trip intact: they land on
+`ColorBlue` and `ColorPink`.
 
 ### There is JavaScript here, and only here
 
