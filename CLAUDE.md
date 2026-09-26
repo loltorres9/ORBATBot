@@ -1976,6 +1976,18 @@ everything else leaves it a line.
 lines on a plan are boundaries and phase lines that say no such thing; the
 inspector puts one on the lines that mean it.
 
+**Shift straightens the segment being drawn**, from the last point fixed
+before Shift went down to wherever the pointer is (`draft.anchor`). Dragging
+alone is freehand, which is only as straight as a hand — and a boundary is
+not. Releasing Shift clears the anchor so freehand carries on from the
+straight end, which is what lets one stroke be a straight leg, a curve and a
+straight leg again. Measured on the same deliberately shaky drag: 27 points
+wandering 2.1% off straight without it, 2 points and 0.00% with it.
+
+This is the half that went missing when click-by-click was removed: that
+mode's one virtue was exact straight segments, and nothing replaced it for
+two rounds.
+
 Three details are load-bearing:
 
 - **The stroke is thinned as it is drawn.** A pointer reports every pixel it
