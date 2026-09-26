@@ -1408,6 +1408,16 @@
 
   var SHORTCUTS = { v: 'select', u: 'unit', m: 'point', l: 'line', a: 'area', t: 'text' };
 
+  // Letting go of Shift fixes the straight segment where it is. Clearing the
+  // anchor on the next freehand move is not enough: tapping Shift again
+  // without moving in between left the old anchor standing, so the next
+  // straight segment replaced the last one instead of chaining off it — five
+  // corners came out as two points. That is the rhythm somebody drawing a
+  // boundary actually uses, so it is the one that has to work.
+  document.addEventListener('keyup', function (event) {
+    if (event.key === 'Shift' && state.draft) state.draft.anchor = null;
+  });
+
   document.addEventListener('keydown', function (event) {
     var tag = (event.target.tagName || '').toLowerCase();
     var typing = tag === 'input' || tag === 'textarea' || tag === 'select';
