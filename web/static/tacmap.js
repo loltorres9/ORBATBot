@@ -46,9 +46,9 @@
     dimension: catalog.defaultDimension,
     status: catalog.defaultStatus,
     layer: '',
-    // What a line or an area is painted when it is drawn. '' means the
-    // side's own colour, which is what everything did before there was a
-    // palette to pick from.
+    // What a line, an area or a marker is painted when it is drawn.
+    // '' means the default ink — it used to mean the side's colour, which
+    // is what made every friendly plan come out one flat blue.
     color: '',
     style: 'solid',
     hq: false,
@@ -138,7 +138,25 @@
   }
 
   function itemColour(item) {
-    return item.color || colours[item.side].fill;
+    // Mirrors item_colour() in utils/tacmap.py. Only a unit takes its side's
+    // colour — that is how the frame says whose it is. A line, an area or a
+    // task marker takes the colour somebody picked, and the default ink when
+    // nobody did, so a friendly plan is not one flat blue.
+    if (item.kind === 'unit') return colours[item.side].fill;
+    // A free label is chrome, not a control measure — white over its halo.
+    if (item.kind === 'text') return item.color || '#ffffff';
+    return item.color || catalog.defaultInk;
+  }
+
+  function inkBacking(colour) {
+    // Mirrors ink_backing(): the pass drawn under the ink so it holds up over
+    // bright sand and dark jungle alike.
+    var rgb = /^#([0-9a-f]{6})$/i.exec((colour || '').trim());
+    if (!rgb) return catalog.inkLight;
+    var value = parseInt(rgb[1], 16);
+    var luma = (0.299 * ((value >> 16) & 255) + 0.587 * ((value >> 8) & 255) +
+      0.114 * (value & 255)) / 255;
+    return luma > 0.5 ? catalog.inkDark : catalog.inkLight;
   }
 
   var FONT = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
@@ -229,20 +247,21 @@
   }
 
   function pointSVG(item) {
-    // Mirrors _point_svg() in utils/tacmap.py: line art in the side's colour,
-    // drawn twice so the shape holds up over terrain.
-    var paint = colours[item.side];
+    // Mirrors _point_svg() in utils/tacmap.py: line art in the marker's own
+    // colour, drawn twice so the shape holds up over terrain.
+    var ink = itemColour(item);
+    var backing = inkBacking(ink);
     var key = markerKey(item);
     var scale = catalog.pointBox * item.size / 100 * 1.55;
     var transform = 'translate(' + round(item.x) + ',' + round(item.y) + ') scale(' +
       scale + ') translate(-50,-50)';
     var dash = dashOf(item);
     var shape = '<g transform="' + transform + '">' +
-      '<use href="#tmm-' + key + '" fill="none" stroke="' + paint.edge +
-      '" color="' + paint.edge + '" stroke-width="15"' +
+      '<use href="#tmm-' + key + '" fill="none" stroke="' + backing +
+      '" color="' + backing + '" stroke-width="15"' +
       ' stroke-linecap="round" stroke-linejoin="round"' + dash + '/>' +
-      '<use href="#tmm-' + key + '" fill="none" stroke="' + paint.fill +
-      '" color="' + paint.fill + '" stroke-width="7"' +
+      '<use href="#tmm-' + key + '" fill="none" stroke="' + ink +
+      '" color="' + ink + '" stroke-width="7"' +
       ' stroke-linecap="round" stroke-linejoin="round"' + dash + '/></g>';
     var parts = [shape];
     var glyph = item.glyph || '';
@@ -278,23 +297,32 @@
 
   function shapeSVG(item) {
     var colour = itemColour(item);
+    var backing = inkBacking(colour);
     var points = item.points.map(function (point) {
       return round(point[0]) + ',' + round(point[1]);
     }).join(' ');
     var drawn = lineSize(item.size);
     var width = round(4 * drawn);
+    // Mirrors _shape_svg(): wider than the ink and always solid, so the gaps
+    // of a dashed line are backed too.
+    var backWidth = round(width + 2.6 * drawn);
     var dash = item.style === 'dashed'
       ? ' stroke-dasharray="' + round(14 * drawn) + ' ' + round(9 * drawn) + '"' : '';
     if (item.kind === 'area') {
       var centre = item.points.reduce(function (sum, point) {
         return [sum[0] + point[0] / item.points.length, sum[1] + point[1] / item.points.length];
       }, [0, 0]);
-      return '<polygon points="' + points + '" fill="' + colour +
+      return '<polygon points="' + points + '" fill="none" stroke="' + backing +
+        '" stroke-width="' + backWidth + '" stroke-linejoin="round"/>' +
+        '<polygon points="' + points + '" fill="' + colour +
         '" fill-opacity="0.22" stroke="' + colour + '" stroke-width="' + width +
         '"' + dash + ' stroke-linejoin="round"/>' +
         label(item.label, centre[0], centre[1], item.size);
     }
-    var parts = ['<polyline points="' + points + '" fill="none" stroke="' + colour +
+    var parts = ['<polyline points="' + points + '" fill="none" stroke="' + backing +
+      '" stroke-width="' + backWidth +
+      '" stroke-linecap="round" stroke-linejoin="round"/>',
+      '<polyline points="' + points + '" fill="none" stroke="' + colour +
       '" stroke-width="' + width + '"' + dash +
       ' stroke-linecap="round" stroke-linejoin="round"/>'];
     if (item.arrow) {
@@ -726,6 +754,9 @@
       item.glyph = state.glyph;
       item.marker = state.marker;
       item.status = state.status;
+      // The toolbar swatch reaches markers too now, for the same reason it
+      // reaches lines: an objective is the plan's, not one side's.
+      item.color = state.color;
     } else if (kind === 'text') {
       item.x = round(point.x);
       item.y = round(point.y);
@@ -911,7 +942,9 @@
     // A row of colour buttons, the first of which hands the item back to its
     // side's own colour. Buttons rather than a <select>, because picking a
     // colour from a list of names is exactly the thing a swatch avoids.
-    var buttons = [{ value: '', label: "The side's own" }].concat(
+    // Not "the side's own" any more: a line, an area and a marker stopped
+    // inheriting the side, so the empty swatch is the default ink.
+    var buttons = [{ value: '', label: 'Default (black)' }].concat(
       catalog.lineColours.map(function (entry) {
         return { value: entry.value, label: entry.label };
       }));
@@ -1407,6 +1440,16 @@
   /* -- keyboard ------------------------------------------------------------- */
 
   var SHORTCUTS = { v: 'select', u: 'unit', m: 'point', l: 'line', a: 'area', t: 'text' };
+
+  // Letting go of Shift fixes the straight segment where it is. Clearing the
+  // anchor on the next freehand move is not enough: tapping Shift again
+  // without moving in between left the old anchor standing, so the next
+  // straight segment replaced the last one instead of chaining off it — five
+  // corners came out as two points. That is the rhythm somebody drawing a
+  // boundary actually uses, so it is the one that has to work.
+  document.addEventListener('keyup', function (event) {
+    if (event.key === 'Shift' && state.draft) state.draft.anchor = null;
+  });
 
   document.addEventListener('keydown', function (event) {
     var tag = (event.target.tagName || '').toLowerCase();

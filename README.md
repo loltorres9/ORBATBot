@@ -639,7 +639,9 @@ Put unit symbols, movement lines and objectives on the terrain.
 >
 > Lines get an arrow head only when you ask for one — most lines on a plan are boundaries and phase lines, which point nowhere.
 >
-> Lines and areas take a colour of their own; symbols do not, because their colour is what says which side they are.
+> Lines, areas and markers are black until you colour them, and take whatever you pick from the swatches. Symbols do not: their colour is what says which side they are.
+>
+> Whatever colour you pick is the colour it comes out in Arma, on the nearest marker colour the game ships. Cyan and purple are the two Arma has no match for.
 >
 > Two people drawing at once will overwrite each other’s save. Agree who has the pen.
 
@@ -1758,7 +1760,7 @@ Pick the side (friendly, hostile, neutral, civilian, unknown), the layer, the sy
 
 A plain drag is **freehand** — as straight as your hand is, which a boundary or a phase line is not. **Hold `Shift` while you drag for a straight segment:** it runs from wherever you were when you pressed `Shift` to wherever the pointer is now. Let go and freehand carries on from that point, so one stroke can be a straight leg, a curve round a hill and a straight leg again — and tapping `Shift` again chains another one.
 
-Lines and areas can be **red, orange, yellow, green, blue, cyan, pink, purple, white or black**, picked from the swatches in the toolbar before you draw or in the panel afterwards — or any other colour from the colour field beside them. A unit symbol keeps its side's colour, because that is what says whose it is. A line gets **no arrowhead unless you tick one**: most lines on a plan are boundaries and phase lines, not directions of attack.
+Lines, areas and markers are **black** until you colour them — they belong to the plan, not to a side, which is why they no longer take the colour of whichever side happens to be picked. They can be **red, orange, yellow, green, blue, cyan, pink, purple, white or black**, from the swatches in the toolbar before you draw or in the panel afterwards — or any other colour from the colour field beside them. A unit symbol keeps its side's colour, because that is what says whose it is. A line gets **no arrowhead unless you tick one**: most lines on a plan are boundaries and phase lines, not directions of attack.
 
 The symbols follow APP-6, the way the planning tools and pocket cards do: the frame's **shape** says whose a unit is, so the plan still reads when it is printed, projected, or looked at by somebody who is colour-blind.
 
@@ -1890,6 +1892,7 @@ What comes across:
 | Size, strength, mobility, parent unit, planned | Written into the marker's name: `1-1 Alpha / A Coy (planned Plt twd)` |
 | Markers (OBJ, TGT, RP …) | `mil_objective`, `mil_destroy`, `mil_dot` and friends, with the text |
 | Lines and areas | Polyline markers; an area closes itself, a line's arrow becomes a `mil_arrow` |
+| The colour you picked | The nearest marker colour Arma ships — a red line arrives red. Cyan and purple are the two it has no match for |
 | Text labels | An empty marker carrying the text |
 
 Anti-tank, snipers and a few others have no marker in vanilla Arma, so they come across as the nearest one that exists. Dashed lines arrive solid, and so does a planned symbol's dashed frame — Arma has no dashed marker, which is why "planned" is written into the name instead.

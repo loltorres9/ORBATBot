@@ -24,7 +24,8 @@
       <p class="tmhint">Draw a line by dragging: with the Line or Area tool, or
         by holding <kbd>Ctrl</kbd> from any tool. Hold <kbd>Shift</kbd> while
         you drag for a <strong>straight</strong> segment — let go of it and
-        freehand carries on. <kbd>Esc</kbd> throws the stroke away.</p>
+        freehand carries on, hold it again for the next corner.
+        <kbd>Esc</kbd> throws the stroke away.</p>
       <div class="tmpick">
         <label>Side <select id="tmside"></select></label>
         <label>Layer <select id="tmlayerpick"></select></label>
@@ -41,8 +42,8 @@
           <option value="solid">Solid</option>
           <option value="dashed">Dashed</option>
         </select></label>
-        <span class="tmswatches" data-for="select line area" id="tmcolours"
-              role="group" aria-label="Line colour"></span>
+        <span class="tmswatches" data-for="select line area point" id="tmcolours"
+              role="group" aria-label="Colour"></span>
       </div>
       <div class="tmdo">
         <span class="tmstatus" id="tmstatus"></span>
@@ -105,7 +106,7 @@
             <input type="range" id="tmf-rotation" min="-180" max="180" step="5"></label>
           <label class="field"><span>Size</span>
             <input type="range" id="tmf-size" min="0.15" max="4" step="0.05"></label>
-          <div class="field" data-for="line area text"><span>Colour</span>
+          <div class="field" data-for="line area text point"><span>Colour</span>
             <div class="tmswatches" id="tmf-colours" role="group"
                  aria-label="Colour"></div>
             <div class="tmcolour">

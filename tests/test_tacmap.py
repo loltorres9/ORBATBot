@@ -235,10 +235,14 @@ def test_anything_that_is_not_a_plain_hex_colour_is_dropped():
         assert doc['items'][0]['color'] == '', bad
 
 
-def test_without_one_a_line_is_drawn_in_its_sides_colour():
+def test_without_one_a_line_is_drawn_in_ink_not_its_sides_colour():
+    # This pinned the opposite until the flat-blue plan showed what it cost:
+    # a boundary drawn while the Hostile side happened to be picked came out
+    # pink, and one drawn on a friendly plan came out the same pale blue as
+    # every other line on it. A control measure belongs to the plan.
     doc = _layered(items=[{'kind': 'line', 'side': 'hostile',
                            'points': [[1, 1], [9, 9]]}])
-    assert tacmap.item_colour(doc['items'][0]) == tacmap.AFFILIATIONS['hostile']['fill']
+    assert tacmap.item_colour(doc['items'][0]) == tacmap.DEFAULT_INK
 
 
 def test_a_symbol_takes_no_colour_of_its_own():
@@ -1601,3 +1605,120 @@ def test_a_grad_meh_meta_json_is_read_as_places():
     assert [p['name'] for p in places] == ['Chamville', 'Port Cham']
     assert places[0]['x'] == 4000.5
     assert warnings == []
+
+
+# ---------------------------------------------------------------------------
+# Colour: the item's own, not its side's
+# ---------------------------------------------------------------------------
+#
+# A friendly plan used to come out in one flat blue, because a line, an area
+# and a task marker all inherited `AFFILIATIONS[side]['fill']`. Only a unit
+# does now — its frame is the one thing whose colour carries meaning.
+
+def test_a_line_with_no_colour_is_ink_not_the_side():
+    for side in tacmap.AFFILIATIONS:
+        item = {'kind': 'line', 'side': side, 'color': ''}
+        assert tacmap.item_colour(item) == tacmap.DEFAULT_INK
+
+
+def test_a_marker_with_no_colour_is_ink_not_the_side():
+    for side in tacmap.AFFILIATIONS:
+        item = {'kind': 'point', 'side': side, 'color': ''}
+        assert tacmap.item_colour(item) == tacmap.DEFAULT_INK
+
+
+def test_a_unit_still_takes_its_side():
+    for side, colours in tacmap.AFFILIATIONS.items():
+        item = {'kind': 'unit', 'side': side}
+        assert tacmap.item_colour(item) == colours['fill']
+
+
+def test_a_picked_colour_wins_for_everything_but_a_unit():
+    for kind in ('line', 'area', 'point', 'text'):
+        item = {'kind': kind, 'side': 'friend', 'color': '#e03b3b'}
+        assert tacmap.item_colour(item) == '#e03b3b'
+
+
+def test_a_marker_keeps_a_colour_through_parse():
+    # It was dropped before: `color` was only read for a line, an area and a
+    # label, so a marker had no way to be anything but its side's colour.
+    result = tacmap.parse({'items': [
+        {'kind': 'point', 'x': 50, 'y': 50, 'color': '#f07f2a'},
+    ]})
+    assert result.doc['items'][0]['color'] == '#f07f2a'
+
+
+def test_the_backing_pass_goes_the_other_way_from_the_ink():
+    assert tacmap.ink_backing('#1b1f24') == tacmap._INK_LIGHT
+    assert tacmap.ink_backing('#f5f5f5') == tacmap._INK_DARK
+    # Nothing readable to measure falls to the light pass rather than raising.
+    assert tacmap.ink_backing('') == tacmap._INK_LIGHT
+    assert tacmap.ink_backing('rebeccapurple') == tacmap._INK_LIGHT
+
+
+# ---------------------------------------------------------------------------
+# … and the same colour in Arma
+# ---------------------------------------------------------------------------
+
+def test_every_palette_colour_maps_to_a_stock_arma_name():
+    for value, _label in tacmap.LINE_COLOURS:
+        name = tacmap.arma_colour({'kind': 'line', 'side': 'friend', 'color': value})
+        assert name in tacmap.ARMA_COLOURS
+
+
+def test_the_obvious_palette_colours_map_to_their_own_name():
+    wanted = {
+        '#e03b3b': 'ColorRed', '#f07f2a': 'ColorOrange', '#f2c832': 'ColorYellow',
+        '#3fb950': 'ColorGreen', '#3d8ee8': 'ColorBlue', '#e060b8': 'ColorPink',
+        '#f5f5f5': 'ColorWhite', '#1b1f24': 'ColorBlack',
+    }
+    for value, name in wanted.items():
+        item = {'kind': 'line', 'side': 'friend', 'color': value}
+        assert tacmap.arma_colour(item) == name
+
+
+def test_a_side_colour_is_never_reached_by_a_picked_colour():
+    # ColorEAST is a dark red and ColorCIV a purple, so without holding them
+    # out of the pool an orange line could arrive in Arma claiming a side.
+    for value, _label in tacmap.LINE_COLOURS:
+        name = tacmap.arma_colour({'kind': 'line', 'side': 'friend', 'color': value})
+        assert name not in {colour for _prefix, colour in tacmap.ARMA_SIDES.values()}
+
+
+def test_a_unit_exports_its_side_whatever_else_is_set():
+    for side, (_prefix, colour) in tacmap.ARMA_SIDES.items():
+        item = {'kind': 'unit', 'side': side, 'color': '#e03b3b'}
+        assert tacmap.arma_colour(item) == colour
+
+
+def test_an_uncoloured_line_exports_black_rather_than_its_side():
+    item = {'kind': 'line', 'side': 'friend', 'color': ''}
+    assert tacmap.arma_colour(item) == 'ColorBlack'
+
+
+def test_a_free_label_stays_white_in_both_places():
+    # It is chrome rather than a control measure, and white over the dark
+    # halo is what holds up on any terrain. What matters is that the page and
+    # the export agree — the whole point of the colour rework.
+    item = {'kind': 'text', 'side': 'friend', 'color': ''}
+    assert tacmap.item_colour(item) == tacmap._LABEL_FILL
+    assert tacmap.arma_colour(item) == 'ColorWhite'
+
+
+def test_a_dashed_line_is_backed_by_a_solid_pass():
+    # A dashed backing under a dashed line leaves the gaps unbacked, which is
+    # exactly where dark ink over dark terrain disappears.
+    doc = _layered(items=[{'kind': 'line', 'style': 'dashed',
+                           'points': [[1, 1], [9, 9]]}])
+    svg = tacmap.item_svg(doc['items'][0])
+    backing, ink = svg.split('<polyline')[1:3]
+    assert 'stroke-dasharray' not in backing
+    assert 'stroke-dasharray' in ink
+
+
+def test_the_backing_is_wider_than_the_ink():
+    import re
+    doc = _layered(items=[{'kind': 'line', 'points': [[1, 1], [9, 9]]}])
+    widths = [float(w) for w in re.findall(
+        r'<polyline[^>]*stroke-width="([\d.]+)"', tacmap.item_svg(doc['items'][0]))]
+    assert len(widths) == 2 and widths[0] > widths[1]
