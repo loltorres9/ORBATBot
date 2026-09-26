@@ -752,10 +752,13 @@
       state.draft = {
         kind: state.tool === 'area' ? 'area' : 'line',
         points: [[round(point.x), round(point.y)]],
-        cursor: null
+        cursor: null,
+        // Where the straight segment starts, while Shift is held. null when
+        // it is not.
+        anchor: null
       };
       overlay.innerHTML = draftSVG();
-      say('Drawing — let go to finish');
+      say('Drawing — hold Shift for a straight line, let go to finish');
       svg.setPointerCapture(event.pointerId);
       return;
     }
@@ -782,7 +785,27 @@
   svg.addEventListener('pointermove', function (event) {
     if (state.draft) {
       var here = at(event);
-      var points = state.draft.points;
+      var draft = state.draft;
+      var points = draft.points;
+
+      // Shift straightens the segment being drawn: from the last point that
+      // was fixed before Shift went down, to wherever the pointer is now.
+      // A drag on its own is freehand and only as straight as a hand is,
+      // which a boundary or a phase line is not. Letting go of Shift carries
+      // on freehand from the straight end, so one stroke can be a straight
+      // leg, a curve round a hill and a straight leg again — and tapping
+      // Shift again chains another one.
+      if (event.shiftKey) {
+        if (draft.anchor === null) {
+          draft.anchor = points.length - 1;
+        }
+        points.length = draft.anchor + 1;
+        points.push([round(here.x), round(here.y)]);
+        overlay.innerHTML = draftSVG();
+        return;
+      }
+      draft.anchor = null;
+
       var last = points[points.length - 1];
       // Thinned as it is drawn rather than afterwards: a pointer reports
       // every pixel it passes and the document takes MAX_POINTS of them, so

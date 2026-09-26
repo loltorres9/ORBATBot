@@ -1756,6 +1756,8 @@ Pick the side (friendly, hostile, neutral, civilian, unknown), the layer, the sy
 
 **Drawing a line is like the game:** press the left button and drag. With the **Line** or **Area** tool that is all there is to it; from any other tool — including **Select** — hold `Ctrl` while you drag. Letting go finishes the line, `Esc` throws the stroke away, and the **Area** tool closes the shape into an area.
 
+A plain drag is **freehand** — as straight as your hand is, which a boundary or a phase line is not. **Hold `Shift` while you drag for a straight segment:** it runs from wherever you were when you pressed `Shift` to wherever the pointer is now. Let go and freehand carries on from that point, so one stroke can be a straight leg, a curve round a hill and a straight leg again — and tapping `Shift` again chains another one.
+
 Lines and areas can be **red, orange, yellow, green, blue, cyan, pink, purple, white or black**, picked from the swatches in the toolbar before you draw or in the panel afterwards — or any other colour from the colour field beside them. A unit symbol keeps its side's colour, because that is what says whose it is. A line gets **no arrowhead unless you tick one**: most lines on a plan are boundaries and phase lines, not directions of attack.
 
 The symbols follow APP-6, the way the planning tools and pocket cards do: the frame's **shape** says whose a unit is, so the plan still reads when it is printed, projected, or looked at by somebody who is colour-blind.
